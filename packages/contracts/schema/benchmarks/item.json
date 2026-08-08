@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/benchmarks/item.json",
+  "title": "BenchmarkItem",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidateId",
+    "configId",
+    "sourceId",
+    "blindLabel",
+    "attempt",
+    "status",
+    "failure",
+    "transcript",
+    "audioPath",
+    "normalizationVersion",
+    "revisionTrace",
+    "metrics"
+  ],
+  "properties": {
+    "candidateId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "configId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "blindLabel": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "failure": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message",
+            "stage",
+            "recoverable"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "stage": {
+              "enum": [
+                "construct",
+                "prepare",
+                "reset",
+                "warmup",
+                "transcribe",
+                "synthesize",
+                "playback",
+                "score",
+                "soak",
+                "close",
+                "finalize"
+              ]
+            },
+            "recoverable": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    },
+    "transcript": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "audioPath": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "normalizationVersion": {
+      "type": "string"
+    },
+    "revisionTrace": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sequence",
+          "monotonicMs",
+          "text",
+          "replacedCharacters"
+        ],
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "monotonicMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string"
+          },
+          "replacedCharacters": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "speechStartToFirstPartialMs",
+        "endpointToFinalMs",
+        "ttsTimeToFirstAudioMs",
+        "rtf",
+        "wer",
+        "cer",
+        "partialRevisionCount",
+        "partialChurnCharacters",
+        "underruns",
+        "droppedFrames",
+        "peakVramBytes",
+        "steadyVramBytes"
+      ],
+      "properties": {
+        "speechStartToFirstPartialMs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "endpointToFinalMs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ttsTimeToFirstAudioMs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "rtf": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "wer": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cer": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "partialRevisionCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partialChurnCharacters": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "underruns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "droppedFrames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peakVramBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "steadyVramBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "totalAudioDurationSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "totalSamples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "droppedOutputChunks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peakRssBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "synthesisWindowWholeProcessPeakRssBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "promptSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "audioMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sampleRate",
+        "nativeSampleRate",
+        "channels",
+        "sampleWidthBytes",
+        "format",
+        "totalSamples",
+        "durationSeconds",
+        "processingSeconds",
+        "sha256",
+        "chunkCount"
+      ],
+      "properties": {
+        "sampleRate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "nativeSampleRate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "channels": {
+          "const": 1
+        },
+        "sampleWidthBytes": {
+          "const": 2
+        },
+        "format": {
+          "const": "pcm_s16le_mono"
+        },
+        "totalSamples": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "durationSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "processingSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "chunkCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "adapterProcessingSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "timingBoundary": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "synthetic-audio-v1",
+  "license": "CC0 synthetic generated tones; no recorded speech",
+  "items": [
+    {
+      "sourceId": "synthetic-clean",
+      "reference": "synthetic reference",
+      "behavior": "passed",
+      "fixture": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "pcm16le",
+        "frequencyHz": 440,
+        "chunks": 8,
+        "samplesPerChunk": 160
+      },
+      "fixtureSha256": "97c6548d44dd0323baa72efd7e9304b2d43e1dbedaa2af8195ec59cd92c06ce8",
+      "generatorVersion": "pcm16-sine-v1"
+    },
+    {
+      "sourceId": "synthetic-cancel",
+      "reference": "synthetic reference",
+      "behavior": "cancelled",
+      "fixture": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "pcm16le",
+        "frequencyHz": 550,
+        "chunks": 6,
+        "samplesPerChunk": 160
+      },
+      "fixtureSha256": "556f0797c87c9d952ee6c99b18985c622a10a76e388123126a0167f85a68801e",
+      "generatorVersion": "pcm16-sine-v1"
+    },
+    {
+      "sourceId": "synthetic-failure",
+      "reference": "synthetic reference",
+      "behavior": "failed",
+      "fixture": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "pcm16le",
+        "frequencyHz": 660,
+        "chunks": 4,
+        "samplesPerChunk": 160
+      },
+      "fixtureSha256": "40f8691a8ef68b7a8ed37a38daf0291ffb2e9b5e0c60704228449060d6862ea4",
+      "generatorVersion": "pcm16-sine-v1"
+    }
+  ]
+}

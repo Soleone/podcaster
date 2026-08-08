@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "synthetic-common-v1",
+  "kind": "synthetic",
+  "seed": 4090,
+  "warmups": 1,
+  "repetitions": 2,
+  "datasetManifest": "benchmarks/datasets/synthetic.manifest.json",
+  "candidate": {
+    "id": "synthetic-null",
+    "runtime": "python-stdlib",
+    "precision": "deterministic"
+  },
+  "timing": {
+    "clock": "virtual-monotonic-v1"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "protocol": "strict LF-delimited JSONL",
+  "decoder": "UTF-8 fatal",
+  "accepted": [
+    "LF"
+  ],
+  "rejected": [
+    "CRLF",
+    "trailing CR",
+    "invalid UTF-8",
+    "record over 262144 bytes",
+    "buffer over 1048576 bytes"
+  ],
+  "evidence": [
+    "apps/host/test/pi/pi-client.test.ts: crlf",
+    "apps/host/test/pi/pi-client.test.ts: invalid-utf8",
+    "apps/host/test/pi/pi-client.test.ts: oversized"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://podcaster.local/schema/history-export.json", "title": "HistoryExport",
+  "type": "object", "required": ["version", "exportedAt", "sessions"],
+  "properties": {
+    "version": { "const": 1 }, "exportedAt": { "type": "string", "format": "date-time" },
+    "sessions": { "type": "array", "items": { "type": "object", "required": ["sessionId", "startedAt", "personaDigest", "turns"], "properties": {
+      "sessionId": { "type": "string", "format": "uuid" }, "startedAt": { "type": "string", "format": "date-time" }, "endedAt": { "type": ["string", "null"], "format": "date-time" }, "personaDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+      "turns": { "type": "array", "items": { "type": "object", "required": ["turnId", "role", "text", "createdAt"], "properties": { "turnId": { "type": "string", "format": "uuid" }, "role": { "enum": ["user", "assistant"] }, "text": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" }, "posture": { "enum": ["riff", "question", "challenge", "silence"] }, "deliveredSampleOffset": { "type": "integer", "minimum": 0 }, "interrupted": { "type": "boolean" }, "failures": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false } }
+    }, "additionalProperties": false } }
+  }, "additionalProperties": false
+}

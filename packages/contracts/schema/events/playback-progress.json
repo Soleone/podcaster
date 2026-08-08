@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/playback-progress.json",
+  "title": "PlaybackProgressEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    { "type": "object", "required": ["type", "payload"], "properties": {
+      "type": { "const": "playback.progress" },
+      "payload": { "type": "object", "required": ["playbackId", "outputEpoch", "playedSampleOffset", "generatedSamples"], "properties": {
+        "playbackId": { "type": "string", "format": "uuid" },
+        "outputEpoch": { "type": "integer", "minimum": 0 },
+        "playedSampleOffset": { "type": "integer", "minimum": 0 },
+        "generatedSamples": { "type": "integer", "minimum": 0 }
+      }, "additionalProperties": false }
+    } }
+  ]
+}

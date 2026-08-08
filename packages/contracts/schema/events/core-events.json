@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/core-events.json",
+  "title": "CoreEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "enum": [
+            "session.start", "audio.start", "audio.stop", "turn.cancel", "barge_in.confirm", "barge_in.reject", "playback.progress", "playback.stopped", "session.stop", "readiness.check",
+            "readiness.snapshot", "session.state", "transcript.partial", "transcript.final", "policy.decision", "barge_in.provisional", "barge_in.confirmed", "barge_in.rejected", "barge_in.timed_out", "reasoning.delta", "reasoning.final", "tts.started", "tts.ended", "failure",
+            "stream.open", "stream.reset", "stream.close", "stt.partial", "stt.final", "tts.request", "tts.cancel", "vad.speech_start", "vad.speech_end", "sidecar.failure"
+          ]
+        }
+      }
+    }
+  ]
+}

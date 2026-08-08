@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "id": "tts-prompts-v1",
+  "kind": "tts-prompts",
+  "language": "en-us",
+  "license": "Project-authored test prompts; CC0-1.0",
+  "items": [
+    {
+      "sourceId": "ack-01",
+      "category": "short-acknowledgement",
+      "text": "Yes, that makes sense.",
+      "textSha256": "6d8b2b1ee987dfafae591505d9a599ddf6ab9c2eb7299ac29303922d4584f2db"
+    },
+    {
+      "sourceId": "ack-02",
+      "category": "short-acknowledgement",
+      "text": "Absolutely—let’s continue.",
+      "textSha256": "01d8d2f45f8cb21ed537557163325365a3829e02fc617e3cfc1d3fa9bd8f7cc7"
+    },
+    {
+      "sourceId": "podcast-01",
+      "category": "podcast-response",
+      "text": "The interesting part is not the headline, but what happened after the researchers repeated the experiment.",
+      "textSha256": "465c5e7b390f4268980d603fc2705206114a2e32097f0d81a28996a845b24d61"
+    },
+    {
+      "sourceId": "podcast-02",
+      "category": "podcast-response",
+      "text": "If we zoom out for a moment, this story is really about trust, incentives, and who gets to define success.",
+      "textSha256": "606c937e9d3ef884e2eadaec90b7d5b268c495ee3dde1a872e33b3faabbf7308"
+    },
+    {
+      "sourceId": "names-01",
+      "category": "names",
+      "text": "Dr. Maya Angelou spoke with José González and Siobhan O’Connor.",
+      "textSha256": "efc266a9a0846436de513621bad61dc25eb113e5ec560f0dc35ad7f42191f876"
+    },
+    {
+      "sourceId": "names-02",
+      "category": "names",
+      "text": "NVIDIA, Kokoro, and Qwen were discussed by Professor Ng.",
+      "textSha256": "9ca845695737ade676b0744e7dc6c60912d17a90213b303e85196ccc763fdb02"
+    },
+    {
+      "sourceId": "numbers-01",
+      "category": "numbers",
+      "text": "The RTX 4090 has 24 gigabytes of memory, and the test completed in 742 milliseconds.",
+      "textSha256": "3bf3671d4cb677e39bb5ea1efc06be2a1484fac56a5b56872c9a5303b93ec6bd"
+    },
+    {
+      "sourceId": "numbers-02",
+      "category": "numbers",
+      "text": "Revenue rose 3.14 percent, from $1,250.50 to $1,289.76.",
+      "textSha256": "5c973d147cad2e1550660c3aea78896952a898e8704a92e333e53f238d5dcbfd"
+    },
+    {
+      "sourceId": "dates-01",
+      "category": "dates",
+      "text": "The episode airs on August 8, 2026, at 9:30 a.m.",
+      "textSha256": "75e6239186733faa3bd65a185dab289268c5f4adedaefcd8cb35c3b12264720d"
+    },
+    {
+      "sourceId": "dates-02",
+      "category": "dates",
+      "text": "On January 1st, 2000, the archive began a new catalog.",
+      "textSha256": "3bfc74bfffa76fd86d62bcd09320ca2289ab71dbdee762a550d737af906dc697"
+    },
+    {
+      "sourceId": "abbrev-01",
+      "category": "abbreviations",
+      "text": "The U.S. FDA met the BBC and NASA at 5 p.m.",
+      "textSha256": "67f6810995e58cdf273c9963d3e74808e69dbbeba0b7e936892f25d5d80825e2"
+    },
+    {
+      "sourceId": "abbrev-02",
+      "category": "abbreviations",
+      "text": "CPU, GPU, and ONNX are abbreviations, while Dr. is a title.",
+      "textSha256": "7c4745d7e1391e3ebd8a7ee2c0d5d7c223e73508ae83b1a5ae8f564109b7a358"
+    },
+    {
+      "sourceId": "punct-01",
+      "category": "punctuation",
+      "text": "Wait—really? Yes: commas, semicolons; and dashes all matter.",
+      "textSha256": "48767ad286b82e12565ebbf5e805220ef1d1ce32565496da0fa79fe3cf068242"
+    },
+    {
+      "sourceId": "punct-02",
+      "category": "punctuation",
+      "text": "She said, “Read chapter two,” then paused... and smiled.",
+      "textSha256": "fa3d2b1fd5cae8fd050c68b3a43ad38e165acfeb72b7a02a6f6109f86c0eeb86"
+    },
+    {
+      "sourceId": "question-01",
+      "category": "question",
+      "text": "Why does a familiar voice make a difficult idea easier to understand?",
+      "textSha256": "579cfee5b6eff6e8b7d3afc69e9b1efbd356559fb51977c6862621df0a073f2f"
+    },
+    {
+      "sourceId": "question-02",
+      "category": "question",
+      "text": "Would you choose speed, clarity, or a more expressive delivery?",
+      "textSha256": "ed4e2431771bd2ef1aa6c6acf950f3a7b204361b20cf8b0b2a4d20e504097a99"
+    },
+    {
+      "sourceId": "emphasis-01",
+      "category": "emphasis",
+      "text": "This is not merely faster; it is dramatically, unmistakably faster!",
+      "textSha256": "d8542604daacac5c6cfd865f29068cb08307e51519f39a3415821cfcc639ca1e"
+    },
+    {
+      "sourceId": "emphasis-02",
+      "category": "emphasis",
+      "text": "I said local speech, not a hidden cloud fallback.",
+      "textSha256": "0d9e0ff656f93d88e11c57feb52b773add5810f38e81b0457a24c943df52e707"
+    },
+    {
+      "sourceId": "phoneme-01",
+      "category": "difficult-phonemes",
+      "text": "She sells seashells beside the sixth shimmering shoreline.",
+      "textSha256": "55142ce9f83d309091b709fa8e2c57f7fb35db5629e6f53e379a27d6f77f7ece"
+    },
+    {
+      "sourceId": "phoneme-02",
+      "category": "difficult-phonemes",
+      "text": "Rural jurors rarely review truly peculiar brewery statistics.",
+      "textSha256": "103e46d60eae7f65647b690004a12582be7a294b58e6fbfe74fc90efdc347ba4"
+    },
+    {
+      "sourceId": "phoneme-03",
+      "category": "difficult-phonemes",
+      "text": "The quick brown fox jumps over the lazy dog near Worcestershire.",
+      "textSha256": "4065ed85725de1e020103a6a44d33fcab7c0981c126f5666df7366f5f98d0e18"
+    },
+    {
+      "sourceId": "contrast-01",
+      "category": "contrast",
+      "text": "Record the record, present the present, and permit the permit.",
+      "textSha256": "f5361ecee763c11e3aa3e38c4e863360e93a2f8b22188911e4156875a325a64c"
+    },
+    {
+      "sourceId": "technical-01",
+      "category": "technical",
+      "text": "Signed PCM sixteen, mono, at twenty-four kilohertz must remain correctly framed.",
+      "textSha256": "d6acc93046c7669e163f2ec98cc1df726d216843f8927013bcfdf33a7325c54d"
+    },
+    {
+      "sourceId": "long-01",
+      "category": "long-form",
+      "text": "Here is the practical conclusion. A dependable baseline should be intelligible, cancellable, reproducible, and honest about its limits. Better voices can follow, but only after the evidence is complete.",
+      "textSha256": "b1070538184cd319815c890dcbd18b30d9a5b70e3eb95bd5b13df5f06ccd8200"
+    }
+  ]
+}

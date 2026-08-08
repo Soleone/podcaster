@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/benchmarks/rating.json",
+  "title": "BenchmarkRating",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assessorId",
+    "sessionId",
+    "order",
+    "promptLabel",
+    "sampleLabels",
+    "sampleRatings",
+    "preference",
+    "replayCount",
+    "submittedAt",
+    "revealLocked",
+    "revealedAt"
+  ],
+  "properties": {
+    "assessorId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "format": "uuid"},
+    "order": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "promptLabel": {"type": "string", "minLength": 1},
+    "sampleLabels": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "sampleRatings": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "naturalness", "intelligibility", "listenability"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1},
+          "naturalness": {"type": "integer", "minimum": 1, "maximum": 5},
+          "intelligibility": {"type": "integer", "minimum": 1, "maximum": 5},
+          "listenability": {"type": "integer", "minimum": 1, "maximum": 5}
+        }
+      }
+    },
+    "preference": {"type": "string", "minLength": 1},
+    "note": {"type": "string"},
+    "replayCount": {"type": "integer", "minimum": 0},
+    "submittedAt": {"type": "string", "format": "date-time"},
+    "revealLocked": {"type": "boolean"},
+    "revealedAt": {"type": ["string", "null"], "format": "date-time"}
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/tts-started.json",
+  "title": "TtsStartedEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    { "type": "object", "required": ["type", "payload"], "properties": {
+      "type": { "const": "tts.started" },
+      "payload": { "type": "object", "required": ["responseId", "playbackId", "sampleRate"], "properties": {
+        "responseId": { "type": "string", "format": "uuid" },
+        "playbackId": { "type": "string", "format": "uuid" },
+        "sampleRate": { "type": "integer", "minimum": 1 }
+      }, "additionalProperties": false }
+    } }
+  ]
+}

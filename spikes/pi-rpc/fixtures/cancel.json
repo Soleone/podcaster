@@ -1,0 +1,96 @@
+{
+  "command": "cancel",
+  "readiness": "ready",
+  "cancellationCutoff": "first text delta",
+  "abortResponse": "success",
+  "authoritativeStopReason": "aborted",
+  "authoritativeSettled": true,
+  "finalIsStreaming": false,
+  "acceptedTextAfterCutoff": 0,
+  "suppressedTextDeltasAfterCutoff": 1,
+  "childCleanup": {
+    "exited": true,
+    "groupSignalUsed": true,
+    "groupGone": true
+  },
+  "records": [
+    {
+      "type": "response",
+      "id": "cmd-1",
+      "command": "get_state",
+      "success": true
+    },
+    {
+      "type": "response",
+      "id": "cmd-2",
+      "command": "get_available_models",
+      "success": true
+    },
+    {
+      "type": "response",
+      "id": "cmd-3",
+      "command": "prompt",
+      "success": true
+    },
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start"
+    },
+    {
+      "type": "message_end",
+      "role": "user",
+      "hasError": false
+    },
+    {
+      "type": "message_start"
+    },
+    {
+      "type": "message_update",
+      "updateType": "text_start",
+      "contentIndex": 0
+    },
+    {
+      "type": "message_update",
+      "updateType": "text_delta",
+      "contentIndex": 0,
+      "text": "<model-text>",
+      "chars": 1
+    },
+    {
+      "type": "message_end",
+      "role": "assistant",
+      "stopReason": "aborted",
+      "hasError": true
+    },
+    {
+      "type": "turn_end",
+      "role": "assistant",
+      "stopReason": "aborted",
+      "hasError": true
+    },
+    {
+      "type": "agent_end",
+      "willRetry": false
+    },
+    {
+      "type": "agent_settled"
+    },
+    {
+      "type": "response",
+      "id": "cmd-4",
+      "command": "abort",
+      "success": true
+    },
+    {
+      "type": "response",
+      "id": "cmd-5",
+      "command": "get_state",
+      "success": true
+    }
+  ]
+}

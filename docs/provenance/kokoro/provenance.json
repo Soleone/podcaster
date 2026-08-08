@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "canonicalModel": {
+    "id": "hexgrad/Kokoro-82M",
+    "revision": "f3ff3571791e39611d31c381e3a41a3af07b4987",
+    "license": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M/tree/f3ff3571791e39611d31c381e3a41a3af07b4987",
+    "note": "The pinned repository declares Apache-2.0 in model-card metadata but contains no standalone LICENSE file at this revision."
+  },
+  "convertedAssets": {
+    "repository": "thewh1teagle/kokoro-onnx",
+    "tag": "model-files-v1.0",
+    "revision": "6843c53fc280ab130b7a8d206ebd3407e094efdc",
+    "sourceUrl": "https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0",
+    "license": "no separate converted-asset license published",
+    "note": "Do not conflate the canonical model's Apache-2.0 declaration with the runtime code's MIT license. The release publishes no checksums; local asset SHA-256 values are pinned in docs/model-manifest.json."
+  },
+  "runtime": {
+    "repository": "https://github.com/thewh1teagle/kokoro-onnx.git",
+    "revision": "98ea02a5692534c2ba496708e2f19de25028412b",
+    "version": "0.5.0",
+    "license": "MIT",
+    "licenseSnapshotSha256": "f61fdd0217de9ece8fa699912848d91187d84879fc2e689f0906d0c1299e955e",
+    "runtimeSourceSha256": "e844a0cf96dd01b0a162693c507690ec49eba211c2358bda3c14f00140c30f29",
+    "lockfileSha256": "f4d7fe2966642180bcb61c4306dd6740f2f48f818d2beb5784f23f9777816646",
+    "verification": "Installed direct_url.json must bind the exact Git URL, commit_id, and requested_revision."
+  }
+}

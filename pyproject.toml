@@ -1,0 +1,28 @@
+[project]
+name = "podcaster-audio"
+version = "0.0.0"
+requires-python = "==3.12.*"
+dependencies = [
+  "jsonschema==4.25.1",
+  "librosa==0.11.0",
+  "numpy==2.3.2",
+  "pydantic==2.11.7",
+  "rfc3339-validator==0.1.4",
+  "torch==2.12.1",
+  "transformers==5.13.0",
+]
+
+[dependency-groups]
+dev = ["pytest==8.4.1", "ruff==0.12.10"]
+
+[tool.uv]
+required-version = "==0.8.8"
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["services/audio/tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

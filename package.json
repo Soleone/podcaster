@@ -1,0 +1,23 @@
+{
+  "name": "podcaster",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": "22.22.3",
+    "pnpm": "9.15.9"
+  },
+  "scripts": {
+    "contracts:generate": "node packages/contracts/scripts/generate.mjs",
+    "test": "node scripts/test.mjs",
+    "check": "bash scripts/check.sh",
+    "dev": "node scripts/dev.mjs",
+    "test:dev-cleanup": "node scripts/dev-cleanup.test.mjs",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0",
+    "tsx": "4.20.6",
+    "vitest": "3.2.4"
+  }
+}

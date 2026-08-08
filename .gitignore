@@ -1,0 +1,55 @@
+# dependencies and generated caches
+node_modules/
+.venv/
+.venv-parakeet/
+.venv-kokoro/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+coverage/
+
+# local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*
+*oauth*
+*token*
+
+# local/private application data
+.local/
+podcaster-local-v1/
+*.history.json
+*.sqlite*
+
+# model and benchmark payloads
+models/
+weights/
+*.safetensors
+*.onnx
+*.gguf
+*.pt
+*.pth
+*.ckpt
+*.wav
+*.flac
+*.mp3
+*.pcm
+benchmarks/datasets/**/media/
+benchmarks/datasets/**/source/
+benchmarks/datasets/**/*.tar.gz
+benchmarks/results/*/
+!benchmarks/results/schema/
+!benchmarks/results/README.md
+
+# build/editor/OS
+.pi-subagents/
+build/
+dist/
+*.tsbuildinfo
+.DS_Store
+.vscode/
+.idea/

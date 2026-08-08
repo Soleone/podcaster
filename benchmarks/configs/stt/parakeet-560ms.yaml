@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "parakeet-unified-nemo-buffered-fp32-560ms-paced-v1",
+  "kind": "stt",
+  "seed": 4090,
+  "warmups": 1,
+  "repetitions": 1,
+  "candidate": {
+    "id": "parakeet",
+    "modelId": "nvidia/parakeet-unified-en-0.6b",
+    "revision": "fe53cd885760c96b6a5f51a0bfd362cb4584a98b",
+    "runtime": "nemo-git-58f3dd9250d4c9e0d3e865b78ccd5ea89dc420ba",
+    "runtimeRevision": "58f3dd9250d4c9e0d3e865b78ccd5ea89dc420ba",
+    "precision": "float32",
+    "sha256": "ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b"
+  },
+  "modelPath": "models/parakeet-unified-en-0.6b/parakeet-unified-en-0.6b.nemo",
+  "chunkMs": 160,
+  "captureChunkMs": 20,
+  "leftContextMs": 5600,
+  "rightContextMs": 400,
+  "algorithmicLatencyMs": 560,
+  "language": "en-US",
+  "normalizationVersion": "english-basic-v1",
+  "partialContract": "append-only-rnnt-v1",
+  "timingMode": "realtime-paced-20ms-v1",
+  "vad": {
+    "frameMs": 20,
+    "speechThresholdRms": 180,
+    "speechStartFrames": 3,
+    "speechEndFrames": 20
+  }
+}

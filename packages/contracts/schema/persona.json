@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/persona.json",
+  "title": "Persona",
+  "type": "object",
+  "required": ["version", "name", "invitation_only", "posture_weights", "challenge_enabled", "interests", "body"],
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "maxLength": 80 },
+    "invitation_only": { "type": "boolean" },
+    "posture_weights": {
+      "type": "object", "required": ["riff", "question", "challenge"],
+      "properties": { "riff": { "type": "integer", "minimum": 0, "maximum": 100 }, "question": { "type": "integer", "minimum": 0, "maximum": 100 }, "challenge": { "type": "integer", "minimum": 0, "maximum": 100 } },
+      "additionalProperties": false
+    },
+    "challenge_enabled": { "type": "boolean" },
+    "interests": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 80 } },
+    "body": { "type": "string", "maxLength": 16384, "maxUtf8Bytes": 16384, "contentMediaType": "text/markdown" }
+  },
+  "additionalProperties": false
+}

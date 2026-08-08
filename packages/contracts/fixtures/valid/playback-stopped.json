@@ -1,0 +1,1 @@
+{"protocolVersion":1,"sessionId":"018f06b5-3c8d-7b2a-9f35-8b3388a857f1","epoch":2,"eventId":"018f06b5-3c8d-7b2a-9f35-8b3388a857f3","type":"playback.stopped","monotonicMs":1000,"payload":{"playbackId":"018f06b5-3c8d-7b2a-9f35-8b3388a857f4","cancelledEpoch":1,"finalPlayedSampleOffset":3200,"reason":"cancelled"}}

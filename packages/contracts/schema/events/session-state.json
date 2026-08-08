@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/session-state.json",
+  "title": "SessionStateEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    { "type": "object", "required": ["type", "payload"], "properties": {
+      "type": { "const": "session.state" },
+      "payload": { "type": "object", "required": ["phase", "personaDigest"], "properties": {
+        "phase": { "enum": ["idle", "listening", "deciding", "reasoning", "synthesizing", "playing", "echo_provisional", "stopped"] },
+        "personaDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }, "additionalProperties": false }
+    } }
+  ]
+}

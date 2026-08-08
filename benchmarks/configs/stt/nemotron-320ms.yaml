@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "nemotron-3.5-transformers-fp32-320ms-paced-v1",
+  "kind": "stt",
+  "seed": 4090,
+  "warmups": 1,
+  "repetitions": 1,
+  "candidate": {
+    "id": "nemotron",
+    "modelId": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+    "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
+    "runtime": "transformers-5.13.0",
+    "precision": "float32",
+    "sha256": "9eebdd6590289cb3030f310858f3df93256600a800a3e8200c5993d5f967e174"
+  },
+  "modelPath": "models/nemotron-3.5-asr-streaming-0.6b",
+  "chunkMs": 320,
+  "captureChunkMs": 320,
+  "leftContextMs": 0,
+  "rightContextMs": 0,
+  "algorithmicLatencyMs": 320,
+  "language": "en-US",
+  "normalizationVersion": "english-basic-v1",
+  "partialContract": "append-only-rnnt-v1",
+  "timingMode": "realtime-paced-20ms-v1",
+  "vad": {
+    "frameMs": 20,
+    "speechThresholdRms": 180,
+    "speechStartFrames": 3,
+    "speechEndFrames": 20
+  }
+}

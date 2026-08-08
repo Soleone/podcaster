@@ -1,0 +1,623 @@
+{
+  "schemaVersion": 1,
+  "id": "librispeech-test-clean-t3-v1",
+  "source": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+  "license": "CC BY 4.0",
+  "licenseUrl": "https://www.openslr.org/12",
+  "acquisitionCommand": "uv run python scripts/acquire-librispeech-benchmark.py",
+  "archiveMd5": "32fa31d27d2e1cad72775fee3f4849a9",
+  "archiveSha256": "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23",
+  "audio": {
+    "sampleRate": 16000,
+    "channels": 1,
+    "sampleFormat": "pcm16le"
+  },
+  "notes": "35 speakers; 10 deterministic low-noise and 10 inserted-pause variants. Read speech does not represent conversational accents or podcast acoustics.",
+  "items": [
+    {
+      "sourceId": "1089-134686-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-001-clean.wav",
+      "sha256": "33c6c68d943a22d5272bf8d5e1f86af9d89d901fb7da35961a692de7591a534c",
+      "reference": "HE HOPED THERE WOULD BE STEW FOR DINNER TURNIPS AND CARROTS AND BRUISED POTATOES AND FAT MUTTON PIECES TO BE LADLED OUT IN THICK PEPPERED FLOUR FATTENED SAUCE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1188-133604-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-002-clean.wav",
+      "sha256": "c1967efc080229a80751c7efb9514bccec337c9b997fedc80fea50e133c7c7a9",
+      "reference": "YOU WILL FIND ME CONTINUALLY SPEAKING OF FOUR MEN TITIAN HOLBEIN TURNER AND TINTORET IN ALMOST THE SAME TERMS",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "121-121726-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-003-clean.wav",
+      "sha256": "c16dd1c84201d4fdda021195f040113bf572a7a47f0cf036048020e118209109",
+      "reference": "ALSO A POPULAR CONTRIVANCE WHEREBY LOVE MAKING MAY BE SUSPENDED BUT NOT STOPPED DURING THE PICNIC SEASON",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1221-135766-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-004-clean.wav",
+      "sha256": "f78495a7cbddd8b1aed566a345956fcacb4956251dc9f4a4a0da94e54b1046b1",
+      "reference": "HOW STRANGE IT SEEMED TO THE SAD WOMAN AS SHE WATCHED THE GROWTH AND THE BEAUTY THAT BECAME EVERY DAY MORE BRILLIANT AND THE INTELLIGENCE THAT THREW ITS QUIVERING SUNSHINE OVER THE TINY FEATURES OF THIS CHILD",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1284-1180-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-005-clean.wav",
+      "sha256": "3690ab91ce574f4becf1b03ff9d03bdc2e3f674dcef6b21d7c87ebae2199c6e8",
+      "reference": "HE WORE BLUE SILK STOCKINGS BLUE KNEE PANTS WITH GOLD BUCKLES A BLUE RUFFLED WAIST AND A JACKET OF BRIGHT BLUE BRAIDED WITH GOLD",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1320-122612-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-006-clean.wav",
+      "sha256": "da27cadfad6d8f9b8eec7bcaff26d150f44f0f7011fa846359caa6ab81cf568e",
+      "reference": "SINCE THE PERIOD OF OUR TALE THE ACTIVE SPIRIT OF THE COUNTRY HAS SURROUNDED IT WITH A BELT OF RICH AND THRIVING SETTLEMENTS THOUGH NONE BUT THE HUNTER OR THE SAVAGE IS EVER KNOWN EVEN NOW TO PENETRATE ITS WILD RECESSES",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1580-141083-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-007-clean.wav",
+      "sha256": "bc44fd404e260570a2cbc99953233fdbcdce26d2a219298743ae490138396b52",
+      "reference": "I WILL ENDEAVOUR IN MY STATEMENT TO AVOID SUCH TERMS AS WOULD SERVE TO LIMIT THE EVENTS TO ANY PARTICULAR PLACE OR GIVE A CLUE AS TO THE PEOPLE CONCERNED",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1995-1826-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-008-clean.wav",
+      "sha256": "8cc65666b724d18a357f23d3caa8ca3d6cc1f8be65771c4a8b6e467cdb96aa15",
+      "reference": "IN THE DEBATE BETWEEN THE SENIOR SOCIETIES HER DEFENCE OF THE FIFTEENTH AMENDMENT HAD BEEN NOT ONLY A NOTABLE BIT OF REASONING BUT DELIVERED WITH REAL ENTHUSIASM",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2094-142345-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-009-clean.wav",
+      "sha256": "98b44e17c797456a978b85b6b0359c1d4a0f54cdc283ee31c115f4299d9e0109",
+      "reference": "IT IS A VERY FINE OLD PLACE OF RED BRICK SOFTENED BY A PALE POWDERY LICHEN WHICH HAS DISPERSED ITSELF WITH HAPPY IRREGULARITY SO AS TO BRING THE RED BRICK INTO TERMS OF FRIENDLY COMPANIONSHIP WITH THE LIMESTONE ORNAMENTS SURROUNDING THE THREE GABLES THE WINDOWS AND THE DOOR PLACE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2300-131720-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-010-clean.wav",
+      "sha256": "90808a96ab4853f1d2b869d4a5bf9d51dc7098f3f50438c44c7b16dc12383f15",
+      "reference": "THE PARIS PLANT LIKE THAT AT THE CRYSTAL PALACE WAS A TEMPORARY EXHIBIT",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "237-126133-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-011-clean.wav",
+      "sha256": "c1c0f36a4663ea1747f13c9a5e57084398de5ad63cec849447db83a81af4313b",
+      "reference": "HERE SHE WOULD STAY COMFORTED AND SOOTHED AMONG THE LOVELY PLANTS AND RICH EXOTICS REJOICING THE HEART OF OLD TURNER THE GARDENER WHO SINCE POLLY'S FIRST RAPTUROUS ENTRANCE HAD TAKEN HER INTO HIS GOOD GRACES FOR ALL TIME",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "260-123286-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-012-clean.wav",
+      "sha256": "1202cbf2459cbe73fdf4276fcabc0c47b95883026de40eca8c2ccc537c220fb2",
+      "reference": "SATURDAY AUGUST FIFTEENTH THE SEA UNBROKEN ALL ROUND NO LAND IN SIGHT",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2830-3979-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-013-clean.wav",
+      "sha256": "29eda0494130f357179e5b8946e3e137c5e269041059b2356106c47d2f656fe0",
+      "reference": "WE WANT YOU TO HELP US PUBLISH SOME LEADING WORK OF LUTHER'S FOR THE GENERAL AMERICAN MARKET WILL YOU DO IT",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2961-960-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-014-clean.wav",
+      "sha256": "833c5a0fb3c5f4635f934538563f60af6e96ecb751749615a473209180b0a9a8",
+      "reference": "HE PASSES ABRUPTLY FROM PERSONS TO IDEAS AND NUMBERS AND FROM IDEAS AND NUMBERS TO PERSONS FROM THE HEAVENS TO MAN FROM ASTRONOMY TO PHYSIOLOGY HE CONFUSES OR RATHER DOES NOT DISTINGUISH SUBJECT AND OBJECT FIRST AND FINAL CAUSES AND IS DREAMING OF GEOMETRICAL FIGURES LOST IN A FLUX OF SENSE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "3570-5694-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-015-clean.wav",
+      "sha256": "9221350c12774a82e0a93739005f9a3773f33a7661bf162d8fda27f7eddcd1b2",
+      "reference": "BUT ALREADY AT A POINT IN ECONOMIC EVOLUTION FAR ANTEDATING THE EMERGENCE OF THE LADY SPECIALISED CONSUMPTION OF GOODS AS AN EVIDENCE OF PECUNIARY STRENGTH HAD BEGUN TO WORK OUT IN A MORE OR LESS ELABORATE SYSTEM",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "3575-170457-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-016-clean.wav",
+      "sha256": "b6c0f936477169054166d4d6180789a12619d5dafb94123760cb69fec8864807",
+      "reference": "AND OFTEN HAS MY MOTHER SAID WHILE ON HER LAP I LAID MY HEAD SHE FEARED FOR TIME I WAS NOT MADE BUT FOR ETERNITY",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "3729-6852-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-017-clean.wav",
+      "sha256": "6927f0eb588f7bc8a91d2899ea6abf8f1bf20b08f9b341718e3f8f391f58a9e1",
+      "reference": "TO CELEBRATE THE ARRIVAL OF HER SON SILVIA GAVE A SPLENDID SUPPER TO WHICH SHE HAD INVITED ALL HER RELATIVES AND IT WAS A GOOD OPPORTUNITY FOR ME TO MAKE THEIR ACQUAINTANCE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4077-13751-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-018-clean.wav",
+      "sha256": "ecd53068bad00bc7293ac0329c06928b456c3631451e7827cb64f066af498108",
+      "reference": "ON THE SIXTH OF APRIL EIGHTEEN THIRTY THE CHURCH OF JESUS CHRIST OF LATTER DAY SAINTS WAS FORMALLY ORGANIZED AND THUS TOOK ON A LEGAL EXISTENCE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4446-2271-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-019-clean.wav",
+      "sha256": "3cd0703e90f036ce898acd4a36ed20c05ca84b7454f8d0bf75594663ffb04aa7",
+      "reference": "MAINHALL LIKED ALEXANDER BECAUSE HE WAS AN ENGINEER",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4507-16021-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-020-clean.wav",
+      "sha256": "f7c16de3dcc7578c1f4699fefdfa0bf5083e23dfbb334f78d102404014fe113a",
+      "reference": "CHAPTER ONE ORIGIN",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4970-29093-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-021-clean.wav",
+      "sha256": "65f55543039d75a2489b42f071276b71fedf3a62d33b026acaa620ed8ad73d8f",
+      "reference": "YOU'LL NEVER DIG IT OUT OF THE ASTOR LIBRARY",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4992-23283-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-022-clean.wav",
+      "sha256": "44f6f2e6dbe07976491b802511d48affc1ca14a8f322a01d17acb678b6f09699",
+      "reference": "BUT THE MORE FORGETFULNESS HAD THEN PREVAILED THE MORE POWERFUL WAS THE FORCE OF REMEMBRANCE WHEN SHE AWOKE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "5105-28233-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-023-clean.wav",
+      "sha256": "913a4612be52b601e345896b86b2bd9fd914eaf7c2a840a93288bbe6d6e2aebc",
+      "reference": "LENGTH OF SERVICE FOURTEEN YEARS THREE MONTHS AND FIVE DAYS",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "5142-33396-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-024-clean.wav",
+      "sha256": "cd430722122420a3b2322d6636b75358c77a1604d82b8cf232a3308bbe5ec83b",
+      "reference": "AT ANOTHER TIME HARALD ASKED",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "5639-40744-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-025-clean.wav",
+      "sha256": "73e652b1fd3da02f95107e5e7e43ff29f5d475e1e3138a257276062f0a17f45d",
+      "reference": "ELEVEN O'CLOCK HAD STRUCK IT WAS A FINE CLEAR NIGHT THEY WERE THE ONLY PERSONS ON THE ROAD AND THEY SAUNTERED LEISURELY ALONG TO AVOID PAYING THE PRICE OF FATIGUE FOR THE RECREATION PROVIDED FOR THE TOLEDANS IN THEIR VALLEY OR ON THE BANKS OF THEIR RIVER",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "5683-32865-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-026-clean.wav",
+      "sha256": "1195861b2610c5ce4fced2db6378e344bd141dcc4b8656c4b8898a5224395912",
+      "reference": "YOU KNOW CAPTAIN LAKE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "61-70968-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-027-clean.wav",
+      "sha256": "d1a63ff3bdec8df57d498c567b9598d936aac0e57c42692c1ba1192ca5b52472",
+      "reference": "HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN ON THE LEFT",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "672-122797-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-028-clean.wav",
+      "sha256": "1c5ef4bf8fe202abf0f943211eb9163c16ccbf71f82c887d48d4a49447a1fd43",
+      "reference": "OUT IN THE WOODS STOOD A NICE LITTLE FIR TREE",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "6829-68769-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-029-clean.wav",
+      "sha256": "619463bc52c324ff66bd9d08e20d8851d0a602ce38d8d1d1eb12cb40bc5a8256",
+      "reference": "KENNETH AND BETH REFRAINED FROM TELLING THE OTHER GIRLS OR UNCLE JOHN OF OLD WILL ROGERS'S VISIT BUT THEY GOT MISTER WATSON IN THE LIBRARY AND QUESTIONED HIM CLOSELY ABOUT THE PENALTY FOR FORGING A CHECK",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "6930-75918-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-030-clean.wav",
+      "sha256": "fb7da50c0e839fc3b53e4ed0af92bff775ca00602a45ae4cbe3551eb4cca1f5f",
+      "reference": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "7021-79730-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-031-clean.wav",
+      "sha256": "9c0dd3e50c656435aa29c23fb6f69f6c4f84d2200746841b5243f5f7d8590c89",
+      "reference": "THE THREE MODES OF MANAGEMENT",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "7127-75946-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-032-clean.wav",
+      "sha256": "7b96a0b6a458e9b573285727809122daff44db52a9225325ca06650fcabab7ef",
+      "reference": "AT THE CONCLUSION OF THE BANQUET WHICH WAS SERVED AT FIVE O'CLOCK THE KING ENTERED HIS CABINET WHERE HIS TAILORS WERE AWAITING HIM FOR THE PURPOSE OF TRYING ON THE CELEBRATED COSTUME REPRESENTING SPRING WHICH WAS THE RESULT OF SO MUCH IMAGINATION AND HAD COST SO MANY EFFORTS OF THOUGHT TO THE DESIGNERS AND ORNAMENT WORKERS OF THE COURT",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "7176-88083-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-033-clean.wav",
+      "sha256": "f37e76ec2ba0cb9bd743046c0c945de4e9e8aeaae076e33705d2dd385bc4ca12",
+      "reference": "ALL ABOUT HIM WAS A TUMULT OF BRIGHT AND BROKEN COLOR SCATTERED IN BROAD SPLASHES",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "7729-102255-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-034-clean.wav",
+      "sha256": "98ebfb3f40c13fe26f0e0f20ea1258031b9e237c7ee25b5da885ae9ffd272958",
+      "reference": "THE BOGUS LEGISLATURE NUMBERED THIRTY SIX MEMBERS",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "8224-274381-0000-clean",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-035-clean.wav",
+      "sha256": "33f55f9c82d91a71c4dce37f1b4c63bb21629484621ebd88173a309a725acea0",
+      "reference": "THOUGH THROWN INTO PRISON FOR THIS ENTERPRISE AND DETAINED SOME TIME HE WAS NOT DISCOURAGED BUT STILL CONTINUED BY HIS COUNTENANCE AND PROTECTION TO INFUSE SPIRIT INTO THE DISTRESSED ROYALISTS",
+      "coverage": [
+        "clean",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1089-134686-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-036-noise.wav",
+      "sha256": "e31b642fa21bd531f4bd247422e682ead3c5150e00736ba120dbfa6e3178e763",
+      "reference": "HE HOPED THERE WOULD BE STEW FOR DINNER TURNIPS AND CARROTS AND BRUISED POTATOES AND FAT MUTTON PIECES TO BE LADLED OUT IN THICK PEPPERED FLOUR FATTENED SAUCE",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1188-133604-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-037-noise.wav",
+      "sha256": "6978d36cb987ff1c52bfcce8dff9c49ea869b46a156ea48056f09dcc22426e40",
+      "reference": "YOU WILL FIND ME CONTINUALLY SPEAKING OF FOUR MEN TITIAN HOLBEIN TURNER AND TINTORET IN ALMOST THE SAME TERMS",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "121-121726-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-038-noise.wav",
+      "sha256": "934dd17d15952eb7adf739466259156876e819a160cb91d5fb4f60eadee8c2bf",
+      "reference": "ALSO A POPULAR CONTRIVANCE WHEREBY LOVE MAKING MAY BE SUSPENDED BUT NOT STOPPED DURING THE PICNIC SEASON",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1221-135766-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-039-noise.wav",
+      "sha256": "19f16a4d856727e8c0b9b9f095e1a83a84231717b7aae6edd57452e5dd490180",
+      "reference": "HOW STRANGE IT SEEMED TO THE SAD WOMAN AS SHE WATCHED THE GROWTH AND THE BEAUTY THAT BECAME EVERY DAY MORE BRILLIANT AND THE INTELLIGENCE THAT THREW ITS QUIVERING SUNSHINE OVER THE TINY FEATURES OF THIS CHILD",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1284-1180-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-040-noise.wav",
+      "sha256": "278acfbdf47d041a0b81f088cc053658837ea1b1b3052045d41937654e566dda",
+      "reference": "HE WORE BLUE SILK STOCKINGS BLUE KNEE PANTS WITH GOLD BUCKLES A BLUE RUFFLED WAIST AND A JACKET OF BRIGHT BLUE BRAIDED WITH GOLD",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1320-122612-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-041-noise.wav",
+      "sha256": "273242f5e383c332e2191ed6aa96d45617576f7f37f3739d6718450d9c455b5e",
+      "reference": "SINCE THE PERIOD OF OUR TALE THE ACTIVE SPIRIT OF THE COUNTRY HAS SURROUNDED IT WITH A BELT OF RICH AND THRIVING SETTLEMENTS THOUGH NONE BUT THE HUNTER OR THE SAVAGE IS EVER KNOWN EVEN NOW TO PENETRATE ITS WILD RECESSES",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1580-141083-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-042-noise.wav",
+      "sha256": "1b9a60f05503143a1ce0dd2491b3e4d15bb6e8ca20877918a6c816b2734b380a",
+      "reference": "I WILL ENDEAVOUR IN MY STATEMENT TO AVOID SUCH TERMS AS WOULD SERVE TO LIMIT THE EVENTS TO ANY PARTICULAR PLACE OR GIVE A CLUE AS TO THE PEOPLE CONCERNED",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "1995-1826-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-043-noise.wav",
+      "sha256": "0076f726cff5dd6b5e7a57ab976a4d5917609202b60bab288df748461f19f8c8",
+      "reference": "IN THE DEBATE BETWEEN THE SENIOR SOCIETIES HER DEFENCE OF THE FIFTEENTH AMENDMENT HAD BEEN NOT ONLY A NOTABLE BIT OF REASONING BUT DELIVERED WITH REAL ENTHUSIASM",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2094-142345-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-044-noise.wav",
+      "sha256": "e67cda92e0e8da1ef93ee486c330e13e585c20c1cf03296d6c4337ce4f0a4c6e",
+      "reference": "IT IS A VERY FINE OLD PLACE OF RED BRICK SOFTENED BY A PALE POWDERY LICHEN WHICH HAS DISPERSED ITSELF WITH HAPPY IRREGULARITY SO AS TO BRING THE RED BRICK INTO TERMS OF FRIENDLY COMPANIONSHIP WITH THE LIMESTONE ORNAMENTS SURROUNDING THE THREE GABLES THE WINDOWS AND THE DOOR PLACE",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2300-131720-0000-noise",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-045-noise.wav",
+      "sha256": "41506e7967b5789753223d5c43fa7df533ea4d3a7b466e61b95bd59a4d5bf08c",
+      "reference": "THE PARIS PLANT LIKE THAT AT THE CRYSTAL PALACE WAS A TEMPORARY EXHIBIT",
+      "coverage": [
+        "noise",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "237-126133-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-046-pause.wav",
+      "sha256": "ca63c5b65436fdb1d7dd6f4d641f5155b5c96f8dd1807b67217f0c25900bba36",
+      "reference": "HERE SHE WOULD STAY COMFORTED AND SOOTHED AMONG THE LOVELY PLANTS AND RICH EXOTICS REJOICING THE HEART OF OLD TURNER THE GARDENER WHO SINCE POLLY'S FIRST RAPTUROUS ENTRANCE HAD TAKEN HER INTO HIS GOOD GRACES FOR ALL TIME",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "260-123286-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-047-pause.wav",
+      "sha256": "32e359ac7193dac7caf69ffdd285d83bb3eae2179c7a5e22d7696db86995bfbf",
+      "reference": "SATURDAY AUGUST FIFTEENTH THE SEA UNBROKEN ALL ROUND NO LAND IN SIGHT",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2830-3979-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-048-pause.wav",
+      "sha256": "5670e6352e86584e06eda5c2f1b827c0bb52351e6bc80a488bb722508c903c45",
+      "reference": "WE WANT YOU TO HELP US PUBLISH SOME LEADING WORK OF LUTHER'S FOR THE GENERAL AMERICAN MARKET WILL YOU DO IT",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "2961-960-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-049-pause.wav",
+      "sha256": "8eb4cffa0972bcb72eab96bf6fec3446754e3d589abb14a870be4b4d20935182",
+      "reference": "HE PASSES ABRUPTLY FROM PERSONS TO IDEAS AND NUMBERS AND FROM IDEAS AND NUMBERS TO PERSONS FROM THE HEAVENS TO MAN FROM ASTRONOMY TO PHYSIOLOGY HE CONFUSES OR RATHER DOES NOT DISTINGUISH SUBJECT AND OBJECT FIRST AND FINAL CAUSES AND IS DREAMING OF GEOMETRICAL FIGURES LOST IN A FLUX OF SENSE",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "3570-5694-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-050-pause.wav",
+      "sha256": "7ecab51ad9fdecdb8ab6748cb6bef7c0e6d500079692d62750a0dec5e58fb0a8",
+      "reference": "BUT ALREADY AT A POINT IN ECONOMIC EVOLUTION FAR ANTEDATING THE EMERGENCE OF THE LADY SPECIALISED CONSUMPTION OF GOODS AS AN EVIDENCE OF PECUNIARY STRENGTH HAD BEGUN TO WORK OUT IN A MORE OR LESS ELABORATE SYSTEM",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "3575-170457-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-051-pause.wav",
+      "sha256": "4d51c568b92028de6883be155f0eb2adfa74ce527d5927b6819269edd517103d",
+      "reference": "AND OFTEN HAS MY MOTHER SAID WHILE ON HER LAP I LAID MY HEAD SHE FEARED FOR TIME I WAS NOT MADE BUT FOR ETERNITY",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "3729-6852-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-052-pause.wav",
+      "sha256": "f7ba1a4362453bb3381aea677230e10c5a527a502b2231fe39849f71ea9c1a59",
+      "reference": "TO CELEBRATE THE ARRIVAL OF HER SON SILVIA GAVE A SPLENDID SUPPER TO WHICH SHE HAD INVITED ALL HER RELATIVES AND IT WAS A GOOD OPPORTUNITY FOR ME TO MAKE THEIR ACQUAINTANCE",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4077-13751-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-053-pause.wav",
+      "sha256": "6fa29da9099e44412ea70160879cdc1d2d086deaf18446df0fa27d5600bea691",
+      "reference": "ON THE SIXTH OF APRIL EIGHTEEN THIRTY THE CHURCH OF JESUS CHRIST OF LATTER DAY SAINTS WAS FORMALLY ORGANIZED AND THUS TOOK ON A LEGAL EXISTENCE",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4446-2271-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-054-pause.wav",
+      "sha256": "7b2abfdd549253c167baea72b0b8687801c66e11367fa93e425e35fb5d5de1f8",
+      "reference": "MAINHALL LIKED ALEXANDER BECAUSE HE WAS AN ENGINEER",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    },
+    {
+      "sourceId": "4507-16021-0000-pause",
+      "path": "benchmarks/datasets/librispeech-t3/media/item-055-pause.wav",
+      "sha256": "498731cc119506d3ca9a60882d46ed700b5ac649ada65dada8ace0b8b4a9355e",
+      "reference": "CHAPTER ONE ORIGIN",
+      "coverage": [
+        "pause",
+        "read-speech",
+        "multi-speaker"
+      ]
+    }
+  ]
+}

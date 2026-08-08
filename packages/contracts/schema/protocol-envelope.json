@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/protocol-envelope.json",
+  "title": "ProtocolEnvelope",
+  "type": "object",
+  "required": ["protocolVersion", "sessionId", "epoch", "eventId", "type", "monotonicMs", "payload"],
+  "properties": {
+    "protocolVersion": { "const": 1 },
+    "sessionId": { "type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+    "epoch": { "type": "integer", "minimum": 0 },
+    "eventId": { "type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", "description": "Unique UUIDv7 event identifier" },
+    "type": { "type": "string", "minLength": 1 },
+    "monotonicMs": { "type": "number", "minimum": 0 },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}

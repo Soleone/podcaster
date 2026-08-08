@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/transcript-final.json",
+  "title": "TranscriptFinalEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    { "type": "object", "required": ["type", "payload"], "properties": {
+      "type": { "const": "transcript.final" },
+      "payload": { "type": "object", "required": ["turnId", "text", "endpointComplete"], "properties": {
+        "turnId": { "type": "string", "format": "uuid" },
+        "text": { "type": "string", "maxLength": 16384 },
+        "endpointComplete": { "const": true }
+      }, "additionalProperties": false }
+    } }
+  ]
+}

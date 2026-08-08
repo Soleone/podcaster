@@ -1,0 +1,303 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/benchmarks/summary.json",
+  "title": "BenchmarkSummary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "counts",
+    "speechStartToFirstPartialMs",
+    "endpointToFinalMs",
+    "ttsTimeToFirstAudioMs",
+    "rtf",
+    "wer",
+    "cer",
+    "partialRevisionCount",
+    "partialChurnCharacters",
+    "underruns",
+    "droppedFrames",
+    "peakVramBytes",
+    "steadyVramBytes",
+    "failures",
+    "soak"
+  ],
+  "$defs": {
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p50",
+        "p95",
+        "p99"
+      ],
+      "properties": {
+        "p50": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p95": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p99": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "properties": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "passed",
+        "failed",
+        "cancelled"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancelled": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "speechStartToFirstPartialMs": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/distribution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "endpointToFinalMs": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/distribution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ttsTimeToFirstAudioMs": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/distribution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rtf": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/distribution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "wer": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "cer": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "partialRevisionCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "partialChurnCharacters": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "underruns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "droppedFrames": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "peakVramBytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "steadyVramBytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceId",
+          "code",
+          "stage",
+          "message"
+        ],
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "soak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "durationSeconds",
+        "passed",
+        "severeFailures",
+        "underruns",
+        "droppedFrames"
+      ],
+      "properties": {
+        "durationSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "severeFailures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "underruns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "droppedFrames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedFrames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consumedFrames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedChunks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consumedChunks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deadlineOverruns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deadlineLatenessP95Ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "deadlineLatenessMaxMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "timingConformance": {
+          "type": "boolean"
+        },
+        "resetCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "workerLeaks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedSamples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consumedSamples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "underrunEpisodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missedSamples": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "totalAudioDurationSeconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "totalSamples": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "droppedOutputChunks": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "peakRssBytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "synthesisWindowWholeProcessPeakRssBytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    }
+  }
+}

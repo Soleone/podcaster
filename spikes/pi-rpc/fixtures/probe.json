@@ -1,0 +1,99 @@
+{
+  "command": "probe",
+  "executable": "/home/soleone/.local/share/pnpm/bin/pi",
+  "version": "0.84.0",
+  "protocol": "strict LF-delimited JSONL with fatal UTF-8",
+  "model": "openai-codex/gpt-5.6-sol",
+  "readiness": "ready",
+  "authReadiness": "bounded live request completed normally",
+  "correlatedCommands": [
+    "get_state",
+    "get_available_models",
+    "prompt"
+  ],
+  "childCleanup": {
+    "exited": true,
+    "groupSignalUsed": true,
+    "groupGone": true
+  },
+  "records": [
+    {
+      "type": "response",
+      "id": "cmd-1",
+      "command": "get_state",
+      "success": true
+    },
+    {
+      "type": "response",
+      "id": "cmd-2",
+      "command": "get_available_models",
+      "success": true
+    },
+    {
+      "type": "response",
+      "id": "cmd-3",
+      "command": "prompt",
+      "success": true
+    },
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start"
+    },
+    {
+      "type": "message_end",
+      "role": "user",
+      "hasError": false
+    },
+    {
+      "type": "message_start"
+    },
+    {
+      "type": "message_update",
+      "updateType": "text_start",
+      "contentIndex": 0
+    },
+    {
+      "type": "message_update",
+      "updateType": "text_delta",
+      "contentIndex": 0,
+      "text": "<model-text>",
+      "chars": 3
+    },
+    {
+      "type": "message_update",
+      "updateType": "text_delta",
+      "contentIndex": 0,
+      "text": "<model-text>",
+      "chars": 6
+    },
+    {
+      "type": "message_update",
+      "updateType": "text_end",
+      "contentIndex": 0
+    },
+    {
+      "type": "message_end",
+      "role": "assistant",
+      "stopReason": "stop",
+      "hasError": false
+    },
+    {
+      "type": "turn_end",
+      "role": "assistant",
+      "stopReason": "stop",
+      "hasError": false
+    },
+    {
+      "type": "agent_end",
+      "willRetry": false
+    },
+    {
+      "type": "agent_settled"
+    }
+  ]
+}
