@@ -7,6 +7,8 @@ import { SessionScreen } from './session/SessionScreen';
 import { SessionController, type ControlledPlayback } from './session/controller';
 import { createEnvelope, uuidV7 } from './session/envelope';
 import { FakeSessionTransport } from './session/fake-transport';
+import type { SessionTransport } from './session/transport';
+import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
 import { StableTurnWriter } from './storage/stable-turn-writer';
 
@@ -48,8 +50,10 @@ export function App() {
   const [elapsed, setElapsed] = useState(0);
   const writerRef = useRef<StableTurnWriter | undefined>(undefined);
   const controllerRef = useRef<SessionController | undefined>(undefined);
-  const transportRef = useRef<FakeSessionTransport | undefined>(undefined);
+  const transportRef = useRef<SessionTransport | undefined>(undefined);
+  const fakeTransportRef = useRef<FakeSessionTransport | undefined>(undefined);
   const captureRef = useRef<CaptureHandle | undefined>(undefined);
+  const captureStreamIdRef = useRef<number | undefined>(undefined);
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const statsRef = useRef<FakeRuntimeStats>({ captureStarts: 0, captureStops: 0, captureRunning: false, playbackPauses: 0, playbackResumes: 0, playbackStops: [] });
   const startedAt = useRef(Date.now());
@@ -81,6 +85,7 @@ export function App() {
     unsubscribeRef.current = controller.subscribe(setView);
     controllerRef.current = controller;
     transportRef.current = transport;
+    fakeTransportRef.current = transport;
     statsRef.current.captureStarts++;
     const capture = await new BrowserCapture().start({
       send: frame => transport.sendCapture(frame),
@@ -99,6 +104,45 @@ export function App() {
     setSessionId(id);
   }, []);
 
+  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only') => {
+    let controller!: SessionController;
+    const transport = new WebSocketSessionTransport(id, () => controller?.snapshot().epoch ?? 0);
+    await transport.connect(cap);
+    controller = new SessionController({
+      sessionId: id,
+      transport,
+      writer: opened,
+      initialState: initial,
+      playbackFactory: input => new BrowserPlayback(input.playbackId, input.outputEpoch, input.sampleRate, {
+        progress: progress => controller.reportPlaybackProgress(progress),
+        terminal: receipt => controller.reportPlaybackTerminal(receipt),
+        degraded: message => controller.degrade(message),
+      }),
+    });
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = controller.subscribe(setView);
+    controllerRef.current = controller;
+    transportRef.current = transport;
+    await transport.startSession(seed, reasoningMode);
+    const random = new Uint32Array(1); crypto.getRandomValues(random);
+    const streamId = random[0] ?? 0;
+    captureStreamIdRef.current = streamId;
+    await transport.startAudio(streamId);
+    try {
+      captureRef.current = await new BrowserCapture({ streamId: () => streamId }).start({
+        send: frame => transport.sendCapture(frame),
+        degraded: message => controller.degrade(message),
+      });
+    } catch (error) {
+      await transport.stopAudio(streamId);
+      captureStreamIdRef.current = undefined;
+      await controller.stop();
+      throw error;
+    }
+    setCapability(cap);
+    setSessionId(id);
+  }, []);
+
   useEffect(() => {
     if (!fakeServices) return;
     let cancelled = false;
@@ -112,7 +156,7 @@ export function App() {
         ...initialSessionState,
         dominant: 'listening',
         announcement: 'Listening',
-        stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}) })),
+        stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
       };
       startedAt.current = new Date(active.startedAt).getTime();
       await composeFakeSession(opened, active.sessionId, restored, 'fake-recovered');
@@ -127,8 +171,8 @@ export function App() {
   }, [view]);
 
   useEffect(() => {
-    if (!fakeServices || !view || !sessionId || !transportRef.current || !controllerRef.current) { delete window.__podcasterTest; return; }
-    const transport = transportRef.current;
+    if (!fakeServices || !view || !sessionId || !fakeTransportRef.current || !controllerRef.current) { delete window.__podcasterTest; return; }
+    const transport = fakeTransportRef.current;
     const controller = controllerRef.current;
     window.__podcasterTest = {
       emit: (type, payload, epoch = controller.snapshot().epoch) => transport.emit(createEnvelope({ sessionId, epoch, type, payload })),
@@ -144,18 +188,26 @@ export function App() {
     return () => { delete window.__podcasterTest; };
   }, [sessionId, view]);
 
-  async function start(cap: string) {
+  async function start(cap: string, reasoningMode: 'full' | 'transcript_only' = 'full') {
     const opened = writerRef.current ?? await StableTurnWriter.open();
     writerRef.current = opened;
     const id = uuidV7();
-    const persisted = await opened.beginSession({ sessionId: id, sessionSeed: uuidV7(), personaDigest: PERSONA_DIGEST });
+    const seed = uuidV7();
+    const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest: PERSONA_DIGEST });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
     startedAt.current = Date.now();
-    await composeFakeSession(opened, id, { ...initialSessionState, dominant: 'listening', announcement: 'Listening' }, cap);
+    const initial = { ...initialSessionState, dominant: 'listening' as const, announcement: 'Listening' };
+    if (fakeServices) await composeFakeSession(opened, id, initial, cap);
+    else await composeRealSession(opened, id, initial, cap, seed, reasoningMode);
   }
 
   async function stop() {
     await captureRef.current?.stop();
+    const streamId = captureStreamIdRef.current;
+    if (streamId !== undefined) {
+      await transportRef.current?.stopAudio(streamId);
+      captureStreamIdRef.current = undefined;
+    }
     await controllerRef.current?.stop();
     if (capability && capability !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
   }

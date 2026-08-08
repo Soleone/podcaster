@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/browser-command.json",
+  "title": "BrowserCommand",
+  "allOf": [
+    {
+      "$ref": "../protocol-envelope.json"
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "session.start"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "sessionSeed",
+                "reasoningMode"
+              ],
+              "properties": {
+                "sessionSeed": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "reasoningMode": {
+                  "enum": [
+                    "full",
+                    "transcript_only"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "audio.start"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "streamId",
+                "sampleRate",
+                "channels",
+                "frameSamples"
+              ],
+              "properties": {
+                "streamId": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "sampleRate": {
+                  "const": 16000
+                },
+                "channels": {
+                  "const": 1
+                },
+                "frameSamples": {
+                  "const": 320
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "audio.stop"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "streamId"
+              ],
+              "properties": {
+                "streamId": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "turn.cancel"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "user",
+                    "stop"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "barge_in.confirm",
+                "barge_in.reject"
+              ]
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "responseId",
+                "outputEpoch"
+              ],
+              "properties": {
+                "responseId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "outputEpoch": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "turn.persisted"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "turnId",
+                "finalEventId",
+                "persistedEpoch"
+              ],
+              "properties": {
+                "turnId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "finalEventId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "persistedEpoch": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "turn.persistence_failed"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "turnId",
+                "finalEventId",
+                "persistedEpoch",
+                "reasonCode"
+              ],
+              "properties": {
+                "turnId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "finalEventId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "persistedEpoch": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "reasonCode": {
+                  "enum": [
+                    "quota",
+                    "unavailable",
+                    "aborted"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "session.stop"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "user",
+                    "expired",
+                    "disconnect"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "./playback-progress.json"
+        },
+        {
+          "$ref": "./playback-stopped.json"
+        }
+      ]
+    }
+  ]
+}

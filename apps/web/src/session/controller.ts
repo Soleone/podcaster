@@ -22,6 +22,13 @@ export interface SessionControllerOptions {
 interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean }
 interface Provisional { responseId: string; outputEpoch: number; playbackId: string; newerStableTurn: boolean; confirmed: boolean }
 
+function meaningfulInterruption(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const normalized = value.normalize('NFKC').trim();
+  if (/\b(?:stop|cancel|pause|wait|quiet)\b/iu.test(normalized)) return true;
+  return (normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? []).length >= 3;
+}
+
 export class SessionController {
   private state: SessionViewState;
   private readonly listeners = new Set<(state: SessionViewState) => void>();
@@ -40,6 +47,7 @@ export class SessionController {
     this.schedule = options.schedule ?? ((delay, callback) => { const timer = setTimeout(callback, delay); return () => clearTimeout(timer); });
     this.unsubscribe.push(options.transport.onEvent(event => this.handleEvent(event)));
     this.unsubscribe.push(options.transport.onAudio(chunk => this.handleAudio(chunk)));
+    this.unsubscribe.push(options.transport.onFailure(message => { void this.handleTransportFailure(message); }));
   }
 
   snapshot(): SessionViewState { return this.state; }
@@ -54,11 +62,16 @@ export class SessionController {
     if (event.epoch < this.state.epoch && !accountingOnly) return;
     if ((event.type === 'barge_in.confirmed' || event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') && !this.matchesProvisionalResolution(event)) return;
     this.seenEvents.add(event.eventId);
-    if (event.type === 'transcript.final' && this.provisional) this.provisional.newerStableTurn = true;
+    if (event.type === 'transcript.final' && this.provisional && meaningfulInterruption(event.payload.text)) this.provisional.newerStableTurn = true;
     const storage = await this.options.writer.apply(event);
     if (!storage.ok) {
+      if (event.type === 'transcript.final' && !this.stopped) await this.options.transport.acknowledgePersistenceFailed(event, 'unavailable');
       this.degrade(storage.degradedReason ?? 'Stable storage failed.');
       return;
+    }
+    if (event.type === 'transcript.final') {
+      if (this.stopped) return;
+      await this.options.transport.acknowledgePersisted(event);
     }
     if (event.epoch < this.state.epoch) return;
     this.setState(reduceSessionState(this.state, event));
@@ -94,6 +107,7 @@ export class SessionController {
       this.clearProvisional();
     } else if (event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') {
       const provisional = this.provisional;
+      if (provisional && event.payload.resumable === true) this.echoRecoveryKey = this.provisionalKey(provisional);
       const active = this.active;
       if (!provisional || !active || event.payload.responseId !== provisional.responseId || event.payload.outputEpoch !== provisional.outputEpoch || active.responseId !== provisional.responseId || active.playbackId !== provisional.playbackId || active.outputEpoch !== provisional.outputEpoch) return;
       const safe = canSafelyResume({
@@ -143,23 +157,28 @@ export class SessionController {
     await this.options.transport.confirmBargeIn();
     await this.terminalize('cancelled');
     this.clearProvisional();
-    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false });
+    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false, playbackNotice: '' });
   }
-  async rejectBargeIn(): Promise<void> { if (this.provisional) await this.options.transport.rejectBargeIn(); }
+  async rejectBargeIn(): Promise<void> {
+    if (!this.provisional) return;
+    this.echoRecoveryKey = this.provisionalKey(this.provisional);
+    await this.options.transport.rejectBargeIn();
+  }
   async cancelAssistant(): Promise<void> {
     await this.options.transport.cancelAssistant();
     await this.terminalize('cancelled');
     this.clearProvisional();
-    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false });
+    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false, playbackNotice: '' });
   }
 
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
     this.cancelSilence?.();
-    this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', echoConfirmation: false });
+    this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', echoConfirmation: false, playbackNotice: '' });
     await this.terminalize('stopped');
     this.clearProvisional();
+    await this.options.transport.stopSession('user');
     this.options.transport.disconnect();
     for (const unsubscribe of this.unsubscribe.splice(0)) unsubscribe();
     const ended = await this.options.writer.endSession(this.options.sessionId);
@@ -167,7 +186,7 @@ export class SessionController {
       this.degrade(ended.degradedReason ?? 'The session stopped, but its final local state could not be saved.');
       return;
     }
-    this.setState({ ...this.state, dominant: 'idle', announcement: 'Session stopped', echoConfirmation: false });
+    this.setState({ ...this.state, dominant: 'idle', announcement: 'Session stopped', echoConfirmation: false, playbackNotice: '' });
   }
 
   degrade(message: string): void {
@@ -187,6 +206,15 @@ export class SessionController {
 
   private handleAudio(chunk: OutputAudioChunk): void {
     if (this.active?.playbackId === chunk.playbackId && !this.active.terminal) this.active.player.append(chunk.sampleOffset, chunk.pcm16);
+  }
+  private async handleTransportFailure(message: string): Promise<void> {
+    const active = this.active;
+    if (active && !active.terminal) {
+      active.terminal = true;
+      try { await active.player.stop('failed'); } catch { /* local cutoff was still attempted */ }
+    }
+    this.clearProvisional();
+    this.degrade(message);
   }
   private async terminalize(reason: PlaybackStopReason): Promise<void> {
     const active = this.active;

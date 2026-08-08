@@ -52,6 +52,17 @@ describe('BrowserPlayback', () => {
     expect(terminal).toHaveBeenCalledOnce();
   });
 
+  it('reports the streamed generated prefix before the final extent is declared', async () => {
+    const { context, playback, progress, terminal } = setup();
+    playback.append(0, new Int16Array(480));
+    context.currentTime = 0.02;
+    context.sources[0]!.finish();
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ playedSampleOffset: 480, generatedSamples: 480 }));
+    expect(terminal).not.toHaveBeenCalled();
+    playback.setGeneratedSamples(480);
+    await vi.waitFor(() => expect(terminal).toHaveBeenCalledOnce());
+  });
+
   it('keeps zero delivery when stopped before the first scheduled sample', async () => {
     const { context, playback, terminal } = setup();
     playback.setGeneratedSamples(2_400);

@@ -1,0 +1,528 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/sidecar-message.json",
+  "title": "SidecarMessage",
+  "type": "object",
+  "required": [
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "type": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "stream": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "utterance": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "response": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": {
+          "const": "readiness.snapshot"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "status",
+            "stt",
+            "tts"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "starting",
+                "ready",
+                "failed"
+              ]
+            },
+            "stt": {
+              "const": "nemotron-3.5-transformers-fp32-320ms-paced-v1"
+            },
+            "tts": {
+              "const": "kokoro-82m-onnx-fp32-af-heart-cpu-v1"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "stream.open"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "captureStreamId",
+            "sampleRate",
+            "frameSamples"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "captureStreamId": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "sampleRate": {
+              "const": 16000
+            },
+            "frameSamples": {
+              "const": 320
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "enum": [
+            "stream.opened",
+            "stream.reset",
+            "stream.close",
+            "stream.closed"
+          ]
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "enum": [
+            "vad.speech_start",
+            "vad.speech_end"
+          ]
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "utteranceId",
+            "captureStartSequence"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "utteranceId": {
+              "$ref": "#/$defs/utterance"
+            },
+            "captureStartSequence": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "stt.bind_epoch"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "utteranceId",
+            "epoch"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "utteranceId": {
+              "$ref": "#/$defs/utterance"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "stt.partial"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "utteranceId",
+            "epoch",
+            "sequence",
+            "text",
+            "replacedCharacters"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "utteranceId": {
+              "$ref": "#/$defs/utterance"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16384
+            },
+            "replacedCharacters": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "stt.final"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "utteranceId",
+            "epoch",
+            "text",
+            "endpointComplete"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "utteranceId": {
+              "$ref": "#/$defs/utterance"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16384
+            },
+            "endpointComplete": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts.request"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch",
+            "text"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts.cancel"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts.started"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch",
+            "playbackId",
+            "outputStreamId",
+            "sampleRate"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "playbackId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "outputStreamId": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "sampleRate": {
+              "const": 24000
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts.ended"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch",
+            "playbackId",
+            "generatedSamples"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "playbackId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "generatedSamples": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts.cancelled"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "sidecar.failure"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "code",
+            "recoverable"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_message",
+                "invalid_audio",
+                "queue_overflow",
+                "runtime_unavailable",
+                "runtime_poisoned",
+                "cancelled"
+              ]
+            },
+            "recoverable": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    }
+  ]
+}

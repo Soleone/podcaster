@@ -5,11 +5,18 @@ import type { PiClient, PiEvent, PiPosture } from "../pi/PiClient.js";
 
 export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "stopped";
 export interface SessionEvent { protocolVersion: 1; sessionId: string; epoch: number; eventId: string; type: string; monotonicMs: number; payload: Record<string, unknown> }
+export interface SpeechSynthesisStart {
+  playbackId: string;
+  sampleRate: number;
+  generatedSamples?: number;
+  completion?: Promise<{ generatedSamples: number }>;
+}
 export interface SpeechOutputPort {
-  synthesize(input: { sessionId: string; epoch: number; responseId: string; text: string; signal: AbortSignal }): Promise<{ playbackId: string; sampleRate: number; generatedSamples: number }>;
+  synthesize(input: { sessionId: string; epoch: number; responseId: string; text: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): Promise<SpeechSynthesisStart>;
   pause(responseId: string): void;
   resume(responseId: string): void;
   cancel(responseId: string): void;
+  release?(responseId: string): void;
 }
 export interface Scheduler { schedule(delayMs: number, callback: () => void): () => void }
 export interface SessionOrchestratorOptions {
@@ -26,6 +33,7 @@ export interface SessionOrchestratorOptions {
   maxContextBytes?: number;
   maxContextTurns?: number;
   policyDecide?: (input: PolicyInput) => PolicyDecision;
+  transcriptOnly?: boolean;
 }
 export interface SessionSnapshot {
   phase: SessionPhase;
@@ -46,6 +54,7 @@ interface ActiveResponse {
   cancelled: boolean;
   playbackId?: string;
   assistantText?: string;
+  generatedSamples: number;
   phaseBeforeProvisional?: SessionPhase;
 }
 interface ProvisionalState { responseId: string; outputEpoch: number; cancelTimer: () => void; echoRecovered: boolean }
@@ -69,6 +78,11 @@ function truncateUtf8(value: string, maxBytes: number): string {
   let end = maxBytes;
   while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
   return bytes.subarray(0, end).toString("utf8");
+}
+function meaningfulInterruption(value: string): boolean {
+  const normalized = value.normalize("NFKC").trim();
+  if (/\b(?:stop|cancel|pause|wait|quiet)\b/iu.test(normalized)) return true;
+  return (normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? []).length >= 3;
 }
 function boundedPersonaForPi(persona: PersonaInterpretation, maxBytes: number): string | undefined {
   const body = Array.from(persona.body);
@@ -140,7 +154,7 @@ export class SessionOrchestrator {
     this.now = options.now ?? (() => performance.now());
     this.idFactory = options.idFactory ?? (() => defaultUuidV7(Date.now()));
     this.scheduler = options.scheduler ?? { schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return () => clearTimeout(timer); } };
-    this.provisionalTimeoutMs = options.provisionalTimeoutMs ?? 800;
+    this.provisionalTimeoutMs = options.provisionalTimeoutMs ?? 3_000;
     this.maxContextBytes = options.maxContextBytes ?? 4096;
     this.maxContextTurns = options.maxContextTurns ?? 6;
     this.policyDecide = options.policyDecide ?? decide;
@@ -167,6 +181,13 @@ export class SessionOrchestrator {
     if (turn.epoch !== this.epoch) return;
     if (this.phase === "stopped" || this.seenTurns.has(turn.turnId)) return;
     this.seenTurns.add(turn.turnId);
+    if (this.provisional && !meaningfulInterruption(turn.text)) {
+      // Persisted empty/very short STT output is treated as accidental noise.
+      // Keep the current response and explicitly authorize browser resume.
+      this.provisional.echoRecovered = true;
+      this.resolveProvisional("rejected");
+      return;
+    }
     if (this.provisional) {
       const provisional = this.provisional;
       provisional.cancelTimer(); this.provisional = undefined;
@@ -198,11 +219,11 @@ export class SessionOrchestrator {
     this.stableUserTurnCount++;
     this.addContext({ role: "user", text: turn.text.trim() });
     if (policy.eligible) this.eligibleTurnsSinceChallenge = policy.posture === "challenge" ? 0 : this.eligibleTurnsSinceChallenge + 1;
-    if (policy.posture === "silence") { this.phase = "listening"; this.emitState(); return; }
+    if (policy.posture === "silence" || this.options.transcriptOnly) { this.phase = "listening"; this.emitState(); return; }
 
     const responseId = this.idFactory();
     const controller = new AbortController();
-    const active: ActiveResponse = { responseId, turnId: turn.turnId, epoch: operationEpoch, posture: policy.posture, controller, cancelled: false };
+    const active: ActiveResponse = { responseId, turnId: turn.turnId, epoch: operationEpoch, posture: policy.posture, controller, cancelled: false, generatedSamples: 0 };
     this.active = active;
     this.phase = "reasoning";
     try {
@@ -219,20 +240,48 @@ export class SessionOrchestrator {
       this.emit("reasoning.final", { turnId: active.turnId, responseId: active.responseId, posture: active.posture, text: validated });
       active.assistantText = validated;
       this.setUnderlyingPhase(active, "synthesizing");
-      const synthesized = await this.options.speech.synthesize({ sessionId: this.options.sessionId, epoch: active.epoch, responseId: active.responseId, text: validated, signal: controller.signal });
+      const synthesized = await this.options.speech.synthesize({
+        sessionId: this.options.sessionId,
+        epoch: active.epoch,
+        responseId: active.responseId,
+        text: validated,
+        signal: controller.signal,
+        onGeneratedSamples: total => this.recordGeneratedSamples(active, total),
+      });
       if (!this.isCurrent(active)) return;
-      if (!Number.isSafeInteger(synthesized.generatedSamples) || synthesized.generatedSamples <= 0 || !Number.isSafeInteger(synthesized.sampleRate) || synthesized.sampleRate <= 0) throw new Error("invalid speech output metadata");
+      if (!Number.isSafeInteger(synthesized.sampleRate) || synthesized.sampleRate <= 0 || (!synthesized.completion && (!Number.isSafeInteger(synthesized.generatedSamples) || synthesized.generatedSamples! <= 0))) throw new Error("invalid speech output metadata");
       active.playbackId = synthesized.playbackId;
-      this.playback.set(synthesized.playbackId, { outputEpoch: active.epoch, generatedSamples: synthesized.generatedSamples, delivered: 0, terminal: false });
+      this.playback.set(synthesized.playbackId, { outputEpoch: active.epoch, generatedSamples: Math.max(active.generatedSamples, synthesized.generatedSamples ?? 0), delivered: 0, terminal: false });
       this.emit("tts.started", { responseId: active.responseId, playbackId: synthesized.playbackId, sampleRate: synthesized.sampleRate });
-      this.emit("tts.ended", { responseId: active.responseId, playbackId: synthesized.playbackId, generatedSamples: synthesized.generatedSamples });
+      this.options.speech.release?.(active.responseId);
       this.setUnderlyingPhase(active, "playing");
       if (this.hasProvisional(active.responseId)) this.options.speech.pause(active.responseId);
+      const completed = synthesized.completion ? await synthesized.completion : { generatedSamples: synthesized.generatedSamples! };
+      if (!this.isCurrent(active)) return;
+      if (!Number.isSafeInteger(completed.generatedSamples) || completed.generatedSamples <= 0) throw new Error("invalid speech output completion");
+      const ledger = this.playback.get(synthesized.playbackId);
+      if (!ledger || ledger.outputEpoch !== active.epoch || ledger.terminal) return;
+      ledger.generatedSamples = completed.generatedSamples;
+      this.emit("tts.ended", { responseId: active.responseId, playbackId: synthesized.playbackId, generatedSamples: completed.generatedSamples });
     } catch (error) {
       if (!this.isCurrent(active)) return;
       this.fail("response_failed", "Local response generation failed.", "Continue in transcript-only mode or retry.");
       this.clearActive(active);
     }
+  }
+
+  handleSpeechStart(): number {
+    const active = this.active;
+    if (!active || this.phase === "stopped") return this.epoch;
+    if (this.phase === "playing" || this.phase === "echo_provisional") {
+      this.beginProvisionalBargeIn(active.responseId);
+      return this.epoch;
+    }
+    this.advanceEpochAndCancel();
+    this.interruptionCooldownActive = true;
+    this.phase = "listening";
+    this.emitState();
+    return this.epoch;
   }
 
   beginProvisionalBargeIn(responseId: string): boolean {
@@ -294,6 +343,20 @@ export class SessionOrchestrator {
     this.emitState();
   }
 
+  cancelCurrentTurn(): void {
+    if (this.phase === "stopped") return;
+    const provisional = this.provisional;
+    provisional?.cancelTimer();
+    this.provisional = undefined;
+    const responseId = provisional?.responseId;
+    const outputEpoch = provisional?.outputEpoch;
+    if (this.active || provisional) this.advanceEpochAndCancel();
+    if (responseId && outputEpoch !== undefined) this.emit("barge_in.confirmed", { responseId, outputEpoch, resumable: false });
+    this.interruptionCooldownActive = true;
+    this.phase = "listening";
+    this.emitState();
+  }
+
   stop(): void {
     if (this.phase === "stopped") return;
     const provisional = this.provisional;
@@ -327,7 +390,9 @@ export class SessionOrchestrator {
       && active.playbackId
       && ledger
       && !ledger.terminal
-      && provisional.echoRecovered,
+      // If the confirmation prompt times out, prefer continuing the response.
+      // Silence is ambiguous and must not destructively discard audible output.
+      && (provisional.echoRecovered || type === "timed_out"),
     );
     if (safe && active) {
       this.options.speech.resume(active.responseId);
@@ -375,6 +440,13 @@ export class SessionOrchestrator {
   }
   private isCurrent(active: ActiveResponse): boolean { return this.phase !== "stopped" && this.active === active && active.epoch === this.epoch && !active.controller.signal.aborted; }
   private validOffset(value: number): boolean { return Number.isSafeInteger(value) && value >= 0; }
+  private recordGeneratedSamples(active: ActiveResponse, total: number): void {
+    if (!this.validOffset(total) || total < active.generatedSamples || active.cancelled) return;
+    active.generatedSamples = total;
+    if (!active.playbackId) return;
+    const ledger = this.playback.get(active.playbackId);
+    if (ledger && !ledger.terminal && ledger.outputEpoch === active.epoch) ledger.generatedSamples = Math.max(ledger.generatedSamples, total);
+  }
   private addContext(turn: ContextTurn): void {
     this.context.push(turn);
     if (this.context.length > this.maxContextTurns) this.context.splice(0, this.context.length - this.maxContextTurns);

@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": { "types": "./src/index.ts", "import": "./src/index.ts" },
-    "./binary": { "types": "./src/binary.ts", "import": "./src/binary.ts" }
+    ".": { "types": "./src/index.ts", "import": "./dist/index.js" },
+    "./binary": { "types": "./src/binary.ts", "import": "./src/binary.ts" },
+    "./validators": { "types": "./src/validators.ts", "import": "./src/validators.ts" }
   },
   "scripts": {
     "generate": "node scripts/generate.mjs",
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

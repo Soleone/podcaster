@@ -46,6 +46,12 @@ export async function startSidecar(python = process.env.PYTHON ?? `${repositoryR
 }
 
 export async function sidecarHealth(sidecar: SidecarProcess): Promise<boolean> {
-  const response = await fetch(`${sidecar.origin}/health`, { headers: { authorization: `Bearer ${sidecar.secret}` }, signal: AbortSignal.timeout(1000) });
-  return response.ok;
+  try {
+    const response = await fetch(`${sidecar.origin}/health`, { headers: { authorization: `Bearer ${sidecar.secret}` }, signal: AbortSignal.timeout(1000) });
+    if (!response.ok) return false;
+    const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown };
+    return value.status === 'ready'
+      && value.stt === 'nemotron-3.5-transformers-fp32-320ms-paced-v1'
+      && value.tts === 'kokoro-82m-onnx-fp32-af-heart-cpu-v1';
+  } catch { return false; }
 }

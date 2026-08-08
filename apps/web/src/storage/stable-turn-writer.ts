@@ -23,7 +23,7 @@ const stringValue = (value: unknown): string | undefined => typeof value === 'st
 const numberValue = (value: unknown): number | undefined => Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
 
 function blankTurn(sessionId: string, turnId: string, at: string): StoredTurn {
-  return { key: turnKey(sessionId, turnId), sessionId, turnId, stableText: null, posture: null, eligible: null, responseId: null, assistantText: null, playbackId: null, outputEpoch: null, sampleRate: null, generatedSamples: 0, deliveredSampleOffset: 0, pendingDeliveredOffset: 0, terminalReason: null, interrupted: false, failures: [], createdAt: at, updatedAt: at };
+  return { key: turnKey(sessionId, turnId), sessionId, turnId, stableText: null, posture: null, eligible: null, policyReason: null, responseId: null, assistantText: null, playbackId: null, outputEpoch: null, sampleRate: null, generatedSamples: 0, deliveredSampleOffset: 0, pendingDeliveredOffset: 0, terminalReason: null, interrupted: false, failures: [], createdAt: at, updatedAt: at };
 }
 
 export class StableTurnWriter {
@@ -104,6 +104,8 @@ export class StableTurnWriter {
         const posture = event.payload.posture;
         if (posture === 'riff' || posture === 'question' || posture === 'challenge' || posture === 'silence') turn.posture = posture;
         if (typeof event.payload.eligible === 'boolean') turn.eligible = event.payload.eligible;
+        const reasonCodes = Array.isArray(event.payload.reasonCodes) ? event.payload.reasonCodes : [];
+        if (typeof reasonCodes[0] === 'string') turn.policyReason = reasonCodes[0];
       } else if (event.type === 'reasoning.final' && turn) {
         if (responseId) turn.responseId = responseId;
         const text = stringValue(event.payload.text);

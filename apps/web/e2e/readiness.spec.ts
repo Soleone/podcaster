@@ -9,8 +9,12 @@ test('disclosure precedes secure readiness and explicit microphone permission', 
     (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls = 0;
     Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: async () => {
       (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls++;
+      localStorage.setItem('test-microphone-granted', 'true');
       return { getTracks: () => [{ stop() {} }] };
     } } });
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: async () => ({
+      state: localStorage.getItem('test-microphone-granted') === 'true' ? 'granted' : 'prompt',
+    }) } });
   });
   let bootstrapCalls = 0; page.on('request', request => { if (request.url().endsWith('/api/bootstrap')) bootstrapCalls++; });
   await page.goto(server.origin);
@@ -31,6 +35,13 @@ test('disclosure precedes secure readiness and explicit microphone permission', 
   expect(await permissionCalls(page)).toBe(1);
   await expect(page.getByRole('button', { name: 'Start session' })).toBeDisabled();
   await expect(page.getByText(/host audio-model integration is ready/)).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Readiness' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Before you continue' })).toHaveCount(0);
+  await expect(page.getByText(/Microphone permission is ready/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enable microphone' })).toHaveCount(0);
+  await expect.poll(() => bootstrapCalls).toBe(2);
 });
 async function permissionCalls(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls);

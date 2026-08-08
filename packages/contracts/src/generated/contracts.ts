@@ -9,14 +9,20 @@ export type BenchmarkRun = { "schemaVersion": 1; "runId": string; "kind": "synth
 export type BenchmarkSummaryDistribution = { "p50": number; "p95": number; "p99": number; };
 export type BenchmarkSummary = { "counts": { "total": number; "passed": number; "failed": number; "cancelled": number; }; "speechStartToFirstPartialMs": BenchmarkSummaryDistribution | null; "endpointToFinalMs": BenchmarkSummaryDistribution | null; "ttsTimeToFirstAudioMs": BenchmarkSummaryDistribution | null; "rtf": BenchmarkSummaryDistribution | null; "wer": number | null; "cer": number | null; "partialRevisionCount": number; "partialChurnCharacters": number; "underruns": number; "droppedFrames": number; "peakVramBytes": number | null; "steadyVramBytes": number | null; "failures": Array<{ "sourceId": string; "code": string; "stage": string; "message": string; }>; "soak": { "durationSeconds": number; "passed": boolean; "severeFailures": number; "underruns": number; "droppedFrames": number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "deadlineLatenessP95Ms"?: number; "deadlineLatenessMaxMs"?: number; "timingConformance"?: boolean; "resetCount"?: number; "workerLeaks"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; }; "totalAudioDurationSeconds"?: number; "totalSamples"?: number; "droppedOutputChunks"?: number; "peakRssBytes"?: number | null; "synthesisWindowWholeProcessPeakRssBytes"?: number | null; };
 export type BargeInEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out"; "monotonicMs": number; "payload": { "responseId": string; "outputEpoch": number; "resumable": boolean; }; };
-export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "playback.progress" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "reasoning.delta" | "reasoning.final" | "tts.started" | "tts.ended" | "failure" | "stream.open" | "stream.reset" | "stream.close" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
+export type BrowserCommand = ({ "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; }) & ({ "type": "session.start"; "payload": { "sessionSeed": string; "reasoningMode": "full" | "transcript_only"; }; } | { "type": "audio.start"; "payload": { "streamId": number; "sampleRate": 16000; "channels": 1; "frameSamples": 320; }; } | { "type": "audio.stop"; "payload": { "streamId": number; }; } | { "type": "turn.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "barge_in.confirm" | "barge_in.reject"; "payload": { "responseId": string; "outputEpoch": number; }; } | { "type": "turn.persisted"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; }; } | { "type": "turn.persistence_failed"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; "reasonCode": "quota" | "unavailable" | "aborted"; }; } | { "type": "session.stop"; "payload": { "reason": "user" | "expired" | "disconnect"; }; } | PlaybackProgressEvent | PlaybackStoppedEvent);
+export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "reasoning.delta" | "reasoning.final" | "tts.started" | "tts.ended" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
 export type FailureEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "failure"; "monotonicMs": number; "payload": { "code": string; "detail": string; "correctiveAction": string; "recoverable": boolean; }; };
 export type PlaybackProgressEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.progress"; "monotonicMs": number; "payload": { "playbackId": string; "outputEpoch": number; "playedSampleOffset": number; "generatedSamples": number; }; };
 export type PlaybackStoppedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.stopped"; "monotonicMs": number; "payload": { "playbackId": string; "cancelledEpoch": number; "finalPlayedSampleOffset": number; "reason": "completed" | "cancelled" | "stopped" | "failed"; }; };
 export type PolicyDecisionEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "policy.decision"; "monotonicMs": number; "payload": { "turnId": string; "policyVersion": "v1.experimental"; "eligible": boolean; "posture": "riff" | "question" | "challenge" | "silence"; "reasonCodes": Array<string>; "inputDigest": string; }; };
 export type ReasoningFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "reasoning.final"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "posture": "riff" | "question" | "challenge"; "text": string; }; };
 export type SessionStateEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.state"; "monotonicMs": number; "payload": { "phase": "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "stopped"; "personaDigest": string; }; };
+export type SidecarMessageStream = string;
+export type SidecarMessageUtterance = string;
+export type SidecarMessageResponse = string;
+export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": "kokoro-82m-onnx-fp32-af-heart-cpu-v1"; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; }; } | { "type": "vad.speech_start" | "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; };
 export type TranscriptFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.final"; "monotonicMs": number; "payload": { "turnId": string; "text": string; "endpointComplete": true; }; };
+export type TranscriptPartialEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.partial"; "monotonicMs": number; "payload": { "utteranceId": string; "sequence": number; "text": string; "replacedCharacters": number; }; };
 export type TtsEndedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.ended"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "generatedSamples": number; }; };
 export type TtsStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.started"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "sampleRate": number; }; };
 export type HistoryExport = { "version": 1; "exportedAt": string; "sessions": Array<{ "sessionId": string; "startedAt": string; "endedAt"?: string | null; "personaDigest": string; "turns": Array<{ "turnId": string; "role": "user" | "assistant"; "text": string; "createdAt": string; "posture"?: "riff" | "question" | "challenge" | "silence"; "deliveredSampleOffset"?: number; "interrupted"?: boolean; "failures"?: Array<string>; }>; }>; };
@@ -30,6 +36,8 @@ export const CORE_EVENT_TYPES = [
   "turn.cancel",
   "barge_in.confirm",
   "barge_in.reject",
+  "turn.persisted",
+  "turn.persistence_failed",
   "playback.progress",
   "playback.stopped",
   "session.stop",
@@ -49,12 +57,16 @@ export const CORE_EVENT_TYPES = [
   "tts.ended",
   "failure",
   "stream.open",
+  "stream.opened",
   "stream.reset",
   "stream.close",
+  "stream.closed",
+  "stt.bind_epoch",
   "stt.partial",
   "stt.final",
   "tts.request",
   "tts.cancel",
+  "tts.cancelled",
   "vad.speech_start",
   "vad.speech_end",
   "sidecar.failure"
@@ -1442,6 +1454,288 @@ export const CONTRACT_SCHEMAS = {
       }
     ]
   },
+  "events/browser-command.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/browser-command.json",
+    "title": "BrowserCommand",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "const": "session.start"
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "sessionSeed",
+                  "reasoningMode"
+                ],
+                "properties": {
+                  "sessionSeed": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reasoningMode": {
+                    "enum": [
+                      "full",
+                      "transcript_only"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "audio.start"
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "streamId",
+                  "sampleRate",
+                  "channels",
+                  "frameSamples"
+                ],
+                "properties": {
+                  "streamId": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  },
+                  "sampleRate": {
+                    "const": 16000
+                  },
+                  "channels": {
+                    "const": 1
+                  },
+                  "frameSamples": {
+                    "const": 320
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "audio.stop"
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "streamId"
+                ],
+                "properties": {
+                  "streamId": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "turn.cancel"
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "user",
+                      "stop"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "barge_in.confirm",
+                  "barge_in.reject"
+                ]
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "responseId",
+                  "outputEpoch"
+                ],
+                "properties": {
+                  "responseId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "outputEpoch": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "turn.persisted"
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "turnId",
+                  "finalEventId",
+                  "persistedEpoch"
+                ],
+                "properties": {
+                  "turnId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "finalEventId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "persistedEpoch": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "turn.persistence_failed"
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "turnId",
+                  "finalEventId",
+                  "persistedEpoch",
+                  "reasonCode"
+                ],
+                "properties": {
+                  "turnId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "finalEventId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "persistedEpoch": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "reasonCode": {
+                    "enum": [
+                      "quota",
+                      "unavailable",
+                      "aborted"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "session.stop"
+              },
+              "payload": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "user",
+                      "expired",
+                      "disconnect"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "./playback-progress.json"
+          },
+          {
+            "$ref": "./playback-stopped.json"
+          }
+        ]
+      }
+    ]
+  },
   "events/core-events.json": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://podcaster.local/schema/events/core-events.json",
@@ -1464,6 +1758,8 @@ export const CONTRACT_SCHEMAS = {
               "turn.cancel",
               "barge_in.confirm",
               "barge_in.reject",
+              "turn.persisted",
+              "turn.persistence_failed",
               "playback.progress",
               "playback.stopped",
               "session.stop",
@@ -1483,12 +1779,16 @@ export const CONTRACT_SCHEMAS = {
               "tts.ended",
               "failure",
               "stream.open",
+              "stream.opened",
               "stream.reset",
               "stream.close",
+              "stream.closed",
+              "stt.bind_epoch",
               "stt.partial",
               "stt.final",
               "tts.request",
               "tts.cancel",
+              "tts.cancelled",
               "vad.speech_start",
               "vad.speech_end",
               "sidecar.failure"
@@ -1819,6 +2119,534 @@ export const CONTRACT_SCHEMAS = {
       }
     ]
   },
+  "events/sidecar-message.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/sidecar-message.json",
+    "title": "SidecarMessage",
+    "type": "object",
+    "required": [
+      "type",
+      "payload"
+    ],
+    "properties": {
+      "type": {
+        "type": "string"
+      },
+      "payload": {
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "$defs": {
+      "stream": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "utterance": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "response": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "oneOf": [
+      {
+        "properties": {
+          "type": {
+            "const": "readiness.snapshot"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "status",
+              "stt",
+              "tts"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "starting",
+                  "ready",
+                  "failed"
+                ]
+              },
+              "stt": {
+                "const": "nemotron-3.5-transformers-fp32-320ms-paced-v1"
+              },
+              "tts": {
+                "const": "kokoro-82m-onnx-fp32-af-heart-cpu-v1"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "stream.open"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "captureStreamId",
+              "sampleRate",
+              "frameSamples"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "captureStreamId": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "sampleRate": {
+                "const": 16000
+              },
+              "frameSamples": {
+                "const": 320
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "enum": [
+              "stream.opened",
+              "stream.reset",
+              "stream.close",
+              "stream.closed"
+            ]
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "enum": [
+              "vad.speech_start",
+              "vad.speech_end"
+            ]
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "utteranceId",
+              "captureStartSequence"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "utteranceId": {
+                "$ref": "#/$defs/utterance"
+              },
+              "captureStartSequence": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "stt.bind_epoch"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "utteranceId",
+              "epoch"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "utteranceId": {
+                "$ref": "#/$defs/utterance"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "stt.partial"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "utteranceId",
+              "epoch",
+              "sequence",
+              "text",
+              "replacedCharacters"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "utteranceId": {
+                "$ref": "#/$defs/utterance"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sequence": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "replacedCharacters": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "stt.final"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "utteranceId",
+              "epoch",
+              "text",
+              "endpointComplete"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "utteranceId": {
+                "$ref": "#/$defs/utterance"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "endpointComplete": {
+                "const": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.request"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch",
+              "text"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.cancel"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.started"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch",
+              "playbackId",
+              "outputStreamId",
+              "sampleRate"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "playbackId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "outputStreamId": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "sampleRate": {
+                "const": 24000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.ended"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch",
+              "playbackId",
+              "generatedSamples"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "playbackId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "generatedSamples": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.cancelled"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "sidecar.failure"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "code",
+              "recoverable"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "invalid_message",
+                  "invalid_audio",
+                  "queue_overflow",
+                  "runtime_unavailable",
+                  "runtime_poisoned",
+                  "cancelled"
+                ]
+              },
+              "recoverable": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      }
+    ]
+  },
   "events/transcript-final.json": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://podcaster.local/schema/events/transcript-final.json",
@@ -1855,6 +2683,56 @@ export const CONTRACT_SCHEMAS = {
               },
               "endpointComplete": {
                 "const": true
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
+  "events/transcript-partial.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/transcript-partial.json",
+    "title": "TranscriptPartialEvent",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "const": "transcript.partial"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "utteranceId",
+              "sequence",
+              "text",
+              "replacedCharacters"
+            ],
+            "properties": {
+              "utteranceId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sequence": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "replacedCharacters": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "additionalProperties": false
@@ -2181,4 +3059,4 @@ export const CONTRACT_SCHEMAS = {
   }
 } as const;
 export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;
-export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "CoreEvent" | "FailureEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningFinalEvent" | "SessionStateEvent" | "TranscriptFinalEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope";
+export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningFinalEvent" | "SessionStateEvent" | "SidecarMessage" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope";

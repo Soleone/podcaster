@@ -6,11 +6,18 @@ import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
 import type { SidecarProcess } from '../sidecar/process.js';
 import { sidecarHealth } from '../sidecar/process.js';
+import type { PiClient } from '../pi/PiClient.js';
+import { BrowserSession } from './BrowserSession.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const COOKIE = 'podcaster_session';
-interface Session { capability: string; expiresAt: number; wsAuthenticated: boolean; sockets: Set<WebSocket>; }
-export interface BuildOptions { sidecar: SidecarProcess; webRoot?: string; now?: () => number; sessionTtlMs?: number; }
+interface Session { capability: string; expiresAt: number; wsAuthenticated: boolean; sockets: Set<WebSocket>; conversation?: BrowserSession; stopPromise?: Promise<void>; }
+const unavailablePi: PiClient = {
+  async probe() { return { status: 'unavailable', detail: 'Pi is unavailable.', correctiveAction: 'Retry, or use transcript-only mode.' }; },
+  async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
+  async shutdown() {},
+};
+export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; webRoot?: string; now?: () => number; sessionTtlMs?: number; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 
@@ -19,6 +26,15 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
   const sessionTtlMs = options.sessionTtlMs ?? SESSION_TTL_MS;
+  const shutdowns = new Set<Promise<void>>();
+  const stopConversation = (session: Session): Promise<void> => {
+    if (session.stopPromise) return session.stopPromise;
+    const work = (async () => { await session.conversation?.stop(); })();
+    session.stopPromise = work;
+    shutdowns.add(work);
+    void work.finally(() => shutdowns.delete(work));
+    return work;
+  };
   let origin = '';
   app.decorate('setCanonicalOrigin', (value: string) => { origin = value; });
   app.addHook('onRequest', async (request, reply) => {
@@ -40,10 +56,14 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   await app.register(websocket, {
     options: { maxPayload: 64 * 1024 },
     preClose(done) {
-      for (const client of this.websocketServer.clients) client.terminate();
-      done();
+      const conversations = [...sessions.values()].map(session => stopConversation(session));
+      void Promise.allSettled(conversations).then(() => {
+        for (const client of this.websocketServer.clients) client.terminate();
+        done();
+      });
     },
   });
+  app.addHook('onClose', async () => { await Promise.allSettled([...shutdowns]); });
   const authenticate = (request: FastifyRequest): Session | undefined => {
     const id = cookieValue(request.headers.cookie); const capability = request.headers['x-podcaster-capability'];
     if (!id || typeof capability !== 'string') return;
@@ -53,12 +73,13 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   };
   app.post('/api/readiness', async (request, reply) => {
     if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
+    const [audioReady, pi] = await Promise.all([sidecarHealth(options.sidecar), (options.pi ?? unavailablePi).probe()]);
     return {
       capabilities: [
-        { id: 'voice_input', label: 'Voice input', state: 'needs_action', reason: 'Microphone is not enabled in this stub.', action: 'Enable microphone after acknowledging the disclosure.' },
-        { id: 'voice_output', label: 'Voice output', state: 'ready', reason: 'Local voice output stub is available.', action: 'No action needed.' },
-        { id: 'cloud_reasoning', label: 'Cloud reasoning', state: 'needs_action', reason: 'Pi/Codex is not connected in Milestone 0.', action: 'Pi sign-in will be added in a later milestone.' },
-      ], sidecar: await sidecarHealth(options.sidecar) ? 'ready' : 'unavailable',
+        { id: 'voice_input', label: 'Voice input', state: 'needs_action', reason: 'Microphone permission is required before capture.', action: 'Enable microphone after acknowledging the disclosure.' },
+        { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: audioReady ? 'Selected Nemotron and Kokoro runtime is ready.' : 'Selected local audio runtime is not ready.', action: audioReady ? 'No action needed.' : 'Wait for selected model startup or restart the host.' },
+        { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
+      ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi.status,
     };
   });
   app.post('/api/bootstrap', { schema: { body: { type: 'object', additionalProperties: false, required: ['disclosureAcknowledged'], properties: { disclosureAcknowledged: { const: true } } } } }, async (_request, reply) => {
@@ -71,19 +92,23 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     const id = cookieValue(request.headers.cookie); const session = authenticate(request);
     if (!session || !id) return reply.code(401).send({ error: 'unauthorized' });
     sessions.delete(id);
+    await stopConversation(session);
     for (const socket of session.sockets) socket.close(1008, 'session stopped');
     return { stopped: true };
   });
   app.get('/ws', { websocket: true }, (socket, request) => {
     const id = cookieValue(request.headers.cookie); const session = id ? sessions.get(id) : undefined;
-    let pending = true; let expiryTimer: NodeJS.Timeout | undefined;
+    let pending = true; let expiryTimer: NodeJS.Timeout | undefined; let messageChain = Promise.resolve();
     const timer = setTimeout(() => socket.close(1008, 'authentication required'), 1000);
-    socket.on('close', () => { clearTimeout(timer); if (expiryTimer) clearTimeout(expiryTimer); session?.sockets.delete(socket); });
+    socket.on('close', () => { clearTimeout(timer); if (expiryTimer) clearTimeout(expiryTimer); session?.sockets.delete(socket); if (session) void stopConversation(session); });
     socket.on('message', (raw, binary) => {
       if (!pending) {
         if (!session || session.expiresAt <= now() || !id || sessions.get(id) !== session) { socket.close(1008, 'session expired'); return; }
         const size = Array.isArray(raw) ? raw.reduce((total, part) => total + part.byteLength, 0) : raw.byteLength;
-        if (binary && size > 64 * 1024) socket.close(1009, 'frame too large');
+        if (size > 64 * 1024) { socket.close(1009, 'frame too large'); return; }
+        const conversation = session.conversation;
+        if (!conversation) { socket.close(1011, 'session composition missing'); return; }
+        messageChain = messageChain.then(() => conversation.handle(raw, binary)).catch(() => socket.close(1011, 'conversation failure'));
         return;
       }
       pending = false; clearTimeout(timer);
@@ -92,6 +117,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       const cap = typeof value === 'object' && value !== null ? (value as { capability?: unknown }).capability : undefined;
       if (!session || session.expiresAt <= now() || session.wsAuthenticated || typeof cap !== 'string' || !sameSecret(cap, session.capability)) { socket.close(1008, 'invalid authentication'); return; }
       session.wsAuthenticated = true; session.sockets.add(socket);
+      session.conversation = new BrowserSession(socket, options.sidecar, options.pi ?? unavailablePi);
       expiryTimer = setTimeout(() => socket.close(1008, 'session expired'), Math.max(0, session.expiresAt - now()));
       socket.send(JSON.stringify({ type: 'authenticated' }));
     });

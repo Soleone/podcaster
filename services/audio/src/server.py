@@ -1,91 +1,238 @@
-"""Authenticated loopback-only audio sidecar stub."""
+"""Authenticated loopback-only selected audio WebSocket sidecar."""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hmac
 import json
 import os
 import signal
+import socket
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http import HTTPStatus
 from typing import NoReturn
 
+from pydantic import ValidationError
+from websockets.asyncio.server import ServerConnection, serve
+from websockets.datastructures import Headers
+from websockets.http11 import Request, Response
+
+from .binary_framing import decode_frame
+from .generated.contracts import SidecarMessage
+from .runtime import MAX_BINARY_PAYLOAD, SelectedAudioRuntime
+
 MAX_BODY = 16 * 1024
+MAX_QUEUE = 64
 
 
-class SidecarServer(ThreadingHTTPServer):
+def _response(status: HTTPStatus, value: dict[str, object]) -> Response:
+    body = json.dumps(value, separators=(",", ":")).encode()
+    headers = Headers(
+        [
+            ("Content-Type", "application/json"),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-store"),
+            ("Connection", "close"),
+        ]
+    )
+    return Response(status.value, status.phrase, headers, body)
+
+
+class SidecarServer:
+    """Compatibility wrapper used by production and focused security tests."""
+
     allow_reuse_address = False
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], secret: str):
-        super().__init__(address, SidecarHandler)
+    def __init__(
+        self,
+        address: tuple[str, int],
+        secret: str,
+        runtime: SelectedAudioRuntime | None = None,
+    ) -> None:
+        host, port = address
+        if host != "127.0.0.1":
+            raise ValueError("sidecar must bind exact IPv4 loopback")
         self.secret = secret
+        self.runtime = runtime if runtime is not None else SelectedAudioRuntime()
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        self._socket.bind((host, port))
+        self._socket.listen(128)
+        self._socket.setblocking(False)
+        self.server_address = self._socket.getsockname()
+        self.server_port = self.server_address[1]
+        self._shutdown = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._server = None
 
+    def _authorized(self, request: Request) -> Response | None:
+        if "?" in request.path:
+            return _response(HTTPStatus.BAD_REQUEST, {"error": "query_rejected"})
+        if request.headers.get("Origin") is not None:
+            return _response(HTTPStatus.FORBIDDEN, {"error": "browser_origin_rejected"})
+        if request.headers.get("Host") != f"127.0.0.1:{self.server_port}":
+            return _response(HTTPStatus.MISDIRECTED_REQUEST, {"error": "invalid_host"})
+        expected = f"Bearer {self.secret}"
+        if not hmac.compare_digest(request.headers.get("Authorization", ""), expected):
+            return _response(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+        return None
 
-class SidecarHandler(BaseHTTPRequestHandler):
-    server: SidecarServer
-    protocol_version = "HTTP/1.1"
+    def _process_request(self, _connection: ServerConnection, request: Request) -> Response | None:
+        denied = self._authorized(request)
+        if denied is not None:
+            return denied
+        if request.path == "/health":
+            payload = self.runtime.readiness()["payload"]
+            assert isinstance(payload, dict)
+            return _response(HTTPStatus.OK, payload)
+        if request.path != "/stream":
+            return _response(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        if request.headers.get("Upgrade", "").lower() != "websocket":
+            length = request.headers.get("Content-Length", "")
+            if length.isdigit() and int(length) > MAX_BODY:
+                return _response(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "body_too_large"})
+            if request.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
+                return _response(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "json_required"})
+            return _response(HTTPStatus.NOT_IMPLEMENTED, {"error": "websocket_required"})
+        return None
 
-    def log_message(self, _format: str, *_args: object) -> None:
-        return
+    async def _handler(self, connection: ServerConnection) -> None:
+        queue: asyncio.Queue[str | bytes | None] = asyncio.Queue(maxsize=MAX_QUEUE)
+        loop = asyncio.get_running_loop()
+        opened_stream: str | None = None
+        failed = False
 
-    def _json(self, status: int, value: dict[str, object]) -> None:
-        body = json.dumps(value, separators=(",", ":")).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        def enqueue(value: str | bytes) -> None:
+            nonlocal failed
+            if failed:
+                return
+            def put() -> None:
+                nonlocal failed
+                try:
+                    queue.put_nowait(value)
+                except asyncio.QueueFull:
+                    failed = True
+                    asyncio.create_task(connection.close(1011, "sidecar output queue overflow"))
+            loop.call_soon_threadsafe(put)
 
-    def _authorized(self) -> bool:
-        if "Origin" in self.headers:
-            self._json(403, {"error": "browser_origin_rejected"})
-            return False
-        expected_host = f"127.0.0.1:{self.server.server_port}"
-        if self.headers.get("Host") != expected_host:
-            self._json(421, {"error": "invalid_host"})
-            return False
-        authorization = self.headers.get("Authorization", "")
-        expected = f"Bearer {self.server.secret}"
-        if not hmac.compare_digest(authorization, expected):
-            self._json(401, {"error": "unauthorized"})
-            return False
-        return True
+        def emit_json(value: dict[str, object]) -> None:
+            enqueue(json.dumps(value, separators=(",", ":")))
 
-    def do_GET(self) -> None:  # noqa: N802
-        if self.path != "/health":
-            self._json(404, {"error": "not_found"})
-        elif self._authorized():
-            self._json(200, {"status": "ready", "service": "audio_stub"})
+        async def sender() -> None:
+            while True:
+                value = await queue.get()
+                if value is None:
+                    return
+                await connection.send(value)
 
-    def do_POST(self) -> None:  # noqa: N802
-        if not self._authorized():
-            return
-        length_text = self.headers.get("Content-Length")
-        if length_text is None or not length_text.isdigit():
-            self._json(411, {"error": "content_length_required"})
-            return
-        length = int(length_text)
-        if length > MAX_BODY:
-            self._json(413, {"error": "body_too_large"})
-            return
-        if self.headers.get_content_type() != "application/json":
-            self._json(415, {"error": "json_required"})
-            return
-        self.rfile.read(length)
-        self._json(501, {"error": "stub_only"})
+        sender_task = asyncio.create_task(sender())
+        emit_json(self.runtime.readiness())
+        try:
+            async for raw in connection:
+                if isinstance(raw, bytes):
+                    if opened_stream is None:
+                        raise ValueError("binary before stream.open")
+                    frame = decode_frame(raw, MAX_BINARY_PAYLOAD)
+                    self.runtime.accept_audio(opened_stream, frame)
+                    continue
+                if len(raw.encode()) > MAX_BODY:
+                    raise ValueError("JSON message too large")
+                try:
+                    message = SidecarMessage.model_validate_json(raw).root
+                except ValidationError as error:
+                    raise ValueError("invalid sidecar message") from error
+                message_type = message["type"]
+                payload = message["payload"]
+                if message_type == "stream.open":
+                    if opened_stream is not None:
+                        raise ValueError("second stream.open")
+                    opened_stream = str(payload["streamId"])
+                    self.runtime.open_stream(
+                        opened_stream,
+                        int(payload["captureStreamId"]),
+                        emit_json,
+                        enqueue,
+                    )
+                elif opened_stream is None or payload.get("streamId") != opened_stream:
+                    raise ValueError("unknown stream")
+                elif message_type == "stt.bind_epoch":
+                    self.runtime.bind_epoch(opened_stream, str(payload["utteranceId"]), int(payload["epoch"]))
+                elif message_type == "tts.request":
+                    self.runtime.request_tts(opened_stream, str(payload["responseId"]), int(payload["epoch"]), str(payload["text"]))
+                elif message_type == "tts.cancel":
+                    self.runtime.cancel_tts(opened_stream, str(payload["responseId"]))
+                elif message_type == "stream.reset":
+                    self.runtime.reset_stream(opened_stream)
+                elif message_type == "stream.close":
+                    self.runtime.close_stream(opened_stream)
+                    opened_stream = None
+                else:
+                    raise ValueError("unsupported sidecar command")
+        except (ValueError, RuntimeError):
+            emit_json({"type": "sidecar.failure", "payload": {"code": "invalid_message", "recoverable": False}})
+            await asyncio.sleep(0)
+            await connection.close(1008, "invalid stream message")
+        finally:
+            if opened_stream is not None:
+                self.runtime.close_stream(opened_stream)
+            sender_task.cancel()
+            await asyncio.gather(sender_task, return_exceptions=True)
+
+    async def _serve(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        server = await serve(
+            self._handler,
+            sock=self._socket,
+            process_request=self._process_request,
+            compression=None,
+            max_size=64 * 1024,
+            max_queue=MAX_QUEUE,
+            server_header=None,
+        )
+        self._server = server
+        while not self._shutdown.is_set():
+            await asyncio.sleep(0.02)
+        server.close(close_connections=False)
+        await asyncio.sleep(0)
+
+    def serve_forever(self) -> None:
+        asyncio.run(self._serve())
+
+    def shutdown(self) -> None:
+        self._shutdown.set()
+
+    def server_close(self) -> None:
+        self._shutdown.set()
+        if self._server is None:
+            try:
+                self._socket.close()
+            except OSError:
+                pass
 
 
 def run(host: str, port: int, secret: str) -> NoReturn:
     if host != "127.0.0.1" or port < 0:
         raise ValueError("sidecar must use 127.0.0.1 and an OS-assigned or valid port")
-    server = SidecarServer((host, port), secret)
-    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
+    runtime = SelectedAudioRuntime()
+    server = SidecarServer((host, port), secret, runtime)
+    signal.signal(signal.SIGTERM, lambda *_: server.shutdown())
     actual_host, actual_port = server.server_address
     print(json.dumps({"host": actual_host, "port": actual_port}), flush=True)
+
+    def prepare() -> None:
+        try:
+            runtime.prepare()
+        except BaseException:
+            # Readiness reports only the sanitized failed state.
+            pass
+
+    prepare_thread = threading.Thread(target=prepare, name="selected-runtime-prepare", daemon=True)
+    prepare_thread.start()
     server.serve_forever()
     server.server_close()
+    prepare_thread.join(timeout=10)
+    runtime.close()
     raise SystemExit(0)
 
 

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/transcript-partial.json",
+  "title": "TranscriptPartialEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "transcript.partial" },
+        "payload": {
+          "type": "object",
+          "required": ["utteranceId", "sequence", "text", "replacedCharacters"],
+          "properties": {
+            "utteranceId": { "type": "string", "format": "uuid" },
+            "sequence": { "type": "integer", "minimum": 0 },
+            "text": { "type": "string", "maxLength": 16384 },
+            "replacedCharacters": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

@@ -289,6 +289,22 @@ def test_vad_start_end_and_reset_are_deterministic() -> None:
     assert not vad.in_speech
 
 
+def test_default_vad_keeps_a_natural_pause_inside_the_same_turn() -> None:
+    config = EndpointerConfig()
+    vad = DeterministicEndpointer(config)
+    frame_samples = config.sample_rate * config.frame_ms // 1000
+    speech = int(1000).to_bytes(2, "little", signed=True) * frame_samples
+    silence = b"\0\0" * frame_samples
+    for _ in range(config.speech_start_frames):
+        transition = vad.accept(speech)
+    assert transition == "speech_start"
+    for _ in range(config.speech_end_frames - 1):
+        assert vad.accept(silence) is None
+    assert vad.in_speech
+    assert vad.accept(speech) is None
+    assert vad.in_speech
+
+
 def test_vad_rejects_wrong_frame_size() -> None:
     vad = DeterministicEndpointer(EndpointerConfig())
     with pytest.raises(ValueError, match="exactly"):

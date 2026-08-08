@@ -25,10 +25,10 @@ test('restrains live announcements and keeps interruption controls keyboard acce
 
   await emit(page, 'tts.started', { responseId: 'response-2', playbackId: 'playback-2', sampleRate: 24000 });
   await emit(page, 'barge_in.provisional', { responseId: 'response-2', outputEpoch: 0, resumable: true });
-  const yes = page.getByRole('button', { name: 'Yes, listen' });
+  const yes = page.getByRole('button', { name: 'Stop response and listen' });
   await expect(yes).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'No, continue' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Continue response' })).toBeFocused();
   await page.evaluate(() => window.__podcasterTest!.echoRecovered(true));
   await page.keyboard.press('Enter');
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().commands)).toContain('reject');

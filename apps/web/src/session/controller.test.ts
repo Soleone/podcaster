@@ -72,6 +72,21 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('continues playback and explains an unanswered interruption prompt', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    await transport.emit(event('session', 0, 'barge_in.timed_out', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    expect(players[0]!.resume).toHaveBeenCalledOnce();
+    expect(players[0]!.stops).toEqual([]);
+    expect(controller.snapshot()).toMatchObject({
+      dominant: 'speaking',
+      echoConfirmation: false,
+      playbackNotice: 'No interruption was confirmed, so the response continued.',
+    });
+    writer.close();
+  });
+
   it('ignores mismatched barge-in resolution events without cancelling the active response', async () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
@@ -93,7 +108,7 @@ describe('SessionController', () => {
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
     controller.setEchoRecovered(true);
-    await transport.emit(event('session', 0, 'transcript.final', { turnId: 'new-turn', text: 'new speech', endpointComplete: true }));
+    await transport.emit(event('session', 0, 'transcript.final', { turnId: 'new-turn', text: 'new meaningful speech', endpointComplete: true }));
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
     expect(players[0]!.resume).not.toHaveBeenCalled();
     expect(players[0]!.stops).toEqual(['cancelled']);
@@ -131,17 +146,28 @@ describe('SessionController', () => {
     writer.close();
   });
 
-  it('requires fresh echo recovery evidence for each provisional interruption', async () => {
+  it('resumes host-authorized accidental noise but not a meaningful stable interruption', async () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
-    controller.setEchoRecovered(true);
+    await transport.emit(event('session', 0, 'transcript.final', { turnId: 'noise', text: 'um', endpointComplete: true }));
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
     expect(players[0]!.resume).toHaveBeenCalledOnce();
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    await transport.emit(event('session', 0, 'transcript.final', { turnId: 'speech', text: 'please stop speaking', endpointComplete: true }));
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
     expect(players[0]!.resume).toHaveBeenCalledOnce();
     expect(players[0]!.stops).toEqual(['cancelled']);
+    writer.close();
+  });
+
+  it('immediately silences active playback and degrades on transport failure', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    transport.emitFailure('Conversation protocol failed.');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(players[0]!.stops).toEqual(['failed']);
+    expect(controller.snapshot()).toMatchObject({ dominant: 'degraded', degradedMessage: 'Conversation protocol failed.' });
     writer.close();
   });
 

@@ -12,7 +12,7 @@ corepack pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-`pnpm dev` builds the disclosure-first web shell, starts the host-owned Python audio stub, and prints a URL such as `http://127.0.0.1:43127`. Open only that printed URL. Both processes use OS-assigned IPv4 loopback ports. Press `Ctrl-C` to stop the host and its owned sidecar.
+`pnpm dev` builds the web app, starts the host-owned selected audio runtime, and opens the host at `http://127.0.0.1:43127`. Keeping this browser origin stable preserves microphone permission across restarts. The internal Python sidecar still uses an OS-assigned IPv4 loopback port. Override the host port with `PODCASTER_PORT` when necessary; startup fails safely if the selected port is already occupied. Press `Ctrl-C` to stop the host and its owned sidecar.
 
 This milestone is readiness infrastructure only. It does not request microphone permission, capture audio, load speech models, connect Pi, or retain history. After disclosure acknowledgement the page reports **Voice input**, **Voice output**, and **Cloud reasoning**, with corrective actions.
 
@@ -29,7 +29,7 @@ pnpm check
 For a manual boundary check, keep `pnpm dev` running, use the exact printed host/port and Origin header for `/api/readiness`, and inspect listeners:
 
 ```bash
-ORIGIN=http://127.0.0.1:PORT # replace PORT with the printed port
+ORIGIN=http://127.0.0.1:43127 # or your PODCASTER_PORT override
 COOKIE_JAR=$(mktemp); trap 'rm -f "$COOKIE_JAR"' EXIT
 BOOTSTRAP=$(curl -fsS -c "$COOKIE_JAR" -X POST -H "Origin: $ORIGIN" \
   -H 'Content-Type: application/json' --data '{"disclosureAcknowledged":true}' \

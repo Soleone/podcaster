@@ -10,10 +10,17 @@ export class FakeSessionTransport implements SessionTransport {
   readonly commands: string[] = [];
   private readonly eventListeners = new Set<(event: StableEvent) => void | Promise<void>>();
   private readonly audioListeners = new Set<(chunk: OutputAudioChunk) => void>();
+  private readonly failureListeners = new Set<(message: string) => void>();
   connected = false;
 
   async connect(_capability: string): Promise<void> { this.connected = true; }
   disconnect(): void { this.connected = false; }
+  startSession(): void { this.commands.push('session.start'); }
+  startAudio(): void { this.commands.push('audio.start'); }
+  stopAudio(): void { this.commands.push('audio.stop'); }
+  acknowledgePersisted(): void { this.commands.push('turn.persisted'); }
+  acknowledgePersistenceFailed(): void { this.commands.push('turn.persistence_failed'); }
+  stopSession(): void { this.commands.push('session.stop'); }
   sendCapture(frame: Uint8Array): void { this.captureFrames.push(frame.slice()); }
   sendProgress(progress: PlaybackProgress): void { this.progressReports.push({ ...progress }); }
   sendTerminal(receipt: PlaybackTerminal, _event?: StableEvent): void {
@@ -29,6 +36,8 @@ export class FakeSessionTransport implements SessionTransport {
   rejectBargeIn(): void { this.commands.push('reject'); }
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void { this.eventListeners.add(listener); return () => this.eventListeners.delete(listener); }
   onAudio(listener: (chunk: OutputAudioChunk) => void): () => void { this.audioListeners.add(listener); return () => this.audioListeners.delete(listener); }
+  onFailure(listener: (message: string) => void): () => void { this.failureListeners.add(listener); return () => this.failureListeners.delete(listener); }
   async emit(event: StableEvent): Promise<void> { await Promise.all([...this.eventListeners].map(listener => listener(event))); }
+  emitFailure(message: string): void { for (const listener of this.failureListeners) listener(message); }
   emitAudio(chunk: OutputAudioChunk): void { for (const listener of this.audioListeners) listener(chunk); }
 }

@@ -50,7 +50,7 @@ function tsType(schema, owner = '') {
       const flattened = parts.flatMap(part => part.allOf ? part.allOf.map(inner => resolveForType(inner, part.title ?? owner)) : [part]);
       return tsType(mergeObjectSchemas(flattened), owner);
     }
-    return parts.map(value => tsType(value, owner)).join(' & ');
+    return parts.map(value => `(${tsType(value, owner)})`).join(' & ');
   }
   if (schema.$ref) return refName(schema.$ref, owner);
   if (schema.const !== undefined) return JSON.stringify(schema.const);

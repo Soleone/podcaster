@@ -1,0 +1,1 @@
+{"protocolVersion":1,"sessionId":"018f1f32-7abc-7def-8abc-0123456789ab","epoch":2,"eventId":"018f1f32-7abd-7def-8abc-0123456789ab","type":"transcript.partial","monotonicMs":4,"payload":{"utteranceId":"018f1f32-7abe-7def-8abc-0123456789ab","sequence":0,"text":"hello","replacedCharacters":0}}

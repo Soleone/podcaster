@@ -11,7 +11,10 @@ class EndpointerConfig:
     frame_ms: int = 20
     speech_threshold_rms: int = 180
     speech_start_frames: int = 3
-    speech_end_frames: int = 20
+    # A 1.2 s quiet window tolerates the thinking pauses that occur inside a
+    # conversational turn. The previous 400 ms window split ordinary speech
+    # into several stressful, incomplete turns.
+    speech_end_frames: int = 60
 
     def __post_init__(self) -> None:
         if self.sample_rate != 16_000 or self.frame_ms <= 0:

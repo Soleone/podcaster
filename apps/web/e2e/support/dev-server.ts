@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 
 export interface DevServer { child: ChildProcess; origin: string }
 export async function startDevServer(options: { fakeServices?: boolean } = {}): Promise<DevServer> {
-  const env = { ...process.env, ...(options.fakeServices ? { PODCASTER_WEB_BUILD_ENTRY: 'scripts/build-web-fake.mjs' } : {}) };
+  const env = { ...process.env, PODCASTER_PORT: '0', ...(options.fakeServices ? { PODCASTER_WEB_BUILD_ENTRY: 'scripts/build-web-fake.mjs' } : {}) };
   const child = spawn('node', ['scripts/dev.mjs'], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], shell: false, env });
   const origin = await new Promise<string>((resolve, reject) => {
     const stderr: string[] = [];

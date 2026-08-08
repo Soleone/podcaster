@@ -45,7 +45,10 @@ export class BrowserPlayback {
 
   append(sampleOffset: number, pcm16: Int16Array): void {
     if (this.stopped || !Number.isSafeInteger(sampleOffset) || sampleOffset < 0 || pcm16.length === 0) return;
-    this.ledger.addChunk(sampleOffset, pcm16);
+    const contiguousGenerated = this.ledger.addChunk(sampleOffset, pcm16);
+    // Streaming progress must never report rendered samples beyond the known
+    // generated prefix. Final completion still waits for setGeneratedSamples().
+    this.ledger.setGeneratedSamples(contiguousGenerated);
     if (sampleOffset + pcm16.length <= this.scheduledUntil || this.pending.has(sampleOffset)) return;
     this.pending.set(sampleOffset, pcm16.slice());
     this.drainContiguous();

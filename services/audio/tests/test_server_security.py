@@ -7,16 +7,23 @@ from typing import Iterator
 
 import pytest
 
-from services.audio.src.server import MAX_BODY, SidecarServer
+from services.audio.src.runtime import SelectedAudioRuntime
+from services.audio.src.server import SidecarServer
 
 SECRET = "s" * 43
 
 
 @contextmanager
 def running_server() -> Iterator[tuple[SidecarServer, int]]:
-    server = SidecarServer(("127.0.0.1", 0), SECRET)
+    runtime = SelectedAudioRuntime(object(), object())
+    runtime.mark_ready_for_test()
+    server = SidecarServer(("127.0.0.1", 0), SECRET, runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    for _ in range(100):
+        if server._server is not None:
+            break
+        threading.Event().wait(0.01)
     try:
         yield server, server.server_port
     finally:
@@ -60,7 +67,7 @@ def test_rejects_every_browser_origin(origin: str) -> None:
         assert request(port, headers={**auth(port), "Origin": origin})[0] == 403
 
 
-def test_rejects_oversized_and_non_json_posts() -> None:
+def test_rejects_query_secrets_and_non_websocket_stream_requests() -> None:
     with running_server() as (_, port):
-        assert request(port, "POST", "/stream", {**auth(port), "Content-Length": str(MAX_BODY + 1), "Content-Type": "application/json"})[0] == 413
-        assert request(port, "POST", "/stream", {**auth(port), "Content-Type": "text/plain"}, b"x")[0] == 415
+        assert request(port, "GET", "/stream?secret=bad", auth(port))[0] == 400
+        assert request(port, "GET", "/stream", auth(port))[0] == 415

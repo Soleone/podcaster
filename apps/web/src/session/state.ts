@@ -5,14 +5,15 @@ export interface SessionViewState {
   dominant: DominantState;
   epoch: number;
   tentativeText: string;
-  stableTurns: Array<{ turnId: string; text: string; posture?: 'riff' | 'question' | 'challenge' | 'silence' }>;
+  stableTurns: Array<{ turnId: string; text: string; posture?: 'riff' | 'question' | 'challenge' | 'silence'; policyReason?: string }>;
   assistantText: string;
   echoConfirmation: boolean;
+  playbackNotice: string;
   degradedMessage: string;
   announcement: string;
 }
 
-export const initialSessionState: SessionViewState = { dominant: 'idle', epoch: 0, tentativeText: '', stableTurns: [], assistantText: '', echoConfirmation: false, degradedMessage: '', announcement: 'Idle' };
+export const initialSessionState: SessionViewState = { dominant: 'idle', epoch: 0, tentativeText: '', stableTurns: [], assistantText: '', echoConfirmation: false, playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
 const label: Record<DominantState, string> = {
   idle: 'Idle', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering whether to respond', intentional_silence: 'Giving you space', reasoning: 'Forming a response', speaking: 'Speaking', stopping: 'Stopping session', degraded: 'Session needs attention',
 };
@@ -41,16 +42,19 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     const turnId = typeof event.payload.turnId === 'string' ? event.payload.turnId : '';
     if (posture === 'riff' || posture === 'question' || posture === 'challenge' || posture === 'silence') {
       const typedPosture: 'riff' | 'question' | 'challenge' | 'silence' = posture;
-      const stableTurns = next.stableTurns.map(turn => turn.turnId === turnId ? { ...turn, posture: typedPosture } : turn);
+      const reasonCodes = Array.isArray(event.payload.reasonCodes) ? event.payload.reasonCodes : [];
+      const policyReason = typeof reasonCodes[0] === 'string' ? reasonCodes[0] : undefined;
+      const stableTurns = next.stableTurns.map(turn => turn.turnId === turnId ? { ...turn, posture: typedPosture, ...(policyReason ? { policyReason } : {}) } : turn);
       next = { ...next, stableTurns };
       return dominant(next, posture === 'silence' ? 'intentional_silence' : 'reasoning');
     }
   }
   if (event.type === 'reasoning.final') return { ...dominant(next, 'reasoning'), assistantText: typeof event.payload.text === 'string' ? event.payload.text : '' };
-  if (event.type === 'tts.started') return dominant(next, 'speaking');
-  if (event.type === 'barge_in.provisional') return { ...next, echoConfirmation: true };
-  if (event.type === 'barge_in.confirmed') return { ...dominant(next, 'listening'), echoConfirmation: false };
-  if (event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') return { ...next, echoConfirmation: false };
+  if (event.type === 'tts.started') return { ...dominant(next, 'speaking'), playbackNotice: '' };
+  if (event.type === 'barge_in.provisional') return { ...next, echoConfirmation: true, playbackNotice: '' };
+  if (event.type === 'barge_in.confirmed') return { ...dominant(next, 'listening'), echoConfirmation: false, playbackNotice: '' };
+  if (event.type === 'barge_in.rejected') return { ...next, echoConfirmation: false, playbackNotice: 'Continuing the response.', announcement: 'Continuing the response' };
+  if (event.type === 'barge_in.timed_out') return { ...next, echoConfirmation: false, playbackNotice: 'No interruption was confirmed, so the response continued.', announcement: 'No interruption was confirmed. Continuing the response' };
   if (event.type === 'failure') return { ...dominant(next, 'degraded'), degradedMessage: typeof event.payload.detail === 'string' ? event.payload.detail : 'A session component failed.' };
   if (event.type === 'session.state') {
     const phase = event.payload.phase;

@@ -27,6 +27,7 @@ export interface StoredTurn {
   stableText: string | null;
   posture: 'riff' | 'question' | 'challenge' | 'silence' | null;
   eligible: boolean | null;
+  policyReason?: string | null;
   responseId: string | null;
   assistantText: string | null;
   playbackId: string | null;
