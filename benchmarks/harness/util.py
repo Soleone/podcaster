@@ -125,21 +125,19 @@ def deterministic_source_manifest(root: Path) -> list[dict[str, str]]:
 
 
 def source_state(root: Path) -> tuple[str, bool]:
+    manifest = deterministic_source_manifest(root)
+    source_id = f"source-{sha256_bytes(canonical_json(manifest))[:16]}"
     git = shutil.which("git")
     if git and (root / ".git").exists():
-        head = subprocess.run(
-            [git, "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-        )
-        dirty = subprocess.run(
+        status = subprocess.run(
             [git, "-C", str(root), "status", "--porcelain"],
             capture_output=True,
             text=True,
             check=False,
         )
-        if head.returncode == 0:
-            return head.stdout.strip(), bool(dirty.stdout.strip())
-    manifest = deterministic_source_manifest(root)
-    return f"source-{sha256_bytes(canonical_json(manifest))[:16]}", True
+        if status.returncode == 0:
+            return source_id, bool(status.stdout.strip())
+    return source_id, True
 
 
 def machine_metadata(gpu: dict[str, str]) -> dict[str, Any]:

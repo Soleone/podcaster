@@ -29,6 +29,7 @@ from benchmarks.harness.runner import (
     run_synthetic,
     validate_run,
 )
+from benchmarks.harness.util import canonical_json, deterministic_source_manifest, sha256_bytes, source_state
 
 ROOT = Path(__file__).resolve().parents[3]
 CONFIG = ROOT / "benchmarks/configs/common.yaml"
@@ -39,6 +40,12 @@ def test_tracked_result_schemas_match_canonical_contracts() -> None:
         assert (ROOT / "benchmarks/results/schema" / name).read_bytes() == (
             ROOT / "packages/contracts/schema/benchmarks" / name
         ).read_bytes()
+
+
+def test_source_state_reproduces_the_committed_source_manifest() -> None:
+    manifest = deterministic_source_manifest(ROOT)
+    source_id, _dirty = source_state(ROOT)
+    assert source_id == f"source-{sha256_bytes(canonical_json(manifest))[:16]}"
 
 
 def test_seeded_synthetic_runs_are_schema_valid_and_normalized_equal(tmp_path: Path) -> None:

@@ -1,0 +1,202 @@
+import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
+import type { StableTurnWriter, StableEvent } from '../storage/stable-turn-writer';
+import { createEnvelope } from './envelope';
+import { canSafelyResume, initialSessionState, reduceSessionState, type SessionViewState } from './state';
+import type { OutputAudioChunk, SessionTransport } from './transport';
+
+export interface ControlledPlayback {
+  setGeneratedSamples(samples: number): void;
+  append(offset: number, pcm16: Int16Array): void;
+  pause(): Promise<void>;
+  resume(): Promise<void>;
+  stop(reason: PlaybackStopReason): Promise<PlaybackTerminal>;
+}
+export interface SessionControllerOptions {
+  sessionId: string;
+  transport: SessionTransport;
+  writer: StableTurnWriter;
+  initialState?: SessionViewState;
+  playbackFactory?: (input: { playbackId: string; outputEpoch: number; sampleRate: number }) => ControlledPlayback;
+  schedule?: (delay: number, callback: () => void) => () => void;
+}
+interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean }
+interface Provisional { responseId: string; outputEpoch: number; playbackId: string; newerStableTurn: boolean; confirmed: boolean }
+
+export class SessionController {
+  private state: SessionViewState;
+  private readonly listeners = new Set<(state: SessionViewState) => void>();
+  private readonly seenEvents = new Set<string>();
+  private readonly unsubscribe: Array<() => void> = [];
+  private readonly terminalReports = new Map<string, Promise<void>>();
+  private active: ActivePlayback | undefined;
+  private provisional: Provisional | undefined;
+  private stopped = false;
+  private echoRecoveryKey: string | undefined;
+  private cancelSilence: (() => void) | undefined;
+  private readonly schedule: (delay: number, callback: () => void) => () => void;
+
+  constructor(private readonly options: SessionControllerOptions) {
+    this.state = options.initialState ?? initialSessionState;
+    this.schedule = options.schedule ?? ((delay, callback) => { const timer = setTimeout(callback, delay); return () => clearTimeout(timer); });
+    this.unsubscribe.push(options.transport.onEvent(event => this.handleEvent(event)));
+    this.unsubscribe.push(options.transport.onAudio(chunk => this.handleAudio(chunk)));
+  }
+
+  snapshot(): SessionViewState { return this.state; }
+  subscribe(listener: (state: SessionViewState) => void): () => void { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
+  setEchoRecovered(recovered: boolean): void {
+    this.echoRecoveryKey = recovered && this.provisional ? this.provisionalKey(this.provisional) : undefined;
+  }
+
+  async handleEvent(event: StableEvent): Promise<void> {
+    if (event.sessionId !== this.options.sessionId || this.seenEvents.has(event.eventId)) return;
+    const accountingOnly = event.type === 'playback.progress' || event.type === 'playback.stopped';
+    if (event.epoch < this.state.epoch && !accountingOnly) return;
+    if ((event.type === 'barge_in.confirmed' || event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') && !this.matchesProvisionalResolution(event)) return;
+    this.seenEvents.add(event.eventId);
+    if (event.type === 'transcript.final' && this.provisional) this.provisional.newerStableTurn = true;
+    const storage = await this.options.writer.apply(event);
+    if (!storage.ok) {
+      this.degrade(storage.degradedReason ?? 'Stable storage failed.');
+      return;
+    }
+    if (event.epoch < this.state.epoch) return;
+    this.setState(reduceSessionState(this.state, event));
+    if (event.type === 'policy.decision' && event.payload.posture === 'silence') {
+      this.cancelSilence?.();
+      const silenceEpoch = event.epoch;
+      this.cancelSilence = this.schedule(900, () => {
+        this.cancelSilence = undefined;
+        if (!this.stopped && this.state.epoch === silenceEpoch && this.state.dominant === 'intentional_silence') {
+          this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening' });
+        }
+      });
+    }
+    if (event.type === 'tts.started') {
+      const playbackId = typeof event.payload.playbackId === 'string' ? event.payload.playbackId : undefined;
+      const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : undefined;
+      const sampleRate = Number(event.payload.sampleRate);
+      if (playbackId && responseId && Number.isSafeInteger(sampleRate) && sampleRate > 0 && this.options.playbackFactory) {
+        this.active = { playbackId, responseId, outputEpoch: event.epoch, player: this.options.playbackFactory({ playbackId, outputEpoch: event.epoch, sampleRate }), terminal: false };
+      }
+    } else if (event.type === 'tts.ended' && this.active && event.payload.playbackId === this.active.playbackId) {
+      this.active.player.setGeneratedSamples(Number(event.payload.generatedSamples));
+    } else if (event.type === 'barge_in.provisional' && this.active && event.payload.responseId === this.active.responseId && event.payload.outputEpoch === this.active.outputEpoch) {
+      this.provisional = { responseId: this.active.responseId, outputEpoch: this.active.outputEpoch, playbackId: this.active.playbackId, newerStableTurn: false, confirmed: false };
+      this.echoRecoveryKey = undefined;
+      await this.active.player.pause();
+    } else if (event.type === 'barge_in.confirmed') {
+      const provisional = this.provisional;
+      const active = this.active;
+      if (!provisional || !active || event.payload.responseId !== provisional.responseId || event.payload.outputEpoch !== provisional.outputEpoch || active.responseId !== provisional.responseId || active.playbackId !== provisional.playbackId || active.outputEpoch !== provisional.outputEpoch) return;
+      provisional.confirmed = true;
+      await this.terminalize('cancelled');
+      this.clearProvisional();
+    } else if (event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') {
+      const provisional = this.provisional;
+      const active = this.active;
+      if (!provisional || !active || event.payload.responseId !== provisional.responseId || event.payload.outputEpoch !== provisional.outputEpoch || active.responseId !== provisional.responseId || active.playbackId !== provisional.playbackId || active.outputEpoch !== provisional.outputEpoch) return;
+      const safe = canSafelyResume({
+        hostResumable: event.payload.resumable === true,
+        responseMatches: true,
+        playbackMatches: true,
+        epochMatches: active.outputEpoch === event.epoch,
+        wasSpeaking: true,
+        playbackTerminal: active.terminal,
+        echoRecovered: this.echoRecoveryKey === this.provisionalKey(provisional),
+        newerStableTurn: provisional.newerStableTurn,
+        stopped: this.stopped,
+        confirmed: provisional.confirmed,
+      });
+      this.clearProvisional();
+      if (safe) await active.player.resume();
+      else await this.terminalize('cancelled');
+    }
+  }
+
+  async reportPlaybackProgress(progress: PlaybackProgress): Promise<void> {
+    if (this.stopped || !this.active || this.active.playbackId !== progress.playbackId || this.active.outputEpoch !== progress.outputEpoch || this.active.terminal) return;
+    const event = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.progress', payload: { ...progress } });
+    const stored = await this.options.writer.apply(event);
+    if (!stored.ok) { this.degrade(stored.degradedReason ?? 'Playback progress could not be saved.'); return; }
+    await this.options.transport.sendProgress(progress);
+  }
+
+  reportPlaybackTerminal(receipt: PlaybackTerminal): Promise<void> {
+    const reportKey = this.playbackKey(receipt.cancelledEpoch, receipt.playbackId);
+    const existing = this.terminalReports.get(reportKey);
+    if (existing) return existing;
+    if (this.active?.playbackId === receipt.playbackId && this.active.outputEpoch === receipt.cancelledEpoch) this.active.terminal = true;
+    const report = (async () => {
+      const event = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.stopped', payload: { ...receipt } });
+      const stored = await this.options.writer.apply(event);
+      if (!stored.ok) { this.degrade(stored.degradedReason ?? 'The terminal playback receipt could not be saved.'); return; }
+      await this.options.transport.sendTerminal(receipt, event);
+    })();
+    this.terminalReports.set(reportKey, report);
+    return report;
+  }
+
+  async confirmBargeIn(): Promise<void> {
+    if (!this.provisional) return;
+    this.provisional.confirmed = true;
+    await this.options.transport.confirmBargeIn();
+    await this.terminalize('cancelled');
+    this.clearProvisional();
+    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false });
+  }
+  async rejectBargeIn(): Promise<void> { if (this.provisional) await this.options.transport.rejectBargeIn(); }
+  async cancelAssistant(): Promise<void> {
+    await this.options.transport.cancelAssistant();
+    await this.terminalize('cancelled');
+    this.clearProvisional();
+    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false });
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.cancelSilence?.();
+    this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', echoConfirmation: false });
+    await this.terminalize('stopped');
+    this.clearProvisional();
+    this.options.transport.disconnect();
+    for (const unsubscribe of this.unsubscribe.splice(0)) unsubscribe();
+    const ended = await this.options.writer.endSession(this.options.sessionId);
+    if (!ended.ok) {
+      this.degrade(ended.degradedReason ?? 'The session stopped, but its final local state could not be saved.');
+      return;
+    }
+    this.setState({ ...this.state, dominant: 'idle', announcement: 'Session stopped', echoConfirmation: false });
+  }
+
+  degrade(message: string): void {
+    this.setState(reduceSessionState(this.state, createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'failure', payload: { detail: message } })));
+  }
+
+  private matchesProvisionalResolution(event: StableEvent): boolean {
+    const provisional = this.provisional;
+    const active = this.active;
+    return Boolean(provisional && active
+      && event.payload.responseId === provisional.responseId
+      && event.payload.outputEpoch === provisional.outputEpoch
+      && active.responseId === provisional.responseId
+      && active.playbackId === provisional.playbackId
+      && active.outputEpoch === provisional.outputEpoch);
+  }
+
+  private handleAudio(chunk: OutputAudioChunk): void {
+    if (this.active?.playbackId === chunk.playbackId && !this.active.terminal) this.active.player.append(chunk.sampleOffset, chunk.pcm16);
+  }
+  private async terminalize(reason: PlaybackStopReason): Promise<void> {
+    const active = this.active;
+    if (!active || active.terminal) return;
+    const receipt = await active.player.stop(reason);
+    await this.reportPlaybackTerminal(receipt);
+    this.echoRecoveryKey = undefined;
+  }
+  private playbackKey(outputEpoch: number, playbackId: string): string { return `${outputEpoch}:${playbackId}`; }
+  private provisionalKey(provisional: Provisional): string { return `${provisional.outputEpoch}:${provisional.playbackId}:${provisional.responseId}`; }
+  private clearProvisional(): void { this.provisional = undefined; this.echoRecoveryKey = undefined; }
+  private setState(state: SessionViewState): void { this.state = state; for (const listener of this.listeners) listener(state); }
+}
