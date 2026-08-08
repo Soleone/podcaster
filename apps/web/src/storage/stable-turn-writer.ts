@@ -22,8 +22,8 @@ const accountingKey = (sessionId: string, playbackId: string, outputEpoch: numbe
 const stringValue = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
 const numberValue = (value: unknown): number | undefined => Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
 
-function blankTurn(sessionId: string, turnId: string, at: string): StoredTurn {
-  return { key: turnKey(sessionId, turnId), sessionId, turnId, stableText: null, posture: null, eligible: null, policyReason: null, responseId: null, assistantText: null, playbackId: null, outputEpoch: null, sampleRate: null, generatedSamples: 0, deliveredSampleOffset: 0, pendingDeliveredOffset: 0, terminalReason: null, interrupted: false, failures: [], createdAt: at, updatedAt: at };
+function blankTurn(sessionId: string, turnId: string, at: string, timelineSequence: number): StoredTurn {
+  return { key: turnKey(sessionId, turnId), sessionId, turnId, stableText: null, posture: null, eligible: null, policyReason: null, responseId: null, assistantText: null, playbackId: null, outputEpoch: null, sampleRate: null, generatedSamples: 0, deliveredSampleOffset: 0, pendingDeliveredOffset: 0, terminalReason: null, interrupted: false, pausedSampleOffset: null, interruptionDisposition: null, interruptionIntent: null, interruptedResponseId: null, controlOnly: false, continuationState: 'none', timelineSequence, failures: [], createdAt: at, updatedAt: at };
 }
 
 export class StableTurnWriter {
@@ -80,7 +80,7 @@ export class StableTurnWriter {
       const at = isoNow();
       let turn: StoredTurn | undefined;
       const turnId = stringValue(event.payload.turnId);
-      if (turnId) turn = (await requestResult(turns.get(turnKey(event.sessionId, turnId))) as StoredTurn | undefined) ?? blankTurn(event.sessionId, turnId, at);
+      if (turnId) turn = (await requestResult(turns.get(turnKey(event.sessionId, turnId))) as StoredTurn | undefined) ?? blankTurn(event.sessionId, turnId, at, event.monotonicMs);
       const responseId = stringValue(event.payload.responseId);
       if (!turn && responseId) {
         const matches = await requestResult(turns.index('responseId').getAll(responseId)) as StoredTurn[];
@@ -144,8 +144,29 @@ export class StableTurnWriter {
           turn.terminalReason ??= accounting.terminal.reason;
           turn.interrupted ||= accounting.terminal.reason !== 'completed';
         }
+      } else if (event.type === 'playback.paused' && turn) {
+        const offset = numberValue(event.payload.pausedSampleOffset);
+        if (offset !== undefined) turn.pausedSampleOffset = Math.max(turn.pausedSampleOffset ?? 0, offset);
+        turn.continuationState = 'paused';
+      } else if (event.type === 'interruption.decision' && turn) {
+        const disposition = event.payload.disposition;
+        if (disposition === 'resume_noise' || disposition === 'resume_fragment' || disposition === 'resume_requested' || disposition === 'accept_takeover') turn.interruptionDisposition = disposition;
+        const intent = event.payload.intent;
+        if (intent === 'non_substantive' || intent === 'continue_previous' || intent === 'new_request' || intent === 'correction' || intent === 'topic_change' || intent === 'stop_previous') turn.interruptionIntent = intent;
+        turn.controlOnly = event.payload.action === 'resume';
+        turn.interruptedResponseId = responseId ?? null;
+        const interruptedMatches = responseId ? await requestResult(turns.index('responseId').getAll(responseId)) as StoredTurn[] : [];
+        const interrupted = interruptedMatches.find(candidate => candidate.sessionId === event.sessionId);
+        if (interrupted && interrupted.key !== turn.key) {
+          interrupted.pausedSampleOffset = numberValue(event.payload.pausedSampleOffset) ?? interrupted.pausedSampleOffset;
+          interrupted.continuationState = event.payload.action === 'resume' ? 'resumed' : 'discarded';
+          interrupted.interrupted ||= event.payload.action === 'accept';
+          interrupted.updatedAt = at;
+          turns.put(interrupted);
+        }
       } else if (event.type === 'barge_in.confirmed' && turn) {
         turn.interrupted = true;
+        turn.continuationState = 'discarded';
       } else if (event.type === 'failure') {
         const code = stringValue(event.payload.code) ?? 'unknown_failure';
         if (turn) { if (!turn.failures.includes(code)) turn.failures.push(code); }

@@ -5,6 +5,7 @@ import type { OutputAudioChunk, SessionTransport } from './transport';
 export class FakeSessionTransport implements SessionTransport {
   readonly captureFrames: Uint8Array[] = [];
   readonly progressReports: PlaybackProgress[] = [];
+  readonly pauseCheckpoints: Array<{ responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }> = [];
   readonly terminalReceipts = new Map<string, PlaybackTerminal>();
   readonly terminalHistory: PlaybackTerminal[] = [];
   readonly commands: string[] = [];
@@ -23,6 +24,7 @@ export class FakeSessionTransport implements SessionTransport {
   stopSession(): void { this.commands.push('session.stop'); }
   sendCapture(frame: Uint8Array): void { this.captureFrames.push(frame.slice()); }
   sendProgress(progress: PlaybackProgress): void { this.progressReports.push({ ...progress }); }
+  sendPaused(checkpoint: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void { this.pauseCheckpoints.push({ ...checkpoint }); this.commands.push('playback.paused'); }
   sendTerminal(receipt: PlaybackTerminal, _event?: StableEvent): void {
     const key = `${receipt.cancelledEpoch}:${receipt.playbackId}`;
     if (!this.terminalReceipts.has(key)) {

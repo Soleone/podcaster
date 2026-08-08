@@ -105,11 +105,12 @@ export class BrowserPlayback {
     }
   }
 
-  async pause(): Promise<void> {
-    if (this.stopped) return;
-    this.accountCurrentTime();
+  async pause(): Promise<PlaybackProgress> {
+    if (this.stopped) return this.ledger.progress();
     this.gain.gain.value = 0;
     await this.context.suspend();
+    this.accountCurrentTime();
+    return this.ledger.progress();
   }
 
   async resume(): Promise<void> {

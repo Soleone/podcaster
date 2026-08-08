@@ -69,13 +69,14 @@ export class BrowserSession {
     if (this.sessionId && command.sessionId !== this.sessionId) return this.protocolError('session_mismatch');
     if (command.type === 'session.start') return this.start(command);
     if (!this.orchestrator || !this.sessionId) return this.protocolError('command_before_start');
-    if (!['playback.stopped', 'playback.progress', 'turn.persisted', 'turn.persistence_failed'].includes(command.type) && command.epoch !== this.orchestrator.snapshot().epoch) return this.protocolError('epoch_mismatch');
+    if (!['playback.stopped', 'playback.progress', 'playback.paused', 'turn.persisted', 'turn.persistence_failed'].includes(command.type) && command.epoch !== this.orchestrator.snapshot().epoch) return this.protocolError('epoch_mismatch');
     switch (command.type) {
       case 'audio.start': await this.startAudio(command.payload); break;
       case 'audio.stop': this.stopAudio(command.payload); break;
       case 'turn.persisted': await this.persisted(command.payload); break;
       case 'turn.persistence_failed': this.persistenceFailed(command.payload); break;
       case 'playback.progress': this.orchestrator.playbackProgress(command.payload as never); break;
+      case 'playback.paused': this.orchestrator.playbackPaused(command.payload as never); break;
       case 'playback.stopped': this.orchestrator.playbackStopped(command.payload as never); break;
       case 'barge_in.confirm': this.resolveBarge(command.payload, true); break;
       case 'barge_in.reject': this.resolveBarge(command.payload, false); break;

@@ -5,6 +5,7 @@ import type { PlaybackStopReason } from './audio/playback-ledger';
 import { Readiness } from './readiness/Readiness';
 import { SessionScreen } from './session/SessionScreen';
 import { SessionController, type ControlledPlayback } from './session/controller';
+import { conversationFromStoredTurns } from './session/conversation';
 import { createEnvelope, uuidV7 } from './session/envelope';
 import { FakeSessionTransport } from './session/fake-transport';
 import type { SessionTransport } from './session/transport';
@@ -27,7 +28,7 @@ class InstrumentedPlayback implements ControlledPlayback {
   constructor(private readonly playback: BrowserPlayback, private readonly stats: FakeRuntimeStats) {}
   setGeneratedSamples(samples: number): void { this.playback.setGeneratedSamples(samples); }
   append(offset: number, pcm16: Int16Array): void { this.playback.append(offset, pcm16); }
-  async pause(): Promise<void> { this.stats.playbackPauses++; await this.playback.pause(); }
+  async pause() { this.stats.playbackPauses++; return this.playback.pause(); }
   async resume(): Promise<void> { this.stats.playbackResumes++; await this.playback.resume(); }
   stop(reason: PlaybackStopReason) { return this.playback.stop(reason); }
 }
@@ -157,6 +158,7 @@ export function App() {
         dominant: 'listening',
         announcement: 'Listening',
         stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
+        conversationItems: conversationFromStoredTurns(turns),
       };
       startedAt.current = new Date(active.startedAt).getTime();
       await composeFakeSession(opened, active.sessionId, restored, 'fake-recovered');

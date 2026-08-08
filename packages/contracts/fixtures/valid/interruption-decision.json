@@ -1,0 +1,19 @@
+{
+  "protocolVersion": 1,
+  "sessionId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f1",
+  "epoch": 4,
+  "eventId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f2",
+  "type": "interruption.decision",
+  "monotonicMs": 13,
+  "payload": {
+    "turnId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f3",
+    "responseId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f4",
+    "playbackId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f5",
+    "outputEpoch": 4,
+    "action": "resume",
+    "intent": "continue_previous",
+    "confidence": "high",
+    "disposition": "resume_requested",
+    "pausedSampleOffset": 600
+  }
+}

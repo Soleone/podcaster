@@ -1,4 +1,5 @@
 import type { StableEvent } from '../storage/stable-turn-writer';
+import type { ConversationItem } from './conversation';
 
 export type DominantState = 'idle' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
 export interface SessionViewState {
@@ -6,6 +7,7 @@ export interface SessionViewState {
   epoch: number;
   tentativeText: string;
   stableTurns: Array<{ turnId: string; text: string; posture?: 'riff' | 'question' | 'challenge' | 'silence'; policyReason?: string }>;
+  conversationItems: ConversationItem[];
   assistantText: string;
   echoConfirmation: boolean;
   playbackNotice: string;
@@ -13,7 +15,7 @@ export interface SessionViewState {
   announcement: string;
 }
 
-export const initialSessionState: SessionViewState = { dominant: 'idle', epoch: 0, tentativeText: '', stableTurns: [], assistantText: '', echoConfirmation: false, playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
+export const initialSessionState: SessionViewState = { dominant: 'idle', epoch: 0, tentativeText: '', stableTurns: [], conversationItems: [], assistantText: '', echoConfirmation: false, playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
 const label: Record<DominantState, string> = {
   idle: 'Idle', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering whether to respond', intentional_silence: 'Giving you space', reasoning: 'Forming a response', speaking: 'Speaking', stopping: 'Stopping session', degraded: 'Session needs attention',
 };
@@ -34,7 +36,11 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     const stableTurns = [...next.stableTurns];
     if (existing >= 0) stableTurns[existing] = { ...stableTurns[existing]!, text };
     else stableTurns.push({ turnId, text });
-    next = { ...next, tentativeText: '', stableTurns };
+    const conversationItems = !text.trim() ? next.conversationItems
+      : next.conversationItems.some(item => item.kind === 'user' && item.id === turnId)
+        ? next.conversationItems.map(item => item.kind === 'user' && item.id === turnId ? { ...item, text, status: 'stable' as const } : item)
+        : [...next.conversationItems, { kind: 'user' as const, id: turnId, text, status: 'stable' as const, sequence: event.monotonicMs }];
+    next = { ...next, tentativeText: '', stableTurns, conversationItems };
     return dominant(next, 'deciding');
   }
   if (event.type === 'policy.decision') {
@@ -49,9 +55,31 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
       return dominant(next, posture === 'silence' ? 'intentional_silence' : 'reasoning');
     }
   }
-  if (event.type === 'reasoning.final') return { ...dominant(next, 'reasoning'), assistantText: typeof event.payload.text === 'string' ? event.payload.text : '' };
-  if (event.type === 'tts.started') return { ...dominant(next, 'speaking'), playbackNotice: '' };
-  if (event.type === 'barge_in.provisional') return { ...next, echoConfirmation: true, playbackNotice: '' };
+  if (event.type === 'reasoning.final') {
+    const text = typeof event.payload.text === 'string' ? event.payload.text : '';
+    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+    const item: ConversationItem = { kind: 'assistant', id: `assistant:${responseId}`, responseId, text, playback: 'preparing', sequence: event.monotonicMs };
+    return { ...dominant(next, 'reasoning'), assistantText: text, conversationItems: [...next.conversationItems.filter(existing => existing.id !== item.id), item] };
+  }
+  if (event.type === 'tts.started') {
+    const responseId = String(event.payload.responseId ?? '');
+    const playbackId = String(event.payload.playbackId ?? '');
+    return { ...dominant(next, 'speaking'), playbackNotice: '', conversationItems: next.conversationItems.map(item => item.kind === 'assistant' && item.responseId === responseId ? { ...item, playbackId, playback: 'playing' as const } : item) };
+  }
+  if (event.type === 'barge_in.provisional') return { ...next, echoConfirmation: true, playbackNotice: '', conversationItems: next.conversationItems.map(item => item.kind === 'assistant' && item.responseId === event.payload.responseId ? { ...item, playback: 'paused' as const } : item) };
+  if (event.type === 'interruption.decision') {
+    const resume = event.payload.action === 'resume';
+    const responseId = String(event.payload.responseId ?? '');
+    const turnId = String(event.payload.turnId ?? '');
+    let conversationItems = next.conversationItems.map(item => item.kind === 'assistant' && item.responseId === responseId ? { ...item, playback: resume ? 'playing' as const : 'interrupted' as const } : item.kind === 'user' && item.id === turnId && resume ? { ...item, status: 'control' as const } : item);
+    if (resume) conversationItems = [...conversationItems, { kind: 'continuation', id: `continued:${turnId}`, responseId, label: 'Continued previous response', sequence: event.monotonicMs + 0.1 }];
+    return { ...next, echoConfirmation: false, playbackNotice: resume ? 'Continuing the previous response.' : 'Responding to you instead.', conversationItems };
+  }
+  if (event.type === 'playback.stopped') {
+    const playbackId = String(event.payload.playbackId ?? '');
+    const completed = event.payload.reason === 'completed';
+    return { ...next, conversationItems: next.conversationItems.map(item => item.kind === 'assistant' && item.playbackId === playbackId ? { ...item, playback: completed ? 'completed' as const : 'interrupted' as const } : item) };
+  }
   if (event.type === 'barge_in.confirmed') return { ...dominant(next, 'listening'), echoConfirmation: false, playbackNotice: '' };
   if (event.type === 'barge_in.rejected') return { ...next, echoConfirmation: false, playbackNotice: 'Continuing the response.', announcement: 'Continuing the response' };
   if (event.type === 'barge_in.timed_out') return { ...next, echoConfirmation: false, playbackNotice: 'No interruption was confirmed, so the response continued.', announcement: 'No interruption was confirmed. Continuing the response' };
@@ -59,7 +87,7 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   if (event.type === 'session.state') {
     const phase = event.payload.phase;
     if (phase === 'listening') return dominant(next, 'listening');
-    if (phase === 'deciding') return dominant(next, 'deciding');
+    if (phase === 'deciding' || phase === 'interruption_deciding') return dominant(next, 'deciding');
     if (phase === 'reasoning' || phase === 'synthesizing') return dominant(next, 'reasoning');
     if (phase === 'playing') return dominant(next, 'speaking');
     if (phase === 'echo_provisional') return { ...dominant(next, 'speaking'), echoConfirmation: true };

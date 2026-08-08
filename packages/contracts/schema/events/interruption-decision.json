@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/interruption-decision.json",
+  "title": "InterruptionDecisionEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    { "type": "object", "required": ["type", "payload"], "properties": {
+      "type": { "const": "interruption.decision" },
+      "payload": { "type": "object", "required": ["turnId", "responseId", "playbackId", "outputEpoch", "action", "intent", "confidence", "disposition", "pausedSampleOffset"], "properties": {
+        "turnId": { "type": "string", "format": "uuid" },
+        "responseId": { "type": "string", "format": "uuid" },
+        "playbackId": { "type": "string", "format": "uuid" },
+        "outputEpoch": { "type": "integer", "minimum": 0 },
+        "action": { "enum": ["resume", "accept"] },
+        "intent": { "enum": ["non_substantive", "continue_previous", "new_request", "correction", "topic_change", "stop_previous"] },
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "disposition": { "enum": ["resume_noise", "resume_fragment", "resume_requested", "accept_takeover"] },
+        "pausedSampleOffset": { "type": "integer", "minimum": 0 }
+      }, "additionalProperties": false }
+    } }
+  ]
+}

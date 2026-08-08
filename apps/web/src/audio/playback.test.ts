@@ -44,8 +44,13 @@ describe('BrowserPlayback', () => {
     playback.setGeneratedSamples(2_400);
     playback.append(0, new Int16Array(2_400));
     context.currentTime = 0.025;
-    await playback.pause();
+    const checkpoint = await playback.pause();
+    expect(checkpoint).toMatchObject({ playbackId: 'playback', outputEpoch: 4, playedSampleOffset: 600, generatedSamples: 2_400 });
     expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ playedSampleOffset: 600 }));
+    playback.append(2_400, new Int16Array(480));
+    expect(context.sources).toHaveLength(2);
+    await playback.resume();
+    expect(context.resume).toHaveBeenCalledOnce();
     context.currentTime = 0.04;
     const receipt = await playback.stop('cancelled');
     expect(receipt).toEqual({ playbackId: 'playback', cancelledEpoch: 4, finalPlayedSampleOffset: 960, reason: 'cancelled' });

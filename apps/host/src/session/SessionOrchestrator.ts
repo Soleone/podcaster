@@ -2,8 +2,9 @@ import { randomBytes } from "node:crypto";
 import { DEFAULT_PERSONA_MARKDOWN, parsePersona, type PersonaInterpretation } from "@app/contracts";
 import { decide, POLICY_VERSION, type PolicyDecision, type PolicyInput, type Posture } from "@app/policy";
 import type { PiClient, PiEvent, PiPosture } from "../pi/PiClient.js";
+import { hasLexicalContent, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
 
-export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "stopped";
+export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
 export interface SessionEvent { protocolVersion: 1; sessionId: string; epoch: number; eventId: string; type: string; monotonicMs: number; payload: Record<string, unknown> }
 export interface SpeechSynthesisStart {
   playbackId: string;
@@ -30,6 +31,8 @@ export interface SessionOrchestratorOptions {
   idFactory?: () => string;
   scheduler?: Scheduler;
   provisionalTimeoutMs?: number;
+  classifierTimeoutMs?: number;
+  interruptionClassifier?: InterruptionIntentClassifier;
   maxContextBytes?: number;
   maxContextTurns?: number;
   policyDecide?: (input: PolicyInput) => PolicyDecision;
@@ -57,7 +60,13 @@ interface ActiveResponse {
   generatedSamples: number;
   phaseBeforeProvisional?: SessionPhase;
 }
-interface ProvisionalState { responseId: string; outputEpoch: number; cancelTimer: () => void; echoRecovered: boolean }
+interface ProvisionalState { responseId: string; outputEpoch: number; cancelTimer: () => void; echoRecovered: boolean; pausedSampleOffset?: number; generatedSamples?: number; deciding?: AbortController; turnId?: string }
+interface AcceptancePendingTerminal {
+  responseId: string;
+  playbackId: string;
+  outputEpoch: number;
+  turn: { epoch: number; turnId: string; text: string; endpointComplete: boolean };
+}
 
 export class PersonaValidationError extends Error {
   constructor(readonly diagnostics: readonly { code: string; message: string }[]) { super("default persona validation failed"); }
@@ -78,11 +87,6 @@ function truncateUtf8(value: string, maxBytes: number): string {
   let end = maxBytes;
   while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
   return bytes.subarray(0, end).toString("utf8");
-}
-function meaningfulInterruption(value: string): boolean {
-  const normalized = value.normalize("NFKC").trim();
-  if (/\b(?:stop|cancel|pause|wait|quiet)\b/iu.test(normalized)) return true;
-  return (normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? []).length >= 3;
 }
 function boundedPersonaForPi(persona: PersonaInterpretation, maxBytes: number): string | undefined {
   const body = Array.from(persona.body);
@@ -130,6 +134,7 @@ export class SessionOrchestrator {
   private readonly playback = new Map<string, PlaybackLedger>();
   private active: ActiveResponse | undefined;
   private provisional: ProvisionalState | undefined;
+  private acceptancePendingTerminal: AcceptancePendingTerminal | undefined;
   private stableUserTurnCount = 0;
   private eligibleTurnsSinceChallenge = 3;
   private interruptionCooldownActive = false;
@@ -138,6 +143,8 @@ export class SessionOrchestrator {
   private readonly idFactory: () => string;
   private readonly scheduler: Scheduler;
   private readonly provisionalTimeoutMs: number;
+  private readonly classifierTimeoutMs: number;
+  private readonly interruptionClassifier: InterruptionIntentClassifier;
   private readonly maxContextBytes: number;
   private readonly maxContextTurns: number;
   private readonly policyDecide: (input: PolicyInput) => PolicyDecision;
@@ -155,6 +162,8 @@ export class SessionOrchestrator {
     this.idFactory = options.idFactory ?? (() => defaultUuidV7(Date.now()));
     this.scheduler = options.scheduler ?? { schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return () => clearTimeout(timer); } };
     this.provisionalTimeoutMs = options.provisionalTimeoutMs ?? 3_000;
+    this.classifierTimeoutMs = options.classifierTimeoutMs ?? 2_500;
+    this.interruptionClassifier = options.interruptionClassifier ?? new PiInterruptionIntentClassifier(options.pi);
     this.maxContextBytes = options.maxContextBytes ?? 4096;
     this.maxContextTurns = options.maxContextTurns ?? 6;
     this.policyDecide = options.policyDecide ?? decide;
@@ -179,22 +188,11 @@ export class SessionOrchestrator {
 
   async handleStableFinal(turn: { epoch: number; turnId: string; text: string; endpointComplete: boolean }): Promise<void> {
     if (turn.epoch !== this.epoch) return;
-    if (this.phase === "stopped" || this.seenTurns.has(turn.turnId)) return;
+    if (this.phase === "stopped" || this.acceptancePendingTerminal || this.seenTurns.has(turn.turnId)) return;
     this.seenTurns.add(turn.turnId);
-    if (this.provisional && !meaningfulInterruption(turn.text)) {
-      // Persisted empty/very short STT output is treated as accidental noise.
-      // Keep the current response and explicitly authorize browser resume.
-      this.provisional.echoRecovered = true;
-      this.resolveProvisional("rejected");
-      return;
-    }
     if (this.provisional) {
-      const provisional = this.provisional;
-      provisional.cancelTimer(); this.provisional = undefined;
-      this.advanceEpochAndCancel();
-      this.interruptionCooldownActive = true;
-      this.phase = "listening";
-      this.emit("barge_in.confirmed", { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: false });
+      await this.decideInterruption(turn);
+      return;
     } else if (this.active) { this.advanceEpochAndCancel(); this.interruptionCooldownActive = true; }
     const operationEpoch = this.epoch;
     this.phase = "deciding";
@@ -289,7 +287,8 @@ export class SessionOrchestrator {
     if (!active || active.responseId !== responseId || this.phase === "stopped" || this.provisional) return false;
     active.phaseBeforeProvisional = this.phase;
     this.options.speech.pause(responseId);
-    const provisional: ProvisionalState = { responseId, outputEpoch: active.epoch, echoRecovered: false, cancelTimer: () => {} };
+    const ledger = active.playbackId ? this.playback.get(active.playbackId) : undefined;
+    const provisional: ProvisionalState = { responseId, outputEpoch: active.epoch, echoRecovered: false, cancelTimer: () => {}, ...(ledger ? { generatedSamples: ledger.generatedSamples } : {}) };
     provisional.cancelTimer = this.scheduler.schedule(this.provisionalTimeoutMs, () => this.resolveProvisional("timed_out"));
     this.provisional = provisional;
     this.phase = "echo_provisional";
@@ -297,11 +296,23 @@ export class SessionOrchestrator {
     return true;
   }
 
+  playbackPaused(input: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void {
+    const provisional = this.provisional;
+    const active = this.active;
+    const ledger = this.playback.get(input.playbackId);
+    if (!provisional || !active || active.responseId !== input.responseId || active.playbackId !== input.playbackId || active.epoch !== input.outputEpoch || provisional.responseId !== input.responseId || provisional.outputEpoch !== input.outputEpoch || !ledger || ledger.terminal) return;
+    if (![input.outputEpoch, input.pausedSampleOffset, input.generatedSamples].every(value => this.validOffset(value)) || input.generatedSamples > ledger.generatedSamples || input.pausedSampleOffset > input.generatedSamples || input.pausedSampleOffset < ledger.delivered) return;
+    ledger.delivered = input.pausedSampleOffset;
+    provisional.pausedSampleOffset = input.pausedSampleOffset;
+    provisional.generatedSamples = input.generatedSamples;
+  }
+
   setEchoRecovered(recovered: boolean): void { if (this.provisional) this.provisional.echoRecovered = recovered; }
   confirmBargeIn(): boolean {
     const provisional = this.provisional;
     if (!provisional || this.phase === "stopped") return false;
     provisional.cancelTimer();
+    provisional.deciding?.abort();
     this.provisional = undefined;
     const responseId = provisional.responseId;
     const outputEpoch = provisional.outputEpoch;
@@ -326,6 +337,20 @@ export class SessionOrchestrator {
     if (ledger.outputEpoch !== input.cancelledEpoch || input.finalPlayedSampleOffset > ledger.generatedSamples) return;
     ledger.delivered = Math.max(ledger.delivered, input.finalPlayedSampleOffset);
     ledger.terminal = true;
+    const pending = this.acceptancePendingTerminal;
+    if (pending
+      && pending.playbackId === input.playbackId
+      && pending.outputEpoch === input.cancelledEpoch
+      && pending.responseId === this.active?.responseId) {
+      this.acceptancePendingTerminal = undefined;
+      this.advanceEpochAndCancel();
+      this.interruptionCooldownActive = true;
+      this.phase = "listening";
+      this.emit("barge_in.confirmed", { responseId: pending.responseId, outputEpoch: pending.outputEpoch, resumable: false });
+      this.seenTurns.delete(pending.turn.turnId);
+      void this.handleStableFinal({ ...pending.turn, epoch: this.epoch });
+      return;
+    }
     if (input.cancelledEpoch !== this.epoch) return;
     const active = this.active;
     if (!active || active.playbackId !== input.playbackId || this.phase === "stopped") return;
@@ -345,8 +370,10 @@ export class SessionOrchestrator {
 
   cancelCurrentTurn(): void {
     if (this.phase === "stopped") return;
+    this.acceptancePendingTerminal = undefined;
     const provisional = this.provisional;
     provisional?.cancelTimer();
+    provisional?.deciding?.abort();
     this.provisional = undefined;
     const responseId = provisional?.responseId;
     const outputEpoch = provisional?.outputEpoch;
@@ -359,8 +386,10 @@ export class SessionOrchestrator {
 
   stop(): void {
     if (this.phase === "stopped") return;
+    this.acceptancePendingTerminal = undefined;
     const provisional = this.provisional;
     provisional?.cancelTimer();
+    provisional?.deciding?.abort();
     this.provisional = undefined;
     this.advanceEpochAndCancel();
     if (provisional) this.emit("barge_in.rejected", { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: false });
@@ -374,10 +403,74 @@ export class SessionOrchestrator {
     this.emitState();
   }
 
+  private async decideInterruption(turn: { epoch: number; turnId: string; text: string; endpointComplete: boolean }): Promise<boolean> {
+    const provisional = this.provisional;
+    const active = this.active;
+    if (!provisional || !active || active.responseId !== provisional.responseId || !active.playbackId) return false;
+    provisional.cancelTimer();
+    provisional.turnId = turn.turnId;
+    this.phase = "interruption_deciding";
+    let decision: InterruptionIntentDecision = { action: "resume", intent: "non_substantive", confidence: "low", reason: "No substantive lexical speech." };
+    if (hasLexicalContent(turn.text) && provisional.pausedSampleOffset !== undefined && provisional.generatedSamples !== undefined) {
+      const controller = new AbortController();
+      provisional.deciding = controller;
+      let timeout: NodeJS.Timeout | undefined;
+      try {
+        decision = await Promise.race([
+          this.interruptionClassifier.decide({
+            interruptedResponseText: active.assistantText ?? "",
+            deliveredSampleOffset: provisional.pausedSampleOffset,
+            generatedSamples: provisional.generatedSamples,
+            transcript: turn.text,
+            boundedContext: this.boundedContext(),
+          }, controller.signal),
+          new Promise<InterruptionIntentDecision>((_resolve, reject) => { timeout = setTimeout(() => reject(new Error("interruption classification timed out")), this.classifierTimeoutMs); }),
+        ]);
+      } catch { decision = { action: "resume", intent: "non_substantive", confidence: "low", reason: "Classification unavailable." }; }
+      finally { if (timeout) clearTimeout(timeout); controller.abort(); }
+    }
+    if (this.provisional !== provisional || this.active !== active) return false;
+    const accept = decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text) && provisional.pausedSampleOffset !== undefined;
+    if (provisional.pausedSampleOffset === undefined) {
+      this.resolveProvisional("timed_out");
+      return false;
+    }
+    const disposition = accept ? "accept_takeover" : decision.intent === "continue_previous" ? "resume_requested" : hasLexicalContent(turn.text) ? "resume_fragment" : "resume_noise";
+    this.emit("interruption.decision", {
+      turnId: turn.turnId,
+      responseId: provisional.responseId,
+      playbackId: active.playbackId,
+      outputEpoch: provisional.outputEpoch,
+      action: accept ? "accept" : "resume",
+      intent: accept ? decision.intent : decision.intent === "continue_previous" ? "continue_previous" : "non_substantive",
+      confidence: decision.confidence,
+      disposition,
+      pausedSampleOffset: provisional.pausedSampleOffset,
+    });
+    if (!accept) {
+      provisional.echoRecovered = true;
+      this.resolveProvisional("rejected");
+      return false;
+    }
+    provisional.deciding?.abort();
+    provisional.cancelTimer();
+    this.provisional = undefined;
+    this.acceptancePendingTerminal = {
+      responseId: provisional.responseId,
+      playbackId: active.playbackId,
+      outputEpoch: provisional.outputEpoch,
+      turn: { epoch: provisional.outputEpoch, turnId: turn.turnId, text: turn.text, endpointComplete: turn.endpointComplete },
+    };
+    this.cancelResponse(active);
+    this.phase = "acceptance_pending_terminal";
+    return true;
+  }
+
   private resolveProvisional(type: "rejected" | "timed_out"): boolean {
     const provisional = this.provisional;
     if (!provisional || this.phase === "stopped") return false;
     provisional.cancelTimer();
+    provisional.deciding?.abort();
     this.provisional = undefined;
     const active = this.active;
     const ledger = active?.playbackId ? this.playback.get(active.playbackId) : undefined;
@@ -390,8 +483,7 @@ export class SessionOrchestrator {
       && active.playbackId
       && ledger
       && !ledger.terminal
-      // If the confirmation prompt times out, prefer continuing the response.
-      // Silence is ambiguous and must not destructively discard audible output.
+      && provisional.pausedSampleOffset !== undefined
       && (provisional.echoRecovered || type === "timed_out"),
     );
     if (safe && active) {

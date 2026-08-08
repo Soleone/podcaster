@@ -1,6 +1,6 @@
 import { indexedDB } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
+import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
 import { StableTurnWriter, type StableEvent } from '../storage/stable-turn-writer';
 import { SessionController, type ControlledPlayback } from './controller';
 import { FakeSessionTransport } from './fake-transport';
@@ -13,7 +13,7 @@ afterEach(async () => { for (const name of databases.splice(0)) await new Promis
 
 class FakePlayback implements ControlledPlayback {
   generated = 0;
-  pause = vi.fn(async () => undefined);
+  pause = vi.fn(async () => ({ playbackId: this.playbackId, outputEpoch: this.epoch, playedSampleOffset: 0, generatedSamples: this.generated }));
   resume = vi.fn(async () => undefined);
   append = vi.fn();
   stops: PlaybackStopReason[] = [];
@@ -103,18 +103,47 @@ describe('SessionController', () => {
     writer.close();
   });
 
-  it('terminalizes instead of resuming after a newer stable turn and reports one terminal receipt', async () => {
+  it('obeys a host-authorized resume without applying a second transcript heuristic', async () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
     controller.setEchoRecovered(true);
     await transport.emit(event('session', 0, 'transcript.final', { turnId: 'new-turn', text: 'new meaningful speech', endpointComplete: true }));
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    expect(players[0]!.resume).toHaveBeenCalledOnce();
+    expect(players[0]!.stops).toEqual([]);
+    expect(transport.terminalReceipts).toHaveLength(0);
+    writer.close();
+  });
+
+  it('accepts only an identity-matched authoritative takeover decision', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    await transport.emit(event('session', 0, 'interruption.decision', { turnId: 'wrong', responseId: 'response', playbackId: 'other-playback', outputEpoch: 0, action: 'accept', intent: 'new_request', confidence: 'high', disposition: 'accept_takeover', pausedSampleOffset: 0 }));
+    expect(players[0]!.stops).toEqual([]);
+    await transport.emit(event('session', 0, 'interruption.decision', { turnId: 'turn', responseId: 'response', playbackId: 'playback', outputEpoch: 0, action: 'accept', intent: 'new_request', confidence: 'high', disposition: 'accept_takeover', pausedSampleOffset: 0 }));
     expect(players[0]!.resume).not.toHaveBeenCalled();
     expect(players[0]!.stops).toEqual(['cancelled']);
-    expect(transport.terminalReceipts.get('0:playback')).toMatchObject({ reason: 'cancelled', finalPlayedSampleOffset: 0 });
-    await controller.reportPlaybackTerminal({ playbackId: 'playback', cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: 'cancelled' });
-    expect(transport.terminalReceipts).toHaveLength(1);
+    expect(transport.terminalReceipts.get('0:playback')).toMatchObject({ reason: 'cancelled' });
+    writer.close();
+  });
+
+  it('buffers an authoritative decision until a deferred pause checkpoint is persisted', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    let finishPause!: (progress: PlaybackProgress) => void;
+    players[0]!.pause.mockImplementationOnce(() => new Promise(resolve => { finishPause = resolve; }));
+    const provisional = transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    while (!players[0]!.pause.mock.calls.length) await new Promise<void>(resolve => setImmediate(resolve));
+    const decision = transport.emit(event('session', 0, 'interruption.decision', { turnId: 'turn', responseId: 'response', playbackId: 'playback', outputEpoch: 0, action: 'accept', intent: 'new_request', confidence: 'high', disposition: 'accept_takeover', pausedSampleOffset: 48 }));
+    await Promise.resolve();
+    expect(players[0]!.stops).toEqual([]);
+    finishPause({ playbackId: 'playback', outputEpoch: 0, playedSampleOffset: 48, generatedSamples: 96 });
+    await Promise.all([provisional, decision]);
+    expect(transport.pauseCheckpoints).toContainEqual(expect.objectContaining({ playbackId: 'playback', pausedSampleOffset: 48 }));
+    expect(players[0]!.stops).toEqual(['cancelled']);
+    expect(transport.terminalReceipts.get('0:playback')).toMatchObject({ finalPlayedSampleOffset: 0, reason: 'cancelled' });
     writer.close();
   });
 
@@ -146,7 +175,7 @@ describe('SessionController', () => {
     writer.close();
   });
 
-  it('resumes host-authorized accidental noise but not a meaningful stable interruption', async () => {
+  it('resumes every host-authorized rejection regardless of transcript wording', async () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
@@ -156,8 +185,8 @@ describe('SessionController', () => {
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
     await transport.emit(event('session', 0, 'transcript.final', { turnId: 'speech', text: 'please stop speaking', endpointComplete: true }));
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
-    expect(players[0]!.resume).toHaveBeenCalledOnce();
-    expect(players[0]!.stops).toEqual(['cancelled']);
+    expect(players[0]!.resume).toHaveBeenCalledTimes(2);
+    expect(players[0]!.stops).toEqual([]);
     writer.close();
   });
 

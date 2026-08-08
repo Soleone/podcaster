@@ -13,6 +13,7 @@ export interface SessionTransport {
   stopSession(reason: 'user' | 'expired' | 'disconnect'): void | Promise<void>;
   sendCapture(frame: Uint8Array): void | Promise<void>;
   sendProgress(progress: PlaybackProgress): void | Promise<void>;
+  sendPaused(checkpoint: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void | Promise<void>;
   sendTerminal(receipt: PlaybackTerminal, event?: StableEvent): void | Promise<void>;
   cancelAssistant(): void | Promise<void>;
   confirmBargeIn(): void | Promise<void>;

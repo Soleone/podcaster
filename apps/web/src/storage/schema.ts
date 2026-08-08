@@ -1,5 +1,5 @@
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
-export const PODCASTER_DB_VERSION = 1;
+export const PODCASTER_DB_VERSION = 2;
 
 export const STORES = {
   sessions: 'sessions',
@@ -38,6 +38,13 @@ export interface StoredTurn {
   pendingDeliveredOffset: number;
   terminalReason: 'completed' | 'cancelled' | 'stopped' | 'failed' | null;
   interrupted: boolean;
+  pausedSampleOffset: number | null;
+  interruptionDisposition: 'resume_noise' | 'resume_fragment' | 'resume_requested' | 'accept_takeover' | null;
+  interruptionIntent: 'non_substantive' | 'continue_previous' | 'new_request' | 'correction' | 'topic_change' | 'stop_previous' | null;
+  interruptedResponseId: string | null;
+  controlOnly: boolean;
+  continuationState: 'none' | 'paused' | 'resumed' | 'discarded';
+  timelineSequence: number;
   failures: string[];
   createdAt: string;
   updatedAt: string;
@@ -52,7 +59,7 @@ function ensureIndex(store: IDBObjectStore, name: string, keyPath: string): void
 export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name = PODCASTER_DB_NAME): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(name, PODCASTER_DB_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = event => {
       const db = request.result;
       const transaction = request.transaction!;
       const sessions = db.objectStoreNames.contains(STORES.sessions)
@@ -65,6 +72,26 @@ export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name
       ensureIndex(turns, 'sessionId', 'sessionId');
       ensureIndex(turns, 'responseId', 'responseId');
       ensureIndex(turns, 'playbackId', 'playbackId');
+      ensureIndex(turns, 'timelineSequence', 'timelineSequence');
+      if (event.oldVersion > 0 && event.oldVersion < 2) {
+        const rowsRequest = turns.getAll();
+        rowsRequest.onsuccess = () => {
+          const rows = (rowsRequest.result as Array<Record<string, unknown>>).sort((left, right) => {
+            const compare = (a: unknown, b: unknown) => String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+            const sessionOrder = compare(left.sessionId, right.sessionId);
+            if (sessionOrder !== 0) return sessionOrder;
+            const chronology = compare(left.createdAt, right.createdAt);
+            return chronology !== 0 ? chronology : compare(left.key, right.key);
+          });
+          let sessionId: string | undefined;
+          let sequence = 0;
+          for (const value of rows) {
+            const rowSessionId = String(value.sessionId);
+            if (rowSessionId !== sessionId) { sessionId = rowSessionId; sequence = 0; }
+            turns.put({ ...value, pausedSampleOffset: null, interruptionDisposition: null, interruptionIntent: null, interruptedResponseId: null, controlOnly: false, continuationState: value.interrupted ? 'discarded' : 'none', timelineSequence: ++sequence });
+          }
+        };
+      }
       if (!db.objectStoreNames.contains(STORES.appliedEvents)) db.createObjectStore(STORES.appliedEvents, { keyPath: 'eventId' });
       if (!db.objectStoreNames.contains(STORES.terminalReceipts)) db.createObjectStore(STORES.terminalReceipts, { keyPath: 'playbackId' });
       if (!db.objectStoreNames.contains(STORES.meta)) db.createObjectStore(STORES.meta, { keyPath: 'key' });

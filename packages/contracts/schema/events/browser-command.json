@@ -274,6 +274,9 @@
           "$ref": "./playback-progress.json"
         },
         {
+          "$ref": "./playback-paused.json"
+        },
+        {
           "$ref": "./playback-stopped.json"
         }
       ]

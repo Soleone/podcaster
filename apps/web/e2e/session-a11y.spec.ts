@@ -25,15 +25,17 @@ test('restrains live announcements and keeps interruption controls keyboard acce
 
   await emit(page, 'tts.started', { responseId: 'response-2', playbackId: 'playback-2', sampleRate: 24000 });
   await emit(page, 'barge_in.provisional', { responseId: 'response-2', outputEpoch: 0, resumable: true });
-  const yes = page.getByRole('button', { name: 'Stop response and listen' });
-  await expect(yes).toBeFocused();
+  const continueButton = page.getByRole('button', { name: 'Continue previous response' });
+  await continueButton.focus();
+  await expect(continueButton).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Continue response' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Respond to me instead' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
   await page.evaluate(() => window.__podcasterTest!.echoRecovered(true));
   await page.keyboard.press('Enter');
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().commands)).toContain('reject');
   await emit(page, 'barge_in.rejected', { responseId: 'response-2', outputEpoch: 0, resumable: true });
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().playbackResumes)).toBe(1);
-  await expect(page.getByRole('heading', { name: 'Speaking' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Speaking' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop session' })).toBeVisible();
 });

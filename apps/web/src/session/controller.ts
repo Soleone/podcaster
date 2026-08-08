@@ -7,7 +7,7 @@ import type { OutputAudioChunk, SessionTransport } from './transport';
 export interface ControlledPlayback {
   setGeneratedSamples(samples: number): void;
   append(offset: number, pcm16: Int16Array): void;
-  pause(): Promise<void>;
+  pause(): Promise<PlaybackProgress>;
   resume(): Promise<void>;
   stop(reason: PlaybackStopReason): Promise<PlaybackTerminal>;
 }
@@ -20,13 +20,13 @@ export interface SessionControllerOptions {
   schedule?: (delay: number, callback: () => void) => () => void;
 }
 interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean }
-interface Provisional { responseId: string; outputEpoch: number; playbackId: string; newerStableTurn: boolean; confirmed: boolean }
-
-function meaningfulInterruption(value: unknown): boolean {
-  if (typeof value !== 'string') return false;
-  const normalized = value.normalize('NFKC').trim();
-  if (/\b(?:stop|cancel|pause|wait|quiet)\b/iu.test(normalized)) return true;
-  return (normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? []).length >= 3;
+interface Provisional {
+  responseId: string;
+  outputEpoch: number;
+  playbackId: string;
+  pausedSampleOffset?: number;
+  confirmed: boolean;
+  checkpointReady: Promise<boolean>;
 }
 
 export class SessionController {
@@ -60,9 +60,14 @@ export class SessionController {
     if (event.sessionId !== this.options.sessionId || this.seenEvents.has(event.eventId)) return;
     const accountingOnly = event.type === 'playback.progress' || event.type === 'playback.stopped';
     if (event.epoch < this.state.epoch && !accountingOnly) return;
-    if ((event.type === 'barge_in.confirmed' || event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') && !this.matchesProvisionalResolution(event)) return;
+    const isInterruptionResolution = event.type === 'barge_in.confirmed' || event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out' || event.type === 'interruption.decision';
+    if (isInterruptionResolution && !this.matchesProvisionalResolution(event)) return;
+    if (isInterruptionResolution) {
+      const provisional = this.provisional!;
+      if (!await provisional.checkpointReady || this.provisional !== provisional) return;
+      if (event.type === 'interruption.decision' && event.payload.pausedSampleOffset !== provisional.pausedSampleOffset) return;
+    }
     this.seenEvents.add(event.eventId);
-    if (event.type === 'transcript.final' && this.provisional && meaningfulInterruption(event.payload.text)) this.provisional.newerStableTurn = true;
     const storage = await this.options.writer.apply(event);
     if (!storage.ok) {
       if (event.type === 'transcript.final' && !this.stopped) await this.options.transport.acknowledgePersistenceFailed(event, 'unavailable');
@@ -95,9 +100,43 @@ export class SessionController {
     } else if (event.type === 'tts.ended' && this.active && event.payload.playbackId === this.active.playbackId) {
       this.active.player.setGeneratedSamples(Number(event.payload.generatedSamples));
     } else if (event.type === 'barge_in.provisional' && this.active && event.payload.responseId === this.active.responseId && event.payload.outputEpoch === this.active.outputEpoch) {
-      this.provisional = { responseId: this.active.responseId, outputEpoch: this.active.outputEpoch, playbackId: this.active.playbackId, newerStableTurn: false, confirmed: false };
+      const active = this.active;
+      let completeCheckpoint!: (ready: boolean) => void;
+      const provisional: Provisional = {
+        responseId: active.responseId,
+        outputEpoch: active.outputEpoch,
+        playbackId: active.playbackId,
+        confirmed: false,
+        checkpointReady: new Promise(resolve => { completeCheckpoint = resolve; }),
+      };
+      this.provisional = provisional;
       this.echoRecoveryKey = undefined;
-      await this.active.player.pause();
+      try {
+        const progress = await active.player.pause();
+        if (this.provisional !== provisional || this.active !== active || active.terminal) { completeCheckpoint(false); return; }
+        provisional.pausedSampleOffset = progress.playedSampleOffset;
+        const checkpoint = { responseId: active.responseId, playbackId: active.playbackId, outputEpoch: active.outputEpoch, pausedSampleOffset: progress.playedSampleOffset, generatedSamples: progress.generatedSamples };
+        const pausedEvent = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.paused', payload: checkpoint });
+        const persisted = await this.options.writer.apply(pausedEvent);
+        if (!persisted.ok) { completeCheckpoint(false); this.degrade(persisted.degradedReason ?? 'The pause checkpoint could not be saved.'); await this.terminalize('failed'); this.clearProvisional(); return; }
+        await this.options.transport.sendPaused(checkpoint);
+        completeCheckpoint(true);
+      } catch {
+        completeCheckpoint(false);
+        if (this.provisional === provisional) { await this.terminalize('failed'); this.clearProvisional(); this.degrade('Playback could not be paused safely.'); }
+      }
+    } else if (event.type === 'interruption.decision') {
+      const provisional = this.provisional;
+      const active = this.active;
+      if (!provisional || !active || provisional.pausedSampleOffset === undefined || event.payload.pausedSampleOffset !== provisional.pausedSampleOffset) return;
+      if (event.payload.action === 'resume') {
+        this.clearProvisional();
+        await active.player.resume();
+      } else if (event.payload.action === 'accept') {
+        provisional.confirmed = true;
+        await this.terminalize('cancelled');
+        this.clearProvisional();
+      }
     } else if (event.type === 'barge_in.confirmed') {
       const provisional = this.provisional;
       const active = this.active;
@@ -117,8 +156,8 @@ export class SessionController {
         epochMatches: active.outputEpoch === event.epoch,
         wasSpeaking: true,
         playbackTerminal: active.terminal,
-        echoRecovered: this.echoRecoveryKey === this.provisionalKey(provisional),
-        newerStableTurn: provisional.newerStableTurn,
+        echoRecovered: true,
+        newerStableTurn: false,
         stopped: this.stopped,
         confirmed: provisional.confirmed,
       });
@@ -199,6 +238,7 @@ export class SessionController {
     return Boolean(provisional && active
       && event.payload.responseId === provisional.responseId
       && event.payload.outputEpoch === provisional.outputEpoch
+      && (event.type !== 'interruption.decision' || event.payload.playbackId === provisional.playbackId)
       && active.responseId === provisional.responseId
       && active.playbackId === provisional.playbackId
       && active.outputEpoch === provisional.outputEpoch);

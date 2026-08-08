@@ -17,20 +17,20 @@ test('runs stable session states and recovers stable work after refresh', async 
   await expect(page.locator('.tentative')).toHaveCount(0);
   await emit(page, 'policy.decision', { turnId: 'turn-1', posture: 'silence', eligible: true, reasonCodes: ['response_budget_exhausted'] });
   await expect(page.getByRole('heading', { name: 'Giving you space' })).toBeVisible();
-  await expect(page.getByText('Companion stayed quiet · response limit')).toBeVisible();
+  await expect(page.getByText('response_budget_exhausted')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible({ timeout: 2_000 });
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
   await expect(page.getByText('A stable thought')).toBeVisible();
-  await expect(page.getByText('Companion stayed quiet · response limit')).toBeVisible();
+  await expect(page.getByText('response_budget_exhausted')).toHaveCount(0);
 
   await emit(page, 'transcript.final', { turnId: 'turn-empty', text: '', endpointComplete: true });
   await emit(page, 'policy.decision', { turnId: 'turn-empty', posture: 'silence', eligible: false, reasonCodes: ['empty'] });
-  await expect(page.locator('.conversation article')).toHaveCount(1);
+  await expect(page.locator('.conversation-bubble')).toHaveCount(1);
   await emit(page, 'transcript.final', { turnId: 'turn-2', text: 'Please respond to this thought', endpointComplete: true });
   await emit(page, 'policy.decision', { turnId: 'turn-2', posture: 'question', eligible: true, reasonCodes: ['selected'] });
-  await expect(page.getByText('Reply selected')).toBeVisible();
+  await expect(page.getByText('Please respond to this thought')).toBeVisible();
 
   await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
   await emit(page, 'tts.started', { responseId: 'response-1', playbackId: 'playback-1', sampleRate: 24000 });
@@ -40,8 +40,10 @@ test('runs stable session states and recovers stable work after refresh', async 
   await expect(page.getByRole('heading', { name: 'Speaking' })).toBeVisible();
   await emit(page, 'barge_in.provisional', { responseId: 'response-1', outputEpoch: 0, resumable: true });
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().playbackPauses)).toBe(1);
-  await expect(page.getByRole('button', { name: 'Stop response and listen' })).toBeVisible();
-  await page.getByRole('button', { name: 'Stop response and listen' }).click();
+  await expect(page.getByRole('button', { name: 'Respond to me instead' })).toBeVisible();
+  const timelineText = await page.locator('.conversation-list').innerText();
+  expect(timelineText.indexOf('Please respond to this thought')).toBeLessThan(timelineText.indexOf('What matters most?'));
+  await page.getByRole('button', { name: 'Respond to me instead' }).click();
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().terminalReceipts)).toBe(1);
   const stats = await page.evaluate(() => window.__podcasterTest!.stats());

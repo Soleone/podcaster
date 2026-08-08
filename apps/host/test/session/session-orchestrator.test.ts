@@ -38,7 +38,7 @@ function setup(overrides: Partial<ConstructorParameters<typeof SessionOrchestrat
   const pi = overrides.pi ?? new FakePi();
   const speech = overrides.speech ?? new FakeSpeech();
   let id = 0;
-  const session = new SessionOrchestrator({ sessionId: SESSION_ID, sessionSeed: "seed", pi, speech, emit: event => events.push(event), idFactory: () => ids[id++]!, now: () => 10, policyDecide: policy("question"), ...overrides });
+  const session = new SessionOrchestrator({ sessionId: SESSION_ID, sessionSeed: "seed", pi, speech, emit: event => events.push(event), idFactory: () => ids[id++]!, now: () => 10, policyDecide: policy("question"), interruptionClassifier: { decide: async () => ({ action: "accept", intent: "new_request", confidence: "high", reason: "Clear new request." }) }, ...overrides });
   session.start();
   return { session, events, pi, speech };
 }
@@ -237,6 +237,7 @@ describe("safe session orchestrator", () => {
     await handling;
     expect(session.snapshot().phase).toBe("echo_provisional");
     expect(speech.paused).toEqual([responseId, responseId]);
+    session.playbackPaused({ responseId, playbackId: ids[90]!, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
     session.setEchoRecovered(true);
     session.rejectBargeIn();
     expect(session.snapshot().phase).toBe("playing");
@@ -257,10 +258,12 @@ describe("safe session orchestrator", () => {
   });
 
   it("resumes after persisted accidental noise without cancelling the response", async () => {
-    const { session, speech, events } = setup();
+    const { session, speech, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "resume", intent: "non_substantive", confidence: "high", reason: "Noise." }) } });
     await session.handleStableFinal(turn(0));
     const first = session.snapshot().activeResponseId!;
     session.beginProvisionalBargeIn(first);
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
     await session.handleStableFinal(turn(1, "um"));
     expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "playing", activeResponseId: first });
     expect((speech as FakeSpeech).cancelled).toEqual([]);
@@ -268,15 +271,45 @@ describe("safe session orchestrator", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "barge_in.rejected", payload: expect.objectContaining({ resumable: true }) }));
   });
 
-  it("treats a new stable final during provisional as one confirmed supersession", async () => {
-    const { session, speech, events } = setup();
+  it("defaults a low-confidence takeover decision to resuming the same epoch", async () => {
+    const { session, speech, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "accept", intent: "new_request", confidence: "low", reason: "Ambiguous." }) } });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 120, generatedSamples: 6400 });
+    await session.handleStableFinal(turn(1, "Could I maybe ask something"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "playing", activeResponseId: responseId });
+    expect((speech as FakeSpeech).cancelled).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "interruption.decision", payload: expect.objectContaining({ action: "resume", pausedSampleOffset: 120 }) }));
+  });
+
+  it("waits for the matching first terminal receipt before processing an accepted takeover exactly once", async () => {
+    const { session, pi, speech, events } = setup();
     await session.handleStableFinal(turn(0));
     const first = session.snapshot().activeResponseId!;
     session.beginProvisionalBargeIn(first);
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
     await session.handleStableFinal(turn(1));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "acceptance_pending_terminal", activeResponseId: first });
+    expect((pi as FakePi).inputs).toHaveLength(1);
+    expect(events.filter(event => event.type === "policy.decision")).toHaveLength(1);
+
+    session.playbackStopped({ playbackId: ids[99]!, cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: "cancelled" });
+    expect(session.snapshot().epoch).toBe(0);
+    session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: "cancelled" });
+    await new Promise<void>(resolve => setImmediate(resolve));
     expect(session.snapshot().epoch).toBe(1);
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    expect(events.filter(event => event.type === "policy.decision")).toHaveLength(2);
     expect((speech as FakeSpeech).cancelled.filter(id => id === first)).toHaveLength(1);
     expect(events.filter(event => event.type === "barge_in.confirmed")).toHaveLength(1);
+
+    session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: "cancelled" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    expect(events.filter(event => event.type === "policy.decision")).toHaveLength(2);
   });
 
   it("ignores an unseen delayed old-epoch final after confirmed barge-in", async () => {
@@ -322,11 +355,14 @@ describe("safe session orchestrator", () => {
     const { session, speech } = setup({ scheduler });
     await session.handleStableFinal(turn(0));
     const first = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
     session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
     session.setEchoRecovered(true);
     expect(session.rejectBargeIn()).toBe(true);
     expect((speech as FakeSpeech).resumed).toEqual([first]);
     session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
     scheduler.fire();
     expect((speech as FakeSpeech).resumed).toEqual([first, first]);
     expect((speech as FakeSpeech).cancelled).toEqual([]);
@@ -340,6 +376,7 @@ describe("safe session orchestrator", () => {
     const { activeResponseId, deliveredExtent } = session.snapshot();
     const playbackId = Object.keys(deliveredExtent)[0]!;
     session.beginProvisionalBargeIn(activeResponseId!);
+    session.playbackPaused({ responseId: activeResponseId!, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
     scheduler.fire();
     expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0 });
     expect((speech as FakeSpeech).cancelled).toEqual([]);
@@ -527,6 +564,7 @@ describe("safe session orchestrator", () => {
       const oldResponseId = activeResponseId!;
       const playbackId = Object.keys(deliveredExtent)[0]!;
       expect(session.beginProvisionalBargeIn(oldResponseId)).toBe(true);
+      session.playbackPaused({ responseId: oldResponseId, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
       expect(session.beginProvisionalBargeIn(oldResponseId)).toBe(false);
 
       const runTerminal = () => {
@@ -536,7 +574,10 @@ describe("safe session orchestrator", () => {
       };
       const runChallenger = async () => {
         if (challenger === "stop") session.stop();
-        else if (challenger === "new-final") await session.handleStableFinal(turn(1, "A new stable final supersedes output"));
+        else if (challenger === "new-final") {
+          await session.handleStableFinal(turn(1, "A new stable final supersedes output"));
+          if (session.snapshot().phase === "acceptance_pending_terminal") session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: "cancelled" });
+        }
         else session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 6400, reason: "completed" });
       };
       if (order === "terminal-first") { runTerminal(); await runChallenger(); }
@@ -559,7 +600,8 @@ describe("safe session orchestrator", () => {
       session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 1000, reason: "cancelled" });
       session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 6000, reason: "cancelled" });
       session.playbackProgress({ playbackId, outputEpoch: 0, playedSampleOffset: 6400, generatedSamples: 6400 });
-      expect(session.snapshot().deliveredExtent[playbackId]).toBe(challenger === "playback-complete" ? 6400 : 1000);
+      const expectedDelivered = challenger === "playback-complete" ? 6400 : challenger === "new-final" && order === "challenger-first" ? 0 : 1000;
+      expect(session.snapshot().deliveredExtent[playbackId]).toBe(expectedDelivered);
       expect(session.snapshot().activeResponseId).not.toBe(oldResponseId);
       expect(session.snapshot().phase).not.toBe("echo_provisional");
     }

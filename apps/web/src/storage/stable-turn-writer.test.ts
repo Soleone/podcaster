@@ -55,6 +55,22 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  it('persists pause identity and a control-only resume without interrupting the original response', async () => {
+    const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
+    await writer.apply(event('s', 'transcript.final', { turnId: 'original', text: 'question' }));
+    await writer.apply(event('s', 'reasoning.final', { turnId: 'original', responseId: 'r', posture: 'question', text: 'answer' }));
+    await writer.apply(event('s', 'tts.started', { responseId: 'r', playbackId: 'p', sampleRate: 24000 }));
+    await writer.apply(event('s', 'playback.paused', { responseId: 'r', playbackId: 'p', outputEpoch: 0, pausedSampleOffset: 240, generatedSamples: 1000 }));
+    await writer.apply(event('s', 'transcript.final', { turnId: 'control', text: 'would you carry on' }));
+    await writer.apply(event('s', 'interruption.decision', { turnId: 'control', responseId: 'r', playbackId: 'p', outputEpoch: 0, action: 'resume', intent: 'continue_previous', confidence: 'high', disposition: 'resume_requested', pausedSampleOffset: 240 }));
+    const turns = (await writer.getTurns('s')).sort((a, b) => a.turnId.localeCompare(b.turnId));
+    expect(turns).toMatchObject([
+      { turnId: 'control', controlOnly: true, interruptionDisposition: 'resume_requested', interruptedResponseId: 'r' },
+      { turnId: 'original', pausedSampleOffset: 240, continuationState: 'resumed', interrupted: false },
+    ]);
+    writer.close();
+  });
+
   it('keeps first terminal extent authoritative over progress arriving afterward', async () => {
     const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
     await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));

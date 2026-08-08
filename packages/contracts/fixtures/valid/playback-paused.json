@@ -1,0 +1,15 @@
+{
+  "protocolVersion": 1,
+  "sessionId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f1",
+  "epoch": 4,
+  "eventId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f2",
+  "type": "playback.paused",
+  "monotonicMs": 12,
+  "payload": {
+    "responseId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f3",
+    "playbackId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f4",
+    "outputEpoch": 4,
+    "pausedSampleOffset": 600,
+    "generatedSamples": 2400
+  }
+}

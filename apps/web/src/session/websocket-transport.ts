@@ -69,6 +69,7 @@ export class WebSocketSessionTransport implements SessionTransport {
   stopSession(reason: 'user' | 'expired' | 'disconnect'): void { this.sendCommand('session.stop', { reason }); }
   sendCapture(frame: Uint8Array): void { this.readySocket().send(frame); }
   sendProgress(progress: PlaybackProgress): void { this.sendCommand('playback.progress', { ...progress }); }
+  sendPaused(checkpoint: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void { this.sendCommand('playback.paused', checkpoint, checkpoint.outputEpoch); }
   sendTerminal(receipt: PlaybackTerminal, persistedEvent?: StableEvent): void {
     const output = this.output;
     if (output && output.playbackId === receipt.playbackId && output.outputEpoch === receipt.cancelledEpoch) output.terminal = true;
@@ -158,6 +159,7 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
     case 'tts.started': return exact(payload, ['responseId', 'playbackId', 'sampleRate']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0;
     case 'tts.ended': return exact(payload, ['responseId', 'playbackId', 'generatedSamples']) && uuid('responseId') && uuid('playbackId') && integer(payload.generatedSamples);
     case 'barge_in.provisional': case 'barge_in.confirmed': case 'barge_in.rejected': case 'barge_in.timed_out': return exact(payload, ['responseId', 'outputEpoch', 'resumable']) && uuid('responseId') && integer(payload.outputEpoch) && typeof payload.resumable === 'boolean';
+    case 'interruption.decision': return exact(payload, ['turnId', 'responseId', 'playbackId', 'outputEpoch', 'action', 'intent', 'confidence', 'disposition', 'pausedSampleOffset']) && uuid('turnId') && uuid('responseId') && uuid('playbackId') && integer(payload.outputEpoch) && ['resume', 'accept'].includes(String(payload.action)) && ['non_substantive', 'continue_previous', 'new_request', 'correction', 'topic_change', 'stop_previous'].includes(String(payload.intent)) && ['low', 'medium', 'high'].includes(String(payload.confidence)) && ['resume_noise', 'resume_fragment', 'resume_requested', 'accept_takeover'].includes(String(payload.disposition)) && integer(payload.pausedSampleOffset);
     case 'failure': return exact(payload, ['code', 'detail', 'correctiveAction', 'recoverable']) && typeof payload.code === 'string' && payload.code.length > 0 && typeof payload.detail === 'string' && payload.detail.length > 0 && typeof payload.correctiveAction === 'string' && payload.correctiveAction.length > 0 && typeof payload.recoverable === 'boolean';
     default: return false;
   }
