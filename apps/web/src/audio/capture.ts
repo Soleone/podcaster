@@ -9,11 +9,19 @@ export interface CaptureSink {
 
 export interface CaptureHandle { stop(): Promise<void> }
 
+export interface CapturedAudio {
+  streamId: number;
+  sequence: number;
+  sampleOffset: number;
+  pcm16: Int16Array;
+}
+
 export interface CaptureDependencies {
   mediaDevices?: Pick<MediaDevices, 'getUserMedia'>;
   createAudioContext?: () => AudioContext;
   createWorkletNode?: (context: AudioContext) => AudioWorkletNode;
   streamId?: () => number;
+  onAudio?: (capture: CapturedAudio) => void;
 }
 
 export class BrowserCapture {
@@ -50,7 +58,10 @@ export class BrowserCapture {
       };
       node.port.onmessage = event => {
         if (stopped || !(event.data instanceof Float32Array)) return;
-        for (const frame of packer.push(floatToPcm16(resampler.push(event.data)))) pending.push(frame.bytes);
+        for (const frame of packer.push(floatToPcm16(resampler.push(event.data)))) {
+          this.dependencies.onAudio?.({ streamId: packer.streamId, sequence: frame.sequence, sampleOffset: frame.sampleOffset, pcm16: frame.pcm16 });
+          pending.push(frame.bytes);
+        }
         if (pending.length > 50) {
           sink.degraded('Microphone audio fell behind. Capture was stopped to avoid dropping speech.');
           void stop();

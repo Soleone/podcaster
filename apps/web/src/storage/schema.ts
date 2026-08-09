@@ -1,5 +1,5 @@
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
-export const PODCASTER_DB_VERSION = 2;
+export const PODCASTER_DB_VERSION = 3;
 
 export const STORES = {
   sessions: 'sessions',
@@ -7,6 +7,7 @@ export const STORES = {
   appliedEvents: 'appliedEvents',
   terminalReceipts: 'terminalReceipts',
   meta: 'meta',
+  recordingItems: 'recordingItems',
 } as const;
 
 export interface StoredSession {
@@ -95,6 +96,13 @@ export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name
       if (!db.objectStoreNames.contains(STORES.appliedEvents)) db.createObjectStore(STORES.appliedEvents, { keyPath: 'eventId' });
       if (!db.objectStoreNames.contains(STORES.terminalReceipts)) db.createObjectStore(STORES.terminalReceipts, { keyPath: 'playbackId' });
       if (!db.objectStoreNames.contains(STORES.meta)) db.createObjectStore(STORES.meta, { keyPath: 'key' });
+      if (!db.objectStoreNames.contains(STORES.recordingItems)) {
+        const recordingItems = db.createObjectStore(STORES.recordingItems, { keyPath: 'itemId' });
+        ensureIndex(recordingItems, 'sessionId', 'sessionId');
+        ensureIndex(recordingItems, 'turnId', 'turnId');
+        ensureIndex(recordingItems, 'playbackId', 'playbackId');
+        ensureIndex(recordingItems, 'recordSeq', 'recordSeq');
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('IndexedDB open failed'));

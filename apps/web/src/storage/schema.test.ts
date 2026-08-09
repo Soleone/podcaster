@@ -56,4 +56,34 @@ describe('IndexedDB schema', () => {
     expect(await new Promise(resolve => { read.onsuccess = () => resolve(read.result); })).toMatchObject({ key: 'kept' });
     db.close();
   });
+
+  it('migrates a version-2 database to version 3 with the recordingItems store and indexes', async () => {
+    name = `schema-v2-${Date.now()}-${Math.random()}`;
+    const legacy = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name, 2);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        const turns = db.createObjectStore(STORES.turns, { keyPath: 'key' });
+        turns.createIndex('sessionId', 'sessionId');
+        turns.createIndex('responseId', 'responseId');
+        turns.createIndex('playbackId', 'playbackId');
+        db.createObjectStore(STORES.sessions, { keyPath: 'sessionId' });
+        db.createObjectStore(STORES.appliedEvents, { keyPath: 'eventId' });
+        db.createObjectStore(STORES.terminalReceipts, { keyPath: 'playbackId' });
+        db.createObjectStore(STORES.meta, { keyPath: 'key' });
+        turns.put({ key: 'kept', sessionId: 's', turnId: 't', stableText: 'kept words', interrupted: false, createdAt: '2026-01-01T00:00:00Z', timelineSequence: 1 });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    legacy.close();
+    const db = await openPodcasterDatabase(indexedDB, name);
+    expect(Array.from(db.objectStoreNames)).toEqual(expect.arrayContaining([...Object.values(STORES)]));
+    expect(db.version).toBe(3);
+    const recordingItems = db.transaction(STORES.recordingItems, 'readonly').objectStore(STORES.recordingItems);
+    expect(Array.from(recordingItems.indexNames)).toEqual(expect.arrayContaining(['sessionId', 'turnId', 'playbackId', 'recordSeq']));
+    const kept = db.transaction(STORES.turns, 'readonly').objectStore(STORES.turns).get('kept');
+    expect(await new Promise(resolve => { kept.onsuccess = () => resolve(kept.result); })).toMatchObject({ stableText: 'kept words' });
+    db.close();
+  });
 });

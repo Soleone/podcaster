@@ -6,6 +6,12 @@ export interface PlaybackSink {
   degraded(message: string): void;
 }
 
+export interface PlayedAudio {
+  playbackId: string;
+  sampleOffset: number;
+  pcm16: Int16Array;
+}
+
 interface ScheduledSource {
   source: AudioBufferSourceNode;
   startTime: number;
@@ -25,11 +31,12 @@ export class BrowserPlayback {
   private generatedExtentDeclared = false;
 
   constructor(
-    playbackId: string,
+    readonly playbackId: string,
     outputEpoch: number,
     readonly declaredSampleRate: number,
     private readonly sink: PlaybackSink,
     createContext: () => AudioContext = () => new AudioContext(),
+    private readonly onAudio?: (audio: PlayedAudio) => void,
   ) {
     this.ledger = new PlaybackLedger(playbackId, outputEpoch, declaredSampleRate);
     this.context = createContext();
@@ -45,6 +52,7 @@ export class BrowserPlayback {
 
   append(sampleOffset: number, pcm16: Int16Array): void {
     if (this.stopped || !Number.isSafeInteger(sampleOffset) || sampleOffset < 0 || pcm16.length === 0) return;
+    this.onAudio?.({ playbackId: this.playbackId, sampleOffset, pcm16 });
     const contiguousGenerated = this.ledger.addChunk(sampleOffset, pcm16);
     // Streaming progress must never report rendered samples beyond the known
     // generated prefix. Final completion still waits for setGeneratedSamples().
