@@ -1,10 +1,15 @@
 import { decodeBinaryAudioFrame } from '@app/contracts/binary';
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
 import type { StableEvent } from '../storage/stable-turn-writer';
+import { activityLog } from './activity-log';
 import { createEnvelope, type Envelope } from './envelope';
 import type { OutputAudioChunk, SessionTransport } from './transport';
 
 const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
+// Close codes in 3000-4999 are application-defined and valid for a browser
+// WebSocket *client* to send. 1008/1011 are server-only and a browser client
+// that tries to send them throws InvalidAccessError inside onmessage.
+const CLOSE_PROTOCOL_VIOLATION = 4000;
 interface OutputBinding { playbackId: string; responseId: string; outputEpoch: number; streamId?: number; expectedSequence: number; sampleOffset: number; terminal: boolean }
 
 export class WebSocketSessionTransport implements SessionTransport {
@@ -27,26 +32,36 @@ export class WebSocketSessionTransport implements SessionTransport {
       this.socket = socket;
       let settled = false;
       const fail = () => {
-        if (!settled) { settled = true; reject(new Error('The secure session connection could not be authenticated.')); }
-        else this.notifyFailure('The secure session connection was lost. Local playback was stopped.');
+        if (!settled) {
+          settled = true;
+          activityLog.append({ level: 'error', source: 'transport', message: 'session connection could not be established' });
+          reject(new Error('The secure session connection could not be authenticated.'));
+        } else if (!this.failureNotified && !this.intentionalDisconnect) {
+          activityLog.append({ level: 'error', source: 'transport', message: 'session connection lost' });
+          this.notifyFailure('The secure session connection was lost. Local playback was stopped.');
+        }
       };
       socket.binaryType = 'arraybuffer';
-      socket.onopen = () => socket.send(JSON.stringify({ capability }));
+      socket.onopen = () => { activityLog.append({ level: 'info', source: 'transport', message: 'session socket opened' }); socket.send(JSON.stringify({ capability })); };
       socket.onerror = fail;
       socket.onclose = () => { if (!this.intentionalDisconnect) fail(); };
       socket.onmessage = message => {
         if (typeof message.data !== 'string') { this.handleBinary(message.data); return; }
         let value: unknown;
-        try { value = JSON.parse(message.data); } catch { this.protocolFailure(); return; }
+        try { value = JSON.parse(message.data); } catch { this.protocolFailure('the message was not valid JSON.'); return; }
         if (typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'authenticated') { if (!settled) { settled = true; resolve(); } return; }
-        if (!isStrictHostEvent(value)) { this.protocolFailure(); return; }
+        if (!isStrictHostEvent(value)) {
+          const type = typeof value === 'object' && value !== null ? String((value as { type?: unknown }).type ?? 'unknown') : 'unknown';
+          this.protocolFailure(`the "${type}" event failed validation.`);
+          return;
+        }
         const hostEvent = value as StableEvent;
-        if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure(); return; }
+        if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure('the event sessionId did not match this session.'); return; }
         if (hostEvent.type === 'reasoning.started') {
           const responseId = String(hostEvent.payload.responseId);
           if (this.latestResponseId !== undefined) {
             // A duplicate reasoning.started for the SAME response is a protocol anomaly.
-            if (responseId === this.latestResponseId) { this.protocolFailure(); return; }
+            if (responseId === this.latestResponseId) { this.protocolFailure('a duplicate reasoning.started was received for the current response.'); return; }
             // A different response superseded the previous one before it terminalized
             // (e.g. rapid re-engagement while the old response was still generating).
             // The previous output binding is dead and its late PCM must be rejected.
@@ -54,19 +69,19 @@ export class WebSocketSessionTransport implements SessionTransport {
           }
           this.latestResponseId = responseId;
         } else if (hostEvent.type === 'reasoning.final') {
-          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure(); return; }
+          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.final did not match the established response.'); return; }
         } else if (hostEvent.type === 'tts.started') {
-          if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId || (this.output && !this.output.terminal)) { this.protocolFailure(); return; }
+          if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId || (this.output && !this.output.terminal)) { this.protocolFailure('tts.started did not match the established response identity.'); return; }
           this.output = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false };
         } else if (hostEvent.type === 'response.failed') {
-          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure(); return; }
+          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.failed did not match the established response.'); return; }
           if (this.output && this.output.responseId === hostEvent.payload.responseId && !this.output.terminal) this.output.terminal = true;
           this.latestResponseId = undefined;
         } else if (hostEvent.type === 'tts.ended') {
-          if (!this.output || this.output.playbackId !== hostEvent.payload.playbackId || this.output.outputEpoch !== hostEvent.epoch) { this.protocolFailure(); return; }
+          if (!this.output || this.output.playbackId !== hostEvent.payload.playbackId || this.output.outputEpoch !== hostEvent.epoch) { this.protocolFailure('tts.ended did not match the active output stream.'); return; }
           this.output.terminal = true;
           const generated = Number(hostEvent.payload.generatedSamples);
-          if (generated !== this.output.sampleOffset) { this.protocolFailure(); return; }
+          if (generated !== this.output.sampleOffset) { this.protocolFailure('tts.ended reported a sample count that does not match the streamed audio.'); return; }
           // Terminal identity cleanup: the response is fully delivered, so a later
           // reasoning.started for the next response can establish fresh identity.
           this.latestResponseId = undefined;
@@ -76,7 +91,12 @@ export class WebSocketSessionTransport implements SessionTransport {
     });
   }
 
-  disconnect(): void { this.intentionalDisconnect = true; this.socket?.close(1000, 'session ended'); this.socket = undefined; }
+  disconnect(): void {
+    this.intentionalDisconnect = true;
+    activityLog.append({ level: 'info', source: 'transport', message: 'session socket closed intentionally' });
+    this.socket?.close(1000, 'session ended');
+    this.socket = undefined;
+  }
   startSession(sessionSeed: string, reasoningMode: 'full' | 'transcript_only'): void { this.sendCommand('session.start', { sessionSeed, reasoningMode }); }
   startAudio(streamId: number): void { this.sendCommand('audio.start', { streamId, sampleRate: 16_000, channels: 1, frameSamples: 320 }); }
   stopAudio(streamId: number): void { this.sendCommand('audio.stop', { streamId }); }
@@ -125,17 +145,17 @@ export class WebSocketSessionTransport implements SessionTransport {
   onFailure(listener: (message: string) => void): () => void { this.failureListeners.add(listener); return () => this.failureListeners.delete(listener); }
 
   private handleBinary(data: unknown): void {
-    if (!(data instanceof ArrayBuffer)) { this.protocolFailure(); return; }
+    if (!(data instanceof ArrayBuffer)) { this.protocolFailure('a binary message was not an ArrayBuffer.'); return; }
     let frame;
-    try { frame = decodeBinaryAudioFrame(new Uint8Array(data), MAX_BINARY_PAYLOAD); } catch { this.protocolFailure(); return; }
+    try { frame = decodeBinaryAudioFrame(new Uint8Array(data), MAX_BINARY_PAYLOAD); } catch { this.protocolFailure('a binary audio frame could not be decoded.'); return; }
     const output = this.output;
-    if (!output || output.terminal || frame.channel !== 2) { this.protocolFailure(); return; }
+    if (!output || output.terminal || frame.channel !== 2) { this.protocolFailure('a binary audio frame did not match the active output stream.'); return; }
     if (output.streamId === undefined) {
-      if (this.usedOutputStreams.has(frame.streamId)) { this.protocolFailure(); return; }
+      if (this.usedOutputStreams.has(frame.streamId)) { this.protocolFailure('the host reused an output stream id.'); return; }
       output.streamId = frame.streamId;
       this.usedOutputStreams.add(frame.streamId);
     }
-    if (frame.streamId !== output.streamId || frame.sequence !== output.expectedSequence) { this.protocolFailure(); return; }
+    if (frame.streamId !== output.streamId || frame.sequence !== output.expectedSequence) { this.protocolFailure('a binary audio frame had an unexpected stream id or sequence.'); return; }
     const chunk: OutputAudioChunk = { playbackId: output.playbackId, sequence: frame.sequence, sampleOffset: output.sampleOffset, pcm16: frame.pcm16 };
     output.expectedSequence++;
     output.sampleOffset += frame.pcm16.length;
@@ -144,9 +164,15 @@ export class WebSocketSessionTransport implements SessionTransport {
   private sendCommand(type: string, payload: Record<string, unknown>, epoch = this.epoch()): void {
     this.readySocket().send(JSON.stringify(createEnvelope({ sessionId: this.sessionId, epoch, type, payload })));
   }
-  private protocolFailure(): void {
-    this.notifyFailure('The host sent invalid conversation data. Local playback was stopped.');
-    this.socket?.close(1008, 'invalid host conversation protocol');
+  private protocolFailure(reason: string): void {
+    activityLog.append({ level: 'error', source: 'transport', message: 'protocol failure', detail: reason });
+    this.notifyFailure(`The host sent invalid conversation data: ${reason}`);
+    // close() with a server-only code would throw InvalidAccessError inside
+    // onmessage; guard on OPEN and swallow anything close() itself throws so
+    // a protocol violation can never escape as an uncaught browser error.
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      try { this.socket.close(CLOSE_PROTOCOL_VIOLATION, 'invalid host conversation protocol'); } catch { /* never escape onmessage */ }
+    }
   }
   private notifyFailure(message: string): void {
     if (this.failureNotified || this.intentionalDisconnect) return;

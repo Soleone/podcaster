@@ -6,6 +6,11 @@ import type { SpeechOutputPort, SpeechOutputStream, SpeechSynthesisStart } from 
 
 const MAX_PAYLOAD = 64 * 1024;
 const MAX_BUFFERED_OUTPUT_CHUNKS = 64;
+// AudioClient is a WebSocket *client* to the sidecar, so its closes must use
+// client-valid application codes (3000-4999); 1008/1011 are server-only.
+// node ws accepts any code, so these are symmetry/hygiene only.
+const CLOSE_PROTOCOL_VIOLATION = 4001;
+const CLOSE_SIDECAR_FAILURE = 4002;
 function rawBytes(raw: RawData): Uint8Array {
   if (Buffer.isBuffer(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
   if (Array.isArray(raw)) { const value = Buffer.concat(raw); return new Uint8Array(value.buffer, value.byteOffset, value.byteLength); }
@@ -241,7 +246,7 @@ export class AudioClient implements SpeechOutputPort {
       this.readyStatus = 'failed';
       this.events.failure?.(String(payload.code));
       this.failAll(new Error('audio sidecar runtime failed'));
-      this.socket?.close(1011, 'audio sidecar runtime failed');
+      this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio sidecar runtime failed');
       return;
     }
     if (!this.streamOpened || payload.streamId !== this.streamId) return this.protocolFailure();
@@ -363,7 +368,7 @@ export class AudioClient implements SpeechOutputPort {
     this.readyStatus = 'failed';
     this.events.failure?.('invalid_message');
     this.failAll(new Error('invalid sidecar protocol'));
-    this.socket?.close(1008, 'invalid sidecar protocol');
+    this.socket?.close(CLOSE_PROTOCOL_VIOLATION, 'invalid sidecar protocol');
   }
   private connectionFailure(message: string): void {
     if (this.failed) return;

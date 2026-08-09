@@ -9,6 +9,7 @@ import { RecordingRecorder } from './recording/recorder';
 import { offlineResample } from './recording/resample';
 import { buildRecording, createBrowserDecoder } from './recording/splice';
 import { SessionScreen } from './session/SessionScreen';
+import { activityLog } from './session/activity-log';
 import { SessionController, type ControlledPlayback } from './session/controller';
 import { conversationFromStoredTurns } from './session/conversation';
 import { createEnvelope, uuidV7 } from './session/envelope';
@@ -229,12 +230,14 @@ export function App() {
     const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest: PERSONA_DIGEST });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
     startedAt.current = Date.now();
+    activityLog.append({ level: 'info', source: 'app', message: `session started (${cap})` });
     const initial = { ...initialSessionState, dominant: 'listening' as const, announcement: 'Listening' };
     if (fakeServices) await composeFakeSession(opened, id, initial, cap);
     else await composeRealSession(opened, id, initial, cap, seed, reasoningMode);
   }
 
   async function stop() {
+    activityLog.append({ level: 'info', source: 'app', message: 'session stopped by user' });
     await captureRef.current?.stop();
     const streamId = captureStreamIdRef.current;
     if (streamId !== undefined) {

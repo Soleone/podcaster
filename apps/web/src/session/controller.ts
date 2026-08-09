@@ -1,5 +1,6 @@
 import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
 import type { StableTurnWriter, StableEvent } from '../storage/stable-turn-writer';
+import { activityLog } from './activity-log';
 import { createEnvelope } from './envelope';
 import { canSafelyResume, initialSessionState, reduceSessionState, type SessionViewState } from './state';
 import type { OutputAudioChunk, SessionTransport } from './transport';
@@ -113,6 +114,7 @@ export class SessionController {
       // 'failed' and send its exact terminal receipt. Clear any provisional
       // interruption state first so an in-flight pause checkpoint cannot be
       // persisted after the cutoff. If playback never started, no-op.
+      activityLog.append({ level: 'warn', source: 'controller', message: 'response failed', detail: String(event.payload.responseId) });
       this.clearProvisional();
       this.setState({ ...this.state, echoConfirmation: false, playbackNotice: '' });
       const active = this.active;
@@ -233,6 +235,7 @@ export class SessionController {
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    activityLog.append({ level: 'info', source: 'controller', message: 'session stop requested' });
     this.cancelSilence?.();
     this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', echoConfirmation: false, playbackNotice: '' });
     await this.terminalize('stopped');
@@ -249,6 +252,7 @@ export class SessionController {
   }
 
   degrade(message: string): void {
+    activityLog.append({ level: 'error', source: 'controller', message: 'session degraded', detail: message });
     this.setState(reduceSessionState(this.state, createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'failure', payload: { detail: message } })));
   }
 
@@ -279,6 +283,7 @@ export class SessionController {
   private async terminalize(reason: PlaybackStopReason): Promise<void> {
     const active = this.active;
     if (!active || active.terminal) return;
+    activityLog.append({ level: 'info', source: 'controller', message: 'playback stopped', detail: reason });
     const receipt = await active.player.stop(reason);
     await this.reportPlaybackTerminal(receipt);
     this.echoRecoveryKey = undefined;
@@ -286,5 +291,12 @@ export class SessionController {
   private playbackKey(outputEpoch: number, playbackId: string): string { return `${outputEpoch}:${playbackId}`; }
   private provisionalKey(provisional: Provisional): string { return `${provisional.outputEpoch}:${provisional.playbackId}:${provisional.responseId}`; }
   private clearProvisional(): void { this.provisional = undefined; this.echoRecoveryKey = undefined; }
-  private setState(state: SessionViewState): void { this.state = state; for (const listener of this.listeners) listener(state); }
+  private setState(state: SessionViewState): void {
+    const previous = this.state;
+    this.state = state;
+    if (state.dominant !== previous.dominant) {
+      activityLog.append({ level: state.dominant === 'degraded' ? 'error' : 'info', source: 'controller', message: `session state: ${state.dominant}` });
+    }
+    for (const listener of this.listeners) listener(state);
+  }
 }

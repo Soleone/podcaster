@@ -58,15 +58,15 @@ describe('WebSocketSessionTransport output binding', () => {
 
     const reused = make({ playbackId: 'playback', outputEpoch: 2, expectedSequence: 0, sampleOffset: 0, terminal: false }, [77]);
     (reused.transport as unknown as { handleBinary(data: unknown): void }).handleBinary(binary(77, 0));
-    expect(reused.socket.closed).toBe(1008);
+    expect(reused.socket.closed).toBe(4000);
 
     const collision = make({ playbackId: 'playback', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: false });
     (collision.transport as unknown as { handleBinary(data: unknown): void }).handleBinary(binary(78, 1));
-    expect(collision.socket.closed).toBe(1008);
+    expect(collision.socket.closed).toBe(4000);
 
     const late = make({ playbackId: 'playback', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: true });
     (late.transport as unknown as { handleBinary(data: unknown): void }).handleBinary(binary(77, 1));
-    expect(late.socket.closed).toBe(1008);
+    expect(late.socket.closed).toBe(4000);
   });
 
   it('terminalizes a cancelled binding, rejects its late PCM, and permits a fresh never-reused stream', () => {
@@ -94,7 +94,7 @@ describe('WebSocketSessionTransport output binding', () => {
     lateTransport.sendTerminal({ playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', cancelledEpoch: 2, finalPlayedSampleOffset: 240, reason: 'cancelled' });
     const late = encodeBinaryAudioFrame({ channel: 2, streamId: 77, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(240) }, 64 * 1024).buffer;
     (lateTransport as unknown as { handleBinary(data: unknown): void }).handleBinary(late);
-    expect(lateSocket.closed).toBe(1008);
+    expect(lateSocket.closed).toBe(4000);
   });
 
   it('fails closed on a sequence gap', () => {
@@ -106,7 +106,7 @@ describe('WebSocketSessionTransport output binding', () => {
     (transport as unknown as { output: unknown }).output = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', responseId: '018f1f32-7ac1-7def-8abc-0123456789ab', outputEpoch: 2, expectedSequence: 0, sampleOffset: 0, terminal: false };
     const gapped = encodeBinaryAudioFrame({ channel: 2, streamId: 77, sequence: 1, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024);
     (transport as unknown as { handleBinary(data: unknown): void }).handleBinary(gapped.buffer);
-    expect(socket.closed).toBe(1008);
+    expect(socket.closed).toBe(4000);
   });
 });
 
@@ -189,24 +189,24 @@ describe('WebSocketSessionTransport VAD relay', () => {
     await wiredTransport(socket);
     const v4Stream = 'b39b7a1c-2d4e-4f6a-9b8c-0d1e2f3a4b5c';
     emitText(socket, hostEvent('vad.speech_start', { streamId: v4Stream, utteranceId: 'not-a-uuid', captureStartSequence: 0 }));
-    expect(socket.closed).toBe(1008);
+    expect(socket.closed).toBe(4000);
   });
 
   it('rejects malformed VAD payloads fail-closed', async () => {
     const badStream = new EventSocket();
     await wiredTransport(badStream);
     emitText(badStream, hostEvent('vad.speech_start', { streamId: 'not-a-uuid', utteranceId: turnUuid, captureStartSequence: 0 }));
-    expect(badStream.closed).toBe(1008);
+    expect(badStream.closed).toBe(4000);
 
     const missingEnd = new EventSocket();
     await wiredTransport(missingEnd);
     emitText(missingEnd, hostEvent('vad.speech_end', { streamId: streamUuid, utteranceId: turnUuid, captureStartSequence: 0 }));
-    expect(missingEnd.closed).toBe(1008);
+    expect(missingEnd.closed).toBe(4000);
 
     const negativeEnd = new EventSocket();
     await wiredTransport(negativeEnd);
     emitText(negativeEnd, hostEvent('vad.speech_end', { streamId: streamUuid, utteranceId: turnUuid, captureStartSequence: 0, captureEndSequence: -1 }));
-    expect(negativeEnd.closed).toBe(1008);
+    expect(negativeEnd.closed).toBe(4000);
   });
 });
 
@@ -256,14 +256,14 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     expectNoProtocolFailure(socket);
     // Late PCM for the failed response is rejected after the cutoff.
     emitBinary(socket, 77, 1, 240);
-    expect(socket.closed).toBe(1008);
+    expect(socket.closed).toBe(4000);
   });
 
   it('rejects a tts.started whose response identity was never established', async () => {
     const socket = new EventSocket();
     await wiredTransport(socket);
     emitText(socket, TTS_STARTED(responseA, playbackA));
-    expect(socket.closed).toBe(1008);
+    expect(socket.closed).toBe(4000);
   });
 
   it('rejects mismatched, duplicated, and stale identity sequences', async () => {
@@ -271,26 +271,26 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     await wiredTransport(mismatched);
     emitText(mismatched, REASONING(responseA));
     emitText(mismatched, TTS_STARTED(responseB, playbackB));
-    expect(mismatched.closed).toBe(1008);
+    expect(mismatched.closed).toBe(4000);
 
     const duplicateStarted = new EventSocket();
     await wiredTransport(duplicateStarted);
     emitText(duplicateStarted, REASONING(responseA));
     emitText(duplicateStarted, REASONING(responseA));
-    expect(duplicateStarted.closed).toBe(1008);
+    expect(duplicateStarted.closed).toBe(4000);
 
     const staleEpoch = new EventSocket();
     await wiredTransport(staleEpoch);
     emitText(staleEpoch, REASONING(responseA));
     emitText(staleEpoch, hostEvent('tts.started', { responseId: responseA, playbackId: playbackA, sampleRate: 24_000 }, 1));
-    expect(staleEpoch.closed).toBe(1008);
+    expect(staleEpoch.closed).toBe(4000);
 
     const duplicateOutput = new EventSocket();
     await wiredTransport(duplicateOutput);
     emitText(duplicateOutput, REASONING(responseA));
     emitText(duplicateOutput, TTS_STARTED(responseA, playbackA));
     emitText(duplicateOutput, TTS_STARTED(responseA, playbackA));
-    expect(duplicateOutput.closed).toBe(1008);
+    expect(duplicateOutput.closed).toBe(4000);
   });
 
   it('accepts a superseding reasoning.started when the previous response never terminalized', async () => {
@@ -312,7 +312,7 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     expect(chunks).toEqual([480, 240]);
     // Late PCM for the superseded response A is rejected fail-closed.
     emitBinary(socket, 77, 1, 240);
-    expect(socket.closed).toBe(1008);
+    expect(socket.closed).toBe(4000);
   });
 
   it('rejects reuse of a consumed output stream by a later response', async () => {
@@ -326,7 +326,7 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     emitText(socket, REASONING(responseB));
     emitText(socket, TTS_STARTED(responseB, playbackB));
     emitBinary(socket, 77, 0, 480);
-    expect(socket.closed).toBe(1008);
+    expect(socket.closed).toBe(4000);
   });
 
   it('rejects a reasoning.final that contradicts the established response', async () => {
@@ -334,7 +334,7 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     await wiredTransport(socket);
     emitText(socket, REASONING(responseA));
     emitText(socket, FINAL(responseB));
-    expect(socket.closed).toBe(1008);
+    expect(socket.closed).toBe(4000);
   });
 
   it('accepts a second full response after the first completes normally', async () => {
@@ -355,5 +355,24 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     emitText(socket, TTS_ENDED(responseB, playbackB, 240));
     expectNoProtocolFailure(socket);
     expect(chunks).toEqual([480, 240]);
+  });
+});
+
+describe('WebSocketSessionTransport protocol failure diagnostics', () => {
+  it('reports the failing event type in the failure notification and closes with a client-valid code', async () => {
+    const socket = new EventSocket();
+    await wiredTransport(socket);
+    emitText(socket, hostEvent('vad.speech_start', { streamId: 'not-a-uuid', utteranceId: turnUuid, captureStartSequence: 0 }));
+    expect(socket.closed).toBe(4000);
+    expect(socket.failureMessages).toEqual([expect.stringContaining('vad.speech_start')]);
+  });
+
+  it('never lets a throwing close() escape onmessage and still notifies the failure', async () => {
+    class ThrowingSocket extends EventSocket { override close(): never { throw new Error('close exploded'); } }
+    const socket = new ThrowingSocket();
+    await wiredTransport(socket);
+    expect(() => emitText(socket, hostEvent('reasoning.final', { turnId: turnUuid, responseId: responseA, posture: 'riff', text: 'Unexpected final' }))).not.toThrow();
+    expect(socket.failureMessages).toHaveLength(1);
+    expect(socket.failureMessages[0]).toContain('reasoning.final');
   });
 });

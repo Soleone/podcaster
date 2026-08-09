@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Brain, Captions, CircleAlert, CircleStop, Ear, Loader2, MessageCircleQuestion, Pause, Volume2, type LucideIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Brain, Captions, CircleAlert, CircleStop, ClipboardList, Copy, Ear, Loader2, MessageCircleQuestion, Pause, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
@@ -9,6 +9,7 @@ import { Card } from '../components/ui/card';
 import { Marker, MarkerContent } from '../components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '../components/ui/message';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '../components/ui/message-scroller';
+import { activityLog, type ActivityEntry } from './activity-log';
 import type { SessionViewState } from './state';
 import './session.css';
 
@@ -56,6 +57,41 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
       </div>
     </section>
     {props.state.echoConfirmation ? <Card className="interruption-controls" role="group" aria-label="Paused response choices"><p>The previous response is paused while your intent is considered.</p><div className="button-row"><Button className="secondary" onClick={props.onRejectEcho}>Continue previous response</Button><Button onClick={props.onConfirmEcho}>Respond to me instead</Button></div></Card> : null}
+    <ActivityLogPanel />
   </main>;
+}
+
+function ActivityLogPanel() {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<readonly ActivityEntry[]>(() => activityLog.entries());
+  const [notice, setNotice] = useState('');
+  useEffect(() => activityLog.subscribe(setEntries), []);
+  const copyLog = () => {
+    try {
+      void navigator.clipboard.writeText(activityLog.toText()).then(
+        () => setNotice('Copied to clipboard'),
+        () => setNotice('Copy failed'),
+      );
+    } catch { setNotice('Copy failed'); }
+  };
+  return <Card className="activity-log">
+    <div className="activity-log-header">
+      <Button className="secondary activity-log-toggle" aria-expanded={open} aria-controls="activity-log-region" onClick={() => setOpen(value => !value)}><ClipboardList className="activity-log-icon" aria-hidden="true" />Activity log</Button>
+      {open ? <div className="activity-log-actions">
+        {notice ? <span className="activity-log-notice" role="status">{notice}</span> : null}
+        <Button className="secondary" onClick={copyLog}><Copy className="activity-log-icon" aria-hidden="true" />Copy</Button>
+        <Button className="secondary" onClick={() => { activityLog.clear(); setNotice(''); }}><Trash className="activity-log-icon" aria-hidden="true" />Clear</Button>
+      </div> : null}
+    </div>
+    {open ? <div id="activity-log-region" role="region" aria-label="Activity log entries" className="activity-log-region">
+      {entries.length === 0 ? <p className="hint">No activity logged yet.</p> : <ul className="activity-log-list">
+        {[...entries].reverse().map((entry, index) => <li key={`${entry.ts}-${index}`} className="activity-log-entry">
+          <Badge className={`log-level log-level-${entry.level}`}>{entry.level}</Badge>
+          <span className="log-entry-source">{entry.source}</span>
+          <span className="log-entry-message">{entry.message}{entry.detail ? ` — ${entry.detail}` : ''}</span>
+        </li>)}
+      </ul>}
+    </div> : null}
+  </Card>;
 }
 function formatElapsed(seconds: number): string { const minutes = Math.floor(seconds / 60); return `${minutes}:${String(seconds % 60).padStart(2, '0')}`; }

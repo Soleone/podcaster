@@ -39,3 +39,20 @@ test('restrains live announcements and keeps interruption controls keyboard acce
   await expect(page.getByRole('heading', { name: 'Speaking' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop session' })).toBeVisible();
 });
+
+test('activity log panel is keyboard-operable and lists session events', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+  const toggle = page.getByRole('button', { name: 'Activity log' });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const region = page.getByRole('region', { name: 'Activity log entries' });
+  await expect(region).toBeVisible();
+  await expect(region.getByText(/session started/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Clear' })).toBeVisible();
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await expect(region.getByText('No activity logged yet.')).toBeVisible();
+});
