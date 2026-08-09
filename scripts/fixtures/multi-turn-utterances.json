@@ -1,0 +1,31 @@
+{
+  "sampleRate": 16000,
+  "sources": [
+    "/home/soleone/src/tries/2026-08-06-podcaster/benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0002.flac",
+    "/home/soleone/src/tries/2026-08-06-podcaster/benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0012.flac",
+    "/home/soleone/src/tries/2026-08-06-podcaster/benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0005.flac"
+  ],
+  "utterances": [
+    {
+      "index": 0,
+      "startSample": 0,
+      "samples": 50960,
+      "durationSeconds": 3.185,
+      "peakRms": 1640
+    },
+    {
+      "index": 1,
+      "startSample": 74960,
+      "samples": 43760,
+      "durationSeconds": 2.735,
+      "peakRms": 1945
+    },
+    {
+      "index": 2,
+      "startSample": 142720,
+      "samples": 67360,
+      "durationSeconds": 4.21,
+      "peakRms": 1596
+    }
+  ]
+}

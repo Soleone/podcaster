@@ -1,0 +1,213 @@
+{
+  "status": "passed",
+  "outcome": "replaced-before-tts",
+  "replacementObserved": true,
+  "turns": [
+    {
+      "turn": "turn 0",
+      "posture": "question",
+      "eligible": true,
+      "transcript": "Thus idleness is the mother"
+    },
+    {
+      "turn": "turn 1",
+      "posture": "question",
+      "eligible": true,
+      "transcript": "Why should one halt on the way"
+    },
+    {
+      "turn": "turn 2",
+      "posture": "challenge",
+      "eligible": true,
+      "transcript": "We have never understood this sort of objections"
+    }
+  ],
+  "ttsStarted": 2,
+  "ttsEnded": 2,
+  "reasoningFinals": 2,
+  "playbackBinaryFrames": 973,
+  "failures": [],
+  "durationMs": 30914,
+  "timeline": [
+    {
+      "t": 14954,
+      "event": "transcript.final",
+      "epoch": 0,
+      "payload": {
+        "turnId": "019fe7df-3a22-76ae-9386-78ee7a05d924",
+        "text": "Thus idleness is the mother",
+        "endpointComplete": true
+      }
+    },
+    {
+      "t": 14966,
+      "event": "policy.decision",
+      "epoch": 0,
+      "payload": {
+        "turnId": "019fe7df-3a22-76ae-9386-78ee7a05d924",
+        "policyVersion": "v1.experimental",
+        "eligible": true,
+        "posture": "question",
+        "reasonCodes": [
+          "selected"
+        ],
+        "inputDigest": "a018d0e530d802f7981ebc3ec585f5ac09e3c2da195ae1235a82f9964b325ee1"
+      }
+    },
+    {
+      "t": 14966,
+      "event": "reasoning.started",
+      "epoch": 0,
+      "payload": {
+        "turnId": "019fe7df-3a22-76ae-9386-78ee7a05d924",
+        "responseId": "019fe7df-453e-79bf-b001-483396b2ce4b",
+        "posture": "question"
+      }
+    },
+    {
+      "t": 16581,
+      "event": "transcript.final",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-45e7-7e75-83c2-36bba3487126",
+        "text": "Why should one halt on the way",
+        "endpointComplete": true
+      }
+    },
+    {
+      "t": 16583,
+      "event": "replacement.observed"
+    },
+    {
+      "t": 16596,
+      "event": "policy.decision",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-45e7-7e75-83c2-36bba3487126",
+        "policyVersion": "v1.experimental",
+        "eligible": true,
+        "posture": "question",
+        "reasonCodes": [
+          "selected"
+        ],
+        "inputDigest": "194d8a92ee1f117f1de30b313d6cbff75afa917b26a7175b93da6b15494ac129"
+      }
+    },
+    {
+      "t": 16596,
+      "event": "reasoning.started",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-45e7-7e75-83c2-36bba3487126",
+        "responseId": "019fe7df-4b9d-700c-9171-91470a037da2",
+        "posture": "question"
+      }
+    },
+    {
+      "t": 16607,
+      "event": "turn.0.outcome"
+    },
+    {
+      "t": 20870,
+      "event": "reasoning.final",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-45e7-7e75-83c2-36bba3487126",
+        "responseId": "019fe7df-4b9d-700c-9171-91470a037da2",
+        "posture": "question",
+        "text": "What if halting is not abandoning the way, but the pause that reveals whether the path still leads where one intends?"
+      }
+    },
+    {
+      "t": 20876,
+      "event": "tts.started",
+      "epoch": 1,
+      "payload": {
+        "responseId": "019fe7df-4b9d-700c-9171-91470a037da2",
+        "playbackId": "019fe7df-4b9f-7b3d-97a7-a7f0568bb810",
+        "sampleRate": 24000
+      }
+    },
+    {
+      "t": 22742,
+      "event": "tts.ended",
+      "epoch": 1,
+      "payload": {
+        "responseId": "019fe7df-4b9d-700c-9171-91470a037da2",
+        "playbackId": "019fe7df-4b9f-7b3d-97a7-a7f0568bb810",
+        "generatedSamples": 148992
+      }
+    },
+    {
+      "t": 22753,
+      "event": "playback.completed",
+      "epoch": 1
+    },
+    {
+      "t": 25499,
+      "event": "transcript.final",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-64c8-7b11-8573-b3ce99af830b",
+        "text": "We have never understood this sort of objections",
+        "endpointComplete": true
+      }
+    },
+    {
+      "t": 25504,
+      "event": "policy.decision",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-64c8-7b11-8573-b3ce99af830b",
+        "policyVersion": "v1.experimental",
+        "eligible": true,
+        "posture": "challenge",
+        "reasonCodes": [
+          "selected"
+        ],
+        "inputDigest": "3c19e5b907fa000f8555332cc07143bf8e338047590208731ba52cba83a0be50"
+      }
+    },
+    {
+      "t": 25504,
+      "event": "reasoning.started",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-64c8-7b11-8573-b3ce99af830b",
+        "responseId": "019fe7df-6e69-7079-b2a3-255e16886e5f",
+        "posture": "challenge"
+      }
+    },
+    {
+      "t": 27207,
+      "event": "tts.started",
+      "epoch": 1,
+      "payload": {
+        "responseId": "019fe7df-6e69-7079-b2a3-255e16886e5f",
+        "playbackId": "019fe7df-6e6a-703d-8632-432daeaba3af",
+        "sampleRate": 24000
+      }
+    },
+    {
+      "t": 27814,
+      "event": "reasoning.final",
+      "epoch": 1,
+      "payload": {
+        "turnId": "019fe7df-64c8-7b11-8573-b3ce99af830b",
+        "responseId": "019fe7df-6e69-7079-b2a3-255e16886e5f",
+        "posture": "challenge",
+        "text": "Perhaps the objection is misunderstood because you assume movement is inherently progress. A system can accelerate while drifting from its purpose; refusing to halt may be the greater idleness—avoiding the work of reflection."
+      }
+    },
+    {
+      "t": 30910,
+      "event": "tts.ended",
+      "epoch": 1,
+      "payload": {
+        "responseId": "019fe7df-6e69-7079-b2a3-255e16886e5f",
+        "playbackId": "019fe7df-6e6a-703d-8632-432daeaba3af",
+        "generatedSamples": 317440
+      }
+    }
+  ]
+}
