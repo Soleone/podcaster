@@ -3,6 +3,11 @@ import { BrowserCapture, type CaptureHandle } from './audio/capture';
 import { BrowserPlayback } from './audio/playback';
 import type { PlaybackStopReason } from './audio/playback-ledger';
 import { Readiness } from './readiness/Readiness';
+import { RecordingControls } from './recording/RecordingControls';
+import { createEncoderClient } from './recording/encoder-client';
+import { RecordingRecorder } from './recording/recorder';
+import { offlineResample } from './recording/resample';
+import { buildRecording, createBrowserDecoder } from './recording/splice';
 import { SessionScreen } from './session/SessionScreen';
 import { SessionController, type ControlledPlayback } from './session/controller';
 import { conversationFromStoredTurns } from './session/conversation';
@@ -11,6 +16,7 @@ import { FakeSessionTransport } from './session/fake-transport';
 import type { SessionTransport } from './session/transport';
 import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
+import { RecordingStore } from './storage/recording-store';
 import { StableTurnWriter } from './storage/stable-turn-writer';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
@@ -37,6 +43,7 @@ interface TestApi {
   emit(type: string, payload: Record<string, unknown>, epoch?: number): Promise<void>;
   partial(text: string): Promise<void>;
   audio(playbackId: string, sampleOffset: number, samples: number): Promise<void>;
+  capture(): void;
   echoRecovered(recovered: boolean): void;
   degrade(message: string): void;
   stats(): FakeRuntimeStats & { captureFrames: number; progressReports: number; terminalReceipts: number; commands: string[] };
@@ -56,12 +63,22 @@ export function App() {
   const captureRef = useRef<CaptureHandle | undefined>(undefined);
   const captureStreamIdRef = useRef<number | undefined>(undefined);
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
+  const recordingStoreRef = useRef<RecordingStore | undefined>(undefined);
+  const recordingRecorderRef = useRef<RecordingRecorder | undefined>(undefined);
+  const recordingUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const statsRef = useRef<FakeRuntimeStats>({ captureStarts: 0, captureStops: 0, captureRunning: false, playbackPauses: 0, playbackResumes: 0, playbackStops: [] });
   const startedAt = useRef(Date.now());
 
   const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string) => {
     const transport = new FakeSessionTransport();
     await transport.connect(cap);
+    recordingStoreRef.current?.close();
+    const recordingStore = await RecordingStore.open();
+    recordingStoreRef.current = recordingStore;
+    const recorder = new RecordingRecorder({ sessionId: id, store: recordingStore, encode: createEncoderClient() });
+    await recorder.start();
+    recordingRecorderRef.current = recorder;
+    recordingUnsubscribeRef.current = transport.onEvent(event => recorder.onSessionEvent(event));
     let controller!: SessionController;
     controller = new SessionController({
       sessionId: id,
@@ -75,11 +92,14 @@ export function App() {
         {
           progress: progress => controller.reportPlaybackProgress(progress),
           terminal: receipt => {
+            recorder.onSessionEvent(createEnvelope({ sessionId: id, epoch: controller.snapshot().epoch, type: 'playback.stopped', payload: { ...receipt } }));
             statsRef.current.playbackStops.push(receipt.reason);
             return controller.reportPlaybackTerminal(receipt);
           },
           degraded: message => controller.degrade(message),
         },
+        undefined,
+        audio => recorder.onPlaybackAudio(audio),
       ), statsRef.current),
     });
     unsubscribeRef.current?.();
@@ -88,7 +108,7 @@ export function App() {
     transportRef.current = transport;
     fakeTransportRef.current = transport;
     statsRef.current.captureStarts++;
-    const capture = await new BrowserCapture().start({
+    const capture = await new BrowserCapture({ onAudio: capture => recorder.onCaptureAudio(capture) }).start({
       send: frame => transport.sendCapture(frame),
       degraded: message => controller.degrade(message),
     });
@@ -106,9 +126,16 @@ export function App() {
   }, []);
 
   const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only') => {
+    recordingStoreRef.current?.close();
+    const recordingStore = await RecordingStore.open();
+    recordingStoreRef.current = recordingStore;
+    const recorder = new RecordingRecorder({ sessionId: id, store: recordingStore, encode: createEncoderClient() });
+    await recorder.start();
+    recordingRecorderRef.current = recorder;
     let controller!: SessionController;
     const transport = new WebSocketSessionTransport(id, () => controller?.snapshot().epoch ?? 0);
     await transport.connect(cap);
+    recordingUnsubscribeRef.current = transport.onEvent(event => recorder.onSessionEvent(event));
     controller = new SessionController({
       sessionId: id,
       transport,
@@ -116,9 +143,12 @@ export function App() {
       initialState: initial,
       playbackFactory: input => new BrowserPlayback(input.playbackId, input.outputEpoch, input.sampleRate, {
         progress: progress => controller.reportPlaybackProgress(progress),
-        terminal: receipt => controller.reportPlaybackTerminal(receipt),
+        terminal: receipt => {
+          recorder.onSessionEvent(createEnvelope({ sessionId: id, epoch: controller.snapshot().epoch, type: 'playback.stopped', payload: { ...receipt } }));
+          return controller.reportPlaybackTerminal(receipt);
+        },
         degraded: message => controller.degrade(message),
-      }),
+      }, undefined, audio => recorder.onPlaybackAudio(audio)),
     });
     unsubscribeRef.current?.();
     unsubscribeRef.current = controller.subscribe(setView);
@@ -130,7 +160,7 @@ export function App() {
     captureStreamIdRef.current = streamId;
     await transport.startAudio(streamId);
     try {
-      captureRef.current = await new BrowserCapture({ streamId: () => streamId }).start({
+      captureRef.current = await new BrowserCapture({ streamId: () => streamId, onAudio: capture => recorder.onCaptureAudio(capture) }).start({
         send: frame => transport.sendCapture(frame),
         degraded: message => controller.degrade(message),
       });
@@ -183,6 +213,7 @@ export function App() {
         transport.emitAudio({ playbackId, sequence: 0, sampleOffset, pcm16: new Int16Array(samples) });
         await new Promise(resolve => setTimeout(resolve, 0));
       },
+      capture: () => { (window as unknown as { __podcasterFakeWorkletNode?: { port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } } }).__podcasterFakeWorkletNode?.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>); },
       echoRecovered: recovered => controller.setEchoRecovered(recovered),
       degrade: message => controller.degrade(message),
       stats: () => ({ ...statsRef.current, playbackStops: [...statsRef.current.playbackStops], captureFrames: transport.captureFrames.length, progressReports: transport.progressReports.length, terminalReceipts: transport.terminalReceipts.size, commands: [...transport.commands] }),
@@ -211,16 +242,40 @@ export function App() {
       captureStreamIdRef.current = undefined;
     }
     await controllerRef.current?.stop();
+    recordingUnsubscribeRef.current?.();
+    recordingUnsubscribeRef.current = undefined;
+    await recordingRecorderRef.current?.stop(true);
     if (capability && capability !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
   }
 
+  const buildExport = useCallback(async () => {
+    const store = recordingStoreRef.current;
+    const writer = writerRef.current;
+    const current = sessionId;
+    if (!store || !writer || !current) return null;
+    return buildRecording(current, {
+      store,
+      turns: writer,
+      decode: createBrowserDecoder(),
+      resample: offlineResample,
+      encode: createEncoderClient(),
+    });
+  }, [sessionId]);
+
+  const toggleRecording = useCallback(async (enabled: boolean) => {
+    await recordingRecorderRef.current?.setEnabled(enabled);
+  }, []);
+
   if (!view) return <Readiness sessionAvailable={fakeServices} onStart={start} />;
-  return <SessionScreen
-    state={view}
-    elapsedSeconds={elapsed}
-    onStop={() => void stop()}
-    onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
-    onConfirmEcho={() => void controllerRef.current?.confirmBargeIn()}
-    onRejectEcho={() => void controllerRef.current?.rejectBargeIn()}
-  />;
+  return <div className="session-layout">
+    <SessionScreen
+      state={view}
+      elapsedSeconds={elapsed}
+      onStop={() => void stop()}
+      onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
+      onConfirmEcho={() => void controllerRef.current?.confirmBargeIn()}
+      onRejectEcho={() => void controllerRef.current?.rejectBargeIn()}
+    />
+    {sessionId && recordingStoreRef.current ? <RecordingControls sessionId={sessionId} store={recordingStoreRef.current} buildExport={buildExport} onToggleRecording={toggleRecording} /> : null}
+  </div>;
 }

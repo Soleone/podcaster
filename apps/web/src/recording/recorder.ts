@@ -72,8 +72,8 @@ export class RecordingRecorder {
   recordingEnabled(): boolean { return this.enabled; }
 
   async setEnabled(enabled: boolean): Promise<void> {
-    await this.deps.store.setRecordingEnabled(enabled);
     this.enabled = enabled;
+    await this.deps.store.setRecordingEnabled(enabled);
     if (!enabled) await this.stop(true);
   }
 
@@ -223,7 +223,7 @@ export class RecordingRecorder {
         captureEndSequence: endSeq,
         truncated,
         durationMs: Math.round((pcm.length / 16000) * 1000),
-        createdAt: new Date(monotonicMs).toISOString(),
+        createdAt: new Date().toISOString(),
         monotonicMs,
         data: new Blob([mp3], { type: 'audio/mpeg' }),
       };
@@ -263,7 +263,7 @@ export class RecordingRecorder {
         captureEndSequence: null,
         truncated: false,
         durationMs: Math.round((pcm.length / buffer.sampleRate) * 1000),
-        createdAt: new Date(monotonicMs).toISOString(),
+        createdAt: new Date().toISOString(),
         monotonicMs,
         data: new Blob([mp3], { type: 'audio/mpeg' }),
       };

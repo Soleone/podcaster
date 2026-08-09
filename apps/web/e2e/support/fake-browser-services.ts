@@ -49,10 +49,16 @@ export async function installFakeMicrophone(page: Page): Promise<void> {
       async suspend(): Promise<void> {}
       async resume(): Promise<void> {}
       async close(): Promise<void> {}
+      async decodeAudioData(_data: ArrayBuffer): Promise<FakeAudioBuffer> {
+        // The recording export path decodes each MP3 item before splicing; the
+        // fake returns one second of silence at 16 kHz.
+        return new FakeAudioBuffer(16_000, 16_000);
+      }
     }
     class FakeAudioWorkletNode {
       readonly port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } = { onmessage: null };
       constructor(_context: unknown, _name: string) {
+        (window as unknown as { __podcasterFakeWorkletNode?: FakeAudioWorkletNode }).__podcasterFakeWorkletNode = this;
         queueMicrotask(() => this.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>));
       }
       connect(): void {}
