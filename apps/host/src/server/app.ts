@@ -6,7 +6,7 @@ import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
 import type { SidecarProcess } from '../sidecar/process.js';
 import { sidecarHealth } from '../sidecar/process.js';
-import type { PiClient } from '../pi/PiClient.js';
+import type { PiClient, PiReadiness } from '../pi/PiClient.js';
 import { BrowserSession } from './BrowserSession.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -34,6 +34,18 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     shutdowns.add(work);
     void work.finally(() => shutdowns.delete(work));
     return work;
+  };
+  // Readiness polls every couple of seconds and each Pi probe is a full provider
+  // round trip serialized behind the client mutex, so share one in-flight probe
+  // and reuse fresh results instead of queueing probes that outlive the request.
+  const PROBE_TTL_MS = 10_000;
+  let probeValue: PiReadiness | undefined;
+  let probeAt = 0;
+  let probePromise: Promise<PiReadiness> | undefined;
+  const probePi = (): Promise<PiReadiness> => {
+    if (probeValue && now() - probeAt < PROBE_TTL_MS) return Promise.resolve(probeValue);
+    probePromise ??= (options.pi ?? unavailablePi).probe().finally(() => { probePromise = undefined; });
+    return probePromise.then(value => { probeAt = now(); probeValue = value; return value; });
   };
   let origin = '';
   app.decorate('setCanonicalOrigin', (value: string) => { origin = value; });
@@ -78,13 +90,13 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     // a perpetual needs-action warning for voice input.
     const body = (request.body ?? {}) as { microphoneGranted?: unknown };
     const microphoneGranted = body.microphoneGranted === true;
-    const [audioReady, pi] = await Promise.all([sidecarHealth(options.sidecar), (options.pi ?? unavailablePi).probe()]);
+    const [audioReady, pi] = await Promise.all([sidecarHealth(options.sidecar), probePi()]);
     return {
       capabilities: [
         {
           id: 'voice_input', label: 'Voice input',
           state: microphoneGranted ? 'ready' : 'needs_action',
-          reason: microphoneGranted ? 'Microphone permission is ready.' : 'Microphone permission is required before capture.',
+          reason: microphoneGranted ? 'Microphone permission is granted.' : 'Microphone permission is required before capture.',
           action: microphoneGranted ? 'No action needed.' : 'Enable microphone after acknowledging the disclosure.',
         },
         { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: audioReady ? 'Selected Nemotron and Kokoro runtime is ready.' : 'Selected local audio runtime is not ready.', action: audioReady ? 'No action needed.' : 'Wait for selected model startup or restart the host.' },

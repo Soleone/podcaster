@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
+import { Card } from '../components/ui/card';
+import { Spinner } from '../components/ui/spinner';
 
 type Capability = { id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string };
 type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: string };
@@ -99,26 +103,26 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
 
   return <main>
     <p className="eyebrow">Local readiness</p><h1>Set up your thinking companion</h1>
-    {!acknowledged ? <section aria-labelledby="privacy-title" className="card">
+    {!acknowledged ? <Card className="readiness-card rounded-2xl" aria-labelledby="privacy-title">
       <h2 id="privacy-title">Before you continue</h2>
       <p><strong>Speech recognition and voice playback run locally.</strong> For a response, the current transcript, bounded recent conversation context, your validated persona interpretation, and the selected response posture are sent through Pi/Codex to its configured cloud model provider. Raw audio and your full local history are not sent.</p>
       <p>This app does not request an ordinary API key and has no silent metered-provider fallback. The configured provider—not this app—controls its handling, retention, and model-improvement use under your account and settings.</p>
       <p><a href="https://help.openai.com/en/articles/11369540-codex-in-chatgpt-faq" rel="noreferrer">Codex data handling</a> · <a href="https://help.openai.com/en/articles/5722486/data-controls-faq" rel="noreferrer">OpenAI data controls</a> · <a href="https://openai.com/policies/privacy-policy/" rel="noreferrer">OpenAI privacy policy</a></p>
-      <button type="button" onClick={() => void checkReadiness(true)} disabled={loading}>{loading ? 'Checking…' : 'Continue and check readiness'}</button>
-    </section> : <section aria-labelledby="status-title" className="card">
+      <Button onClick={() => void checkReadiness(true)} disabled={loading}>{loading ? <><Spinner />Checking…</> : 'Continue and check readiness'}</Button>
+    </Card> : <Card className="readiness-card rounded-2xl" aria-labelledby="status-title">
       <h2 id="status-title">Readiness</h2><p role="status">Secure local connection established. Audio capture has not started.</p>
-      <ul className="readiness-list">{snapshot?.capabilities.map(row => <li key={row.id}><div><strong>{row.label}</strong><span className={`badge ${row.state}`}>{row.state === 'needs_action' ? 'Needs attention' : row.state === 'unavailable' ? 'Unavailable' : 'Ready'}</span></div><p>{row.reason}</p><p><strong>Next:</strong> {row.action}</p></li>)}</ul>
-      {!microphoneReady ? <button type="button" onClick={enableMicrophone} disabled={loading}>{loading ? 'Requesting microphone…' : 'Enable microphone'}</button> : <>
+      <ul className="readiness-list">{snapshot?.capabilities.map(row => <li key={row.id}><div><strong>{row.label}</strong><Badge variant={row.state === 'ready' ? 'success' : row.state === 'needs_action' ? 'warning' : 'destructive'}>{row.state === 'needs_action' ? 'Needs attention' : row.state === 'unavailable' ? 'Unavailable' : 'Ready'}</Badge></div><p>{row.reason}</p><p><strong>Next:</strong> {row.action}</p></li>)}</ul>
+      {!microphoneReady ? <Button onClick={() => void enableMicrophone()} disabled={loading}>{loading ? <><Spinner />Requesting microphone…</> : 'Enable microphone'}</Button> : <>
         <p className="success" role="status">Microphone permission is ready. Capture is stopped until the session starts.</p>
-        {!transcriptOnlyReady ? <button type="button" onClick={() => capability && props.onStart(capability, 'full')} disabled={!capability || !canStart}>Start session</button> : null}
+        {!transcriptOnlyReady ? <Button onClick={() => capability && props.onStart(capability, 'full')} disabled={!capability || !canStart}>Start session</Button> : null}
         {transcriptOnlyReady ? <>
           <p className="hint" role="status">Pi reasoning is unavailable. Transcript-only mode records stable local transcripts and does not generate or speak assistant responses.</p>
-          <button type="button" onClick={() => capability && props.onStart(capability, 'transcript_only')} disabled={!capability}>Start transcript-only session</button>
+          <Button variant="secondary" onClick={() => capability && props.onStart(capability, 'transcript_only')} disabled={!capability}>Start transcript-only session</Button>
         </> : null}
         {!canStart ? <p className="hint">Active conversation is unavailable until the host audio-model integration is ready.</p> : null}
       </>}
       <details><summary>Details</summary><p>Audio sidecar: {snapshot?.sidecar}. Session capability: {capability ? 'issued in memory' : 'not issued'}.</p></details>
-    </section>}
+    </Card>}
     {error ? <p role="alert" className="error">{error}</p> : null}
   </main>;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Brain, Captions, CircleAlert, CircleStop, ClipboardList, Copy, Ear, Loader2, MessageCircleQuestion, Pause, Trash, Volume2, type LucideIcon } from 'lucide-react';
+import { Brain, Captions, CircleAlert, CircleStop, ClipboardList, Copy, Ear, MessageCircleQuestion, Pause, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Marker, MarkerContent } from '../components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '../components/ui/message';
+import { Spinner } from '../components/ui/spinner';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '../components/ui/message-scroller';
 import { activityLog, type ActivityEntry } from './activity-log';
 import type { SessionViewState } from './state';
@@ -16,8 +17,8 @@ import './session.css';
 const headings: Record<SessionViewState['dominant'], string> = {
   idle: 'Session stopped', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
 };
-const stateIcons: Record<SessionViewState['dominant'], LucideIcon> = {
-  idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: Loader2, degraded: CircleAlert,
+const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> = {
+  idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
 export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; onConfirmEcho: () => void; onRejectEcho: () => void }) {
@@ -32,10 +33,10 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
   const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking' || props.state.echoConfirmation;
   const StateIcon = stateIcons[props.state.dominant];
   return <main className="session-shell">
-    <header className="session-header"><p className="eyebrow">Active voice session</p><Button className="danger" onClick={props.onStop}>Stop session</Button></header>
+    <header className="session-header"><p className="eyebrow">Active voice session</p><Button variant="destructive" className="max-sm:w-full" onClick={props.onStop}>Stop session</Button></header>
     <Card className={`status-bar state-${props.state.dominant}`}>
-      <div className="status-label"><StateIcon className={`state-icon${props.state.dominant === 'stopping' ? ' state-icon-spin' : ''}`} aria-hidden="true" /><h1 id="session-status-heading">{headings[props.state.dominant]}</h1></div>
-      <div className="status-actions"><Badge className="elapsed-badge" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>{assistantActive ? <Button className="secondary stop-speaking" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}</div>
+      <div className="status-label">{StateIcon ? <StateIcon className="state-icon" aria-hidden="true" /> : <Spinner className="state-icon" />}<h1 id="session-status-heading">{headings[props.state.dominant]}</h1></div>
+      <div className="status-actions"><Badge className="elapsed-badge" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>{assistantActive ? <Button variant="secondary" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}</div>
     </Card>
     <p className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{props.state.announcement}</p>
     {props.state.degradedMessage ? <Alert>{props.state.degradedMessage}</Alert> : null}
@@ -47,6 +48,7 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
               <MessageScrollerContent className="conversation-list" aria-busy={props.state.dominant === 'reasoning'}>
                 {props.state.conversationItems.length === 0 && !props.state.tentativeText ? <MessageScrollerItem messageId="conversation-empty"><p className="hint">Your conversation will appear here.</p></MessageScrollerItem> : null}
                 {props.state.conversationItems.filter(item => !(item.kind === 'assistant' && !item.text)).map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} /></MessageScrollerItem>)}
+                {props.state.dominant === 'reasoning' || props.state.dominant === 'speaking' ? <MessageScrollerItem messageId="assistant-activity"><Marker role="status" className="assistant-activity"><MarkerContent className="shimmer"><span className="font-medium">Oliver</span> {props.state.dominant === 'speaking' ? 'is speaking…' : 'is typing…'}</MarkerContent></Marker></MessageScrollerItem> : null}
                 {props.state.tentativeText ? <MessageScrollerItem messageId="tentative-transcript"><Message align="end" className="conversation-message user-row"><MessageContent><MessageHeader>You · tentative</MessageHeader><Bubble variant="tinted"><BubbleContent className="conversation-bubble tentative"><p>{props.state.tentativeText}</p></BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
                 {props.state.playbackNotice ? <MessageScrollerItem messageId="playback-notice"><Marker variant="separator" className="continuation-marker"><MarkerContent>{props.state.playbackNotice}</MarkerContent></Marker></MessageScrollerItem> : null}
               </MessageScrollerContent>
@@ -56,7 +58,7 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
         </MessageScrollerProvider>
       </div>
     </section>
-    {props.state.echoConfirmation ? <Card className="interruption-controls" role="group" aria-label="Paused response choices"><p>The previous response is paused while your intent is considered.</p><div className="button-row"><Button className="secondary" onClick={props.onRejectEcho}>Continue previous response</Button><Button onClick={props.onConfirmEcho}>Respond to me instead</Button></div></Card> : null}
+    {props.state.echoConfirmation ? <Card className="interruption-controls" role="group" aria-label="Paused response choices"><p>The previous response is paused while your intent is considered.</p><div className="button-row"><Button variant="secondary" onClick={props.onRejectEcho}>Continue previous response</Button><Button onClick={props.onConfirmEcho}>Respond to me instead</Button></div></Card> : null}
     <ActivityLogPanel />
   </main>;
 }
@@ -76,17 +78,17 @@ function ActivityLogPanel() {
   };
   return <Card className="activity-log">
     <div className="activity-log-header">
-      <Button className="secondary activity-log-toggle" aria-expanded={open} aria-controls="activity-log-region" onClick={() => setOpen(value => !value)}><ClipboardList className="activity-log-icon" aria-hidden="true" />Activity log</Button>
+      <Button variant="secondary" className="activity-log-toggle" aria-expanded={open} aria-controls="activity-log-region" onClick={() => setOpen(value => !value)}><ClipboardList className="activity-log-icon" aria-hidden="true" />Activity log</Button>
       {open ? <div className="activity-log-actions">
         {notice ? <span className="activity-log-notice" role="status">{notice}</span> : null}
-        <Button className="secondary" onClick={copyLog}><Copy className="activity-log-icon" aria-hidden="true" />Copy</Button>
-        <Button className="secondary" onClick={() => { activityLog.clear(); setNotice(''); }}><Trash className="activity-log-icon" aria-hidden="true" />Clear</Button>
+        <Button variant="secondary" onClick={copyLog}><Copy className="activity-log-icon" aria-hidden="true" />Copy</Button>
+        <Button variant="secondary" onClick={() => { activityLog.clear(); setNotice(''); }}><Trash className="activity-log-icon" aria-hidden="true" />Clear</Button>
       </div> : null}
     </div>
     {open ? <div id="activity-log-region" role="region" aria-label="Activity log entries" className="activity-log-region">
       {entries.length === 0 ? <p className="hint">No activity logged yet.</p> : <ul className="activity-log-list">
         {[...entries].reverse().map((entry, index) => <li key={`${entry.ts}-${index}`} className="activity-log-entry">
-          <Badge className={`log-level log-level-${entry.level}`}>{entry.level}</Badge>
+          <Badge className="log-level" variant={entry.level === 'error' ? 'destructive' : entry.level === 'warn' ? 'warning' : 'primary'}>{entry.level}</Badge>
           <span className="log-entry-source">{entry.source}</span>
           <span className="log-entry-message">{entry.message}{entry.detail ? ` — ${entry.detail}` : ''}</span>
         </li>)}

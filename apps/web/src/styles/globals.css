@@ -1,4 +1,67 @@
 @import "tailwindcss";
 
-:root { --background:#f7f4ec; --foreground:#173c30; --card:#fffdf7; --border:#d7d0bf; --primary:#226e52; --primary-foreground:#fff; --muted:#e6e1d4; --muted-foreground:#52615b; --destructive:#8b2f2f; }
-@theme inline { --color-background:var(--background); --color-foreground:var(--foreground); --color-card:var(--card); --color-border:var(--border); --color-primary:var(--primary); --color-primary-foreground:var(--primary-foreground); --color-muted:var(--muted); --color-muted-foreground:var(--muted-foreground); --color-destructive:var(--destructive); }
+/* Every surface reads from these tokens; switching the accent is a one-line
+   change here (or a data-theme override below). */
+:root {
+  --background: #f7f4ec;
+  --foreground: #173c30;
+  --card: #fffdf7;
+  --border: #d7d0bf;
+  --primary: #226e52;
+  --primary-foreground: #fff;
+  --muted: #e6e1d4;
+  --muted-foreground: #52615b;
+  --destructive: #8b2f2f;
+  --warning: #a14d28;
+  --success: #236846;
+  --info: #174d66;
+  --ring: #d58b1f;
+  --shadow-color: #17211d;
+}
+
+/* Accent override hook: set data-theme on <html> to re-skin every component. */
+:root[data-theme='slate'] {
+  --primary: #3f5d6e;
+  --ring: #8a6d2f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-info: var(--info);
+  --color-ring: var(--ring);
+}
+
+/* Soft sweeping highlight for transient activity rows (e.g. typing indicator). */
+.shimmer {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .35rem .75rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--muted) 65%, transparent);
+  overflow: hidden;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--card) 85%, transparent), transparent);
+  animation: shimmer 1.6s ease infinite;
+}
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}

@@ -3,6 +3,8 @@ import type { RecordingStore } from '../storage/recording-store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
+import { Spinner } from '../components/ui/spinner';
+import { Switch } from '../components/ui/switch';
 import { deleteSessionRecording, downloadRecording } from './export';
 
 export interface RecordingControlsProps {
@@ -55,12 +57,12 @@ export function RecordingControls({ sessionId, store, buildExport, onToggleRecor
 
   return <Card className="recording-controls" role="group" aria-label="Recording controls">
     <div className="recording-row">
-      <label className="recording-toggle"><input type="checkbox" checked={enabled} onChange={() => void toggle()} aria-label="Record this session" /><span>Record this session</span></label>
+      <div className="recording-toggle"><Switch checked={enabled} onCheckedChange={() => void toggle()} aria-label="Record this session" /><span>Record this session</span></div>
       <Badge className="recording-status" aria-label={`Recording status: ${enabled ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : 'off'}`}>{enabled ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : 'off'}</Badge>
     </div>
     <div className="button-row">
-      <Button className="secondary" disabled={itemCount === 0 || exporting} onClick={() => void exportRecording()}>{exporting ? 'Exporting…' : 'Export'}</Button>
-      <Button className="secondary" disabled={itemCount === 0} onClick={() => void remove()}>Delete</Button>
+      <Button variant="secondary" disabled={itemCount === 0 || exporting} onClick={() => void exportRecording()}>{exporting ? <><Spinner />Exporting…</> : 'Export'}</Button>
+      <Button variant="outline" disabled={itemCount === 0} onClick={() => void remove()}>Delete</Button>
     </div>
     {notice ? <p className="hint">{notice}</p> : null}
   </Card>;
