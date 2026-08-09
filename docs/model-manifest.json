@@ -1,77 +1,107 @@
 {
-  "schemaVersion": 1,
-  "models": [
+ "schemaVersion": 1,
+ "models": [
+  {
+   "id": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+   "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
+   "version": "nemotron-3.5-asr-streaming-0.6b-v1",
+   "runtime": "transformers==5.13.0; torch==2.12.1+cu130",
+   "precision": "float32",
+   "file": "model.safetensors",
+   "path": "models/nemotron-3.5-asr-streaming-0.6b/model.safetensors",
+   "runtimePath": "models/nemotron-3.5-asr-streaming-0.6b",
+   "sha256": "9eebdd6590289cb3030f310858f3df93256600a800a3e8200c5993d5f967e174",
+   "files": [
     {
-      "id": "nvidia/nemotron-3.5-asr-streaming-0.6b",
-      "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
-      "version": "nemotron-3.5-asr-streaming-0.6b-v1",
-      "runtime": "transformers==5.13.0; torch==2.12.1+cu130",
-      "precision": "float32",
-      "file": "model.safetensors",
-      "path": "models/nemotron-3.5-asr-streaming-0.6b/model.safetensors",
-      "runtimePath": "models/nemotron-3.5-asr-streaming-0.6b",
-      "sha256": "9eebdd6590289cb3030f310858f3df93256600a800a3e8200c5993d5f967e174",
-      "files": [
-        {"path": "models/nemotron-3.5-asr-streaming-0.6b/model.safetensors", "sha256": "9eebdd6590289cb3030f310858f3df93256600a800a3e8200c5993d5f967e174"},
-        {"path": "models/nemotron-3.5-asr-streaming-0.6b/config.json", "sha256": "62d186fd91f518e00e7867500f1f5819225e8ee95ea3e21b546514bf2048e845"},
-        {"path": "models/nemotron-3.5-asr-streaming-0.6b/generation_config.json", "sha256": "993e5d4cb74a6fe9d6e7084a76b3313c1446740679be4676570c23b664fdc07e"},
-        {"path": "models/nemotron-3.5-asr-streaming-0.6b/processor_config.json", "sha256": "ec47870f1091ea4f25539208387b45b902c92d0e3f997a30061ef88f73437ab0"},
-        {"path": "models/nemotron-3.5-asr-streaming-0.6b/tokenizer.json", "sha256": "3f3d481deb073b64c2082e8c7860d487a3a62774bf4e9e4faac83007e181f246"},
-        {"path": "models/nemotron-3.5-asr-streaming-0.6b/tokenizer_config.json", "sha256": "5c641c5b3f50702a60082690d27c1ce7fcb5a92c4a624793bcae0f21eda3d6e0"}
-      ],
-      "license": "OpenMDW-1.1",
-      "licenseUrl": "https://openmdw.ai/license/1-1/",
-      "upstreamUrl": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
-      "acquisitionCommand": "uv run hf download nvidia/nemotron-3.5-asr-streaming-0.6b model.safetensors config.json generation_config.json processor_config.json tokenizer.json tokenizer_config.json --revision 1c8deaecc64b91f034d73e08dd8b64625eb3395d --local-dir models/nemotron-3.5-asr-streaming-0.6b"
+     "path": "models/nemotron-3.5-asr-streaming-0.6b/model.safetensors",
+     "sha256": "9eebdd6590289cb3030f310858f3df93256600a800a3e8200c5993d5f967e174"
     },
     {
-      "id": "nvidia/parakeet-unified-en-0.6b",
-      "revision": "fe53cd885760c96b6a5f51a0bfd362cb4584a98b",
-      "version": "parakeet-unified-en-0.6b-fe53cd8857",
-      "runtime": "nemo-toolkit from NVIDIA-NeMo/NeMo@58f3dd9250d4c9e0d3e865b78ccd5ea89dc420ba; torch==2.12.1+cu130",
-      "precision": "float32",
-      "file": "parakeet-unified-en-0.6b.nemo",
-      "path": "models/parakeet-unified-en-0.6b/parakeet-unified-en-0.6b.nemo",
-      "runtimePath": "models/parakeet-unified-en-0.6b/parakeet-unified-en-0.6b.nemo",
-      "sha256": "ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b",
-      "files": [
-        {"path": "models/parakeet-unified-en-0.6b/parakeet-unified-en-0.6b.nemo", "sha256": "ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b"},
-        {"path": "models/parakeet-unified-en-0.6b/README.md", "sha256": "505590d4440b38ca33ed4d5b8af2a10c2391ecd8740c945bfdf82825e1a05fb3"}
-      ],
-      "license": "NVIDIA Open Model License",
-      "licenseUrl": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
-      "upstreamUrl": "https://huggingface.co/nvidia/parakeet-unified-en-0.6b",
-      "acquisitionCommand": "uv run hf download nvidia/parakeet-unified-en-0.6b parakeet-unified-en-0.6b.nemo README.md --revision fe53cd885760c96b6a5f51a0bfd362cb4584a98b --local-dir models/parakeet-unified-en-0.6b"
+     "path": "models/nemotron-3.5-asr-streaming-0.6b/config.json",
+     "sha256": "62d186fd91f518e00e7867500f1f5819225e8ee95ea3e21b546514bf2048e845"
     },
     {
-      "id": "hexgrad/Kokoro-82M",
-      "revision": "f3ff3571791e39611d31c381e3a41a3af07b4987",
-      "version": "kokoro-82m-onnx-model-files-v1.0",
-      "runtime": "kokoro-onnx==0.5.0; git=98ea02a5692534c2ba496708e2f19de25028412b; onnxruntime==1.22.1",
-      "runtimeRevision": "98ea02a5692534c2ba496708e2f19de25028412b",
-      "onnxReleaseRevision": "6843c53fc280ab130b7a8d206ebd3407e094efdc",
-      "precision": "float32",
-      "provider": "CPUExecutionProvider",
-      "voice": "af_heart",
-      "language": "en-us",
-      "nativeSampleRate": 24000,
-      "file": "kokoro-v1.0.onnx",
-      "path": "models/kokoro-82m-onnx/kokoro-v1.0.onnx",
-      "runtimePath": "models/kokoro-82m-onnx/kokoro-v1.0.onnx",
-      "voicesPath": "models/kokoro-82m-onnx/voices-v1.0.bin",
-      "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
-      "files": [
-        {"path": "models/kokoro-82m-onnx/kokoro-v1.0.onnx", "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5"},
-        {"path": "models/kokoro-82m-onnx/voices-v1.0.bin", "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"}
-      ],
-      "license": "Apache-2.0",
-      "licenseUrl": "https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/LICENSE",
-      "runtimeLicense": "MIT",
-      "runtimeLicenseUrl": "https://github.com/thewh1teagle/kokoro-onnx/blob/98ea02a5692534c2ba496708e2f19de25028412b/LICENSE",
-      "upstreamUrl": "https://huggingface.co/hexgrad/Kokoro-82M/tree/f3ff3571791e39611d31c381e3a41a3af07b4987",
-      "onnxUpstreamUrl": "https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0",
-      "upstreamChecksums": "unavailable; release provides no checksums; SHA-256 values above were computed after download",
-      "acquisitionCommand": "uv run python scripts/acquire-kokoro.py"
+     "path": "models/nemotron-3.5-asr-streaming-0.6b/generation_config.json",
+     "sha256": "993e5d4cb74a6fe9d6e7084a76b3313c1446740679be4676570c23b664fdc07e"
+    },
+    {
+     "path": "models/nemotron-3.5-asr-streaming-0.6b/processor_config.json",
+     "sha256": "ec47870f1091ea4f25539208387b45b902c92d0e3f997a30061ef88f73437ab0"
+    },
+    {
+     "path": "models/nemotron-3.5-asr-streaming-0.6b/tokenizer.json",
+     "sha256": "3f3d481deb073b64c2082e8c7860d487a3a62774bf4e9e4faac83007e181f246"
+    },
+    {
+     "path": "models/nemotron-3.5-asr-streaming-0.6b/tokenizer_config.json",
+     "sha256": "5c641c5b3f50702a60082690d27c1ce7fcb5a92c4a624793bcae0f21eda3d6e0"
     }
-  ]
+   ],
+   "license": "OpenMDW-1.1",
+   "licenseUrl": "https://openmdw.ai/license/1-1/",
+   "upstreamUrl": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
+   "acquisitionCommand": "uv run hf download nvidia/nemotron-3.5-asr-streaming-0.6b model.safetensors config.json generation_config.json processor_config.json tokenizer.json tokenizer_config.json --revision 1c8deaecc64b91f034d73e08dd8b64625eb3395d --local-dir models/nemotron-3.5-asr-streaming-0.6b"
+  },
+  {
+   "id": "nvidia/parakeet-unified-en-0.6b",
+   "revision": "fe53cd885760c96b6a5f51a0bfd362cb4584a98b",
+   "version": "parakeet-unified-en-0.6b-fe53cd8857",
+   "runtime": "nemo-toolkit from NVIDIA-NeMo/NeMo@58f3dd9250d4c9e0d3e865b78ccd5ea89dc420ba; torch==2.12.1+cu130",
+   "precision": "float32",
+   "file": "parakeet-unified-en-0.6b.nemo",
+   "path": "models/parakeet-unified-en-0.6b/parakeet-unified-en-0.6b.nemo",
+   "runtimePath": "models/parakeet-unified-en-0.6b/parakeet-unified-en-0.6b.nemo",
+   "sha256": "ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b",
+   "files": [
+    {
+     "path": "models/parakeet-unified-en-0.6b/parakeet-unified-en-0.6b.nemo",
+     "sha256": "ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b"
+    },
+    {
+     "path": "models/parakeet-unified-en-0.6b/README.md",
+     "sha256": "505590d4440b38ca33ed4d5b8af2a10c2391ecd8740c945bfdf82825e1a05fb3"
+    }
+   ],
+   "license": "NVIDIA Open Model License",
+   "licenseUrl": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
+   "upstreamUrl": "https://huggingface.co/nvidia/parakeet-unified-en-0.6b",
+   "acquisitionCommand": "uv run hf download nvidia/parakeet-unified-en-0.6b parakeet-unified-en-0.6b.nemo README.md --revision fe53cd885760c96b6a5f51a0bfd362cb4584a98b --local-dir models/parakeet-unified-en-0.6b"
+  },
+  {
+   "id": "hexgrad/Kokoro-82M",
+   "revision": "f3ff3571791e39611d31c381e3a41a3af07b4987",
+   "version": "kokoro-82m-onnx-model-files-v1.0",
+   "runtime": "kokoro-onnx==0.5.0; git=98ea02a5692534c2ba496708e2f19de25028412b; onnxruntime-gpu==1.22.0 (cu12; onnxruntime proxy wheel)",
+   "runtimeRevision": "98ea02a5692534c2ba496708e2f19de25028412b",
+   "onnxReleaseRevision": "6843c53fc280ab130b7a8d206ebd3407e094efdc",
+   "precision": "float32",
+   "provider": "CUDAExecutionProvider",
+   "voice": "af_heart",
+   "language": "en-us",
+   "nativeSampleRate": 24000,
+   "file": "kokoro-v1.0.onnx",
+   "path": "models/kokoro-82m-onnx/kokoro-v1.0.onnx",
+   "runtimePath": "models/kokoro-82m-onnx/kokoro-v1.0.onnx",
+   "voicesPath": "models/kokoro-82m-onnx/voices-v1.0.bin",
+   "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+   "files": [
+    {
+     "path": "models/kokoro-82m-onnx/kokoro-v1.0.onnx",
+     "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5"
+    },
+    {
+     "path": "models/kokoro-82m-onnx/voices-v1.0.bin",
+     "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+    }
+   ],
+   "license": "Apache-2.0",
+   "licenseUrl": "https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/LICENSE",
+   "runtimeLicense": "MIT",
+   "runtimeLicenseUrl": "https://github.com/thewh1teagle/kokoro-onnx/blob/98ea02a5692534c2ba496708e2f19de25028412b/LICENSE",
+   "upstreamUrl": "https://huggingface.co/hexgrad/Kokoro-82M/tree/f3ff3571791e39611d31c381e3a41a3af07b4987",
+   "onnxUpstreamUrl": "https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0",
+   "upstreamChecksums": "unavailable; release provides no checksums; SHA-256 values above were computed after download",
+   "acquisitionCommand": "uv run python scripts/acquire-kokoro.py"
+  }
+ ]
 }

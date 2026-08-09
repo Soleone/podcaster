@@ -20,14 +20,10 @@ MODEL_REVISION = "f3ff3571791e39611d31c381e3a41a3af07b4987"
 ONNX_RELEASE_REVISION = "6843c53fc280ab130b7a8d206ebd3407e094efdc"
 RUNTIME_REVISION = "98ea02a5692534c2ba496708e2f19de25028412b"
 RUNTIME_VERSION = "0.5.0"
-RUNTIME_CONTRACT = (
-    "kokoro-onnx==0.5.0; git=98ea02a5692534c2ba496708e2f19de25028412b; "
-    "onnxruntime==1.22.1"
-)
 SAMPLE_RATE = 24_000
 VOICE = "af_heart"
 LANGUAGE = "en-us"
-PROVIDER = "CPUExecutionProvider"
+PROVIDER = "CUDAExecutionProvider"
 PRECISION = "float32"
 OUTPUT_FORMAT = "pcm_s16le_mono"
 MAX_TEXT_CHARACTERS = 4_000
@@ -37,6 +33,53 @@ ROOT = Path(__file__).resolve().parents[4]
 MODEL_PATH = (ROOT / "models/kokoro-82m-onnx/kokoro-v1.0.onnx").resolve()
 VOICES_PATH = (ROOT / "models/kokoro-82m-onnx/voices-v1.0.bin").resolve()
 OWNED_THREAD_PREFIXES = ("kokoro-inference", "kokoro-output", "kokoro-runtime-executor")
+
+# onnxruntime-gpu 1.22.0 (cu12). onnxruntime 1.22.1 has no GPU wheel; the proxy
+# wheel vendor/onnxruntime-1.22.0-py3-none-any.whl satisfies the onnxruntime
+# requirement with the GPU build only (see scripts/build-ort-proxy-wheel.py).
+RUNTIME_CONTRACT = (
+    "kokoro-onnx==0.5.0; git=98ea02a5692534c2ba496708e2f19de25028412b; "
+    "onnxruntime-gpu==1.22.0 (cu12; onnxruntime proxy wheel)"
+)
+
+# Ordered so each library's own DT_NEEDED dependencies load first.
+_NVIDIA_CUDA12_PACKAGES = (
+    "nvidia-cuda-runtime-cu12",  # libcudart.so.12
+    "nvidia-nvjitlink-cu12",  # cublas 12.1 depends on it
+    "nvidia-cublas-cu12",  # libcublas.so.12, libcublasLt.so.12
+    "nvidia-cufft-cu12",  # libcufft.so.11
+    "nvidia-curand-cu12",  # libcurand.so.10
+    "nvidia-cuda-nvrtc-cu12",  # libnvrtc.so.12
+    "nvidia-cudnn-cu12",  # libcudnn.so.9 (last: needs cublas/cublasLt/cudart)
+)
+
+
+def preload_cuda_runtime() -> None:
+    """Load pip-installed CUDA 12 runtime libraries into the global scope.
+
+    onnxruntime-gpu wheels ship libonnxruntime_providers_cuda.so with DT_NEEDED
+    entries for libcublas/libcublasLt/libcudnn/libcudart/... but no RPATH, and
+    the pip nvidia packages are not on LD_LIBRARY_PATH. Preloading them with
+    RTLD_GLOBAL lets the provider library resolve its dependencies. Failures are
+    tolerated here; the provider check in prepare() enforces the outcome.
+    """
+    import ctypes
+    import importlib.metadata
+
+    for dist_name in _NVIDIA_CUDA12_PACKAGES:
+        try:
+            dist = importlib.metadata.distribution(dist_name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        short = dist_name[len("nvidia-") :].split("-cu12", 1)[0].replace("-", "_")
+        lib_dir = dist.locate_file("") / "nvidia" / short / "lib"
+        if not lib_dir.is_dir():
+            continue
+        for so in sorted(lib_dir.glob("*.so*")):
+            try:
+                ctypes.CDLL(str(so), mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                continue
 
 
 def _sha256_file(path: Path) -> str:
@@ -74,8 +117,12 @@ def _verify_runtime_distribution() -> None:
         or vcs.get("requested_revision") != RUNTIME_REVISION
     ):
         raise RuntimeError("kokoro-onnx origin/revision does not match the pinned contract")
-    if importlib.metadata.version("onnxruntime") != "1.22.1":
-        raise RuntimeError("onnxruntime version does not match the pinned contract")
+    gpu = importlib.metadata.distribution("onnxruntime-gpu")
+    if gpu.version != "1.22.0":
+        raise RuntimeError("onnxruntime-gpu version does not match the pinned contract")
+    proxy = importlib.metadata.distribution("onnxruntime")
+    if proxy.version != "1.22.0":
+        raise RuntimeError("onnxruntime proxy version does not match the pinned contract")
 
 
 class KokoroBackend(Protocol):
@@ -106,11 +153,19 @@ class KokoroOnnxBackend:
         from kokoro_onnx import Kokoro
         import onnxruntime as ort
 
+        preload_cuda_runtime()
         self.runtime_verifier()
         if provider not in ort.get_available_providers():
             raise RuntimeError("configured ONNX provider is unavailable")
-        self.session = ort.InferenceSession(model_path, providers=[provider])
-        if self.session.get_providers() != [provider]:
+        session_options = ort.SessionOptions()
+        # Silence ORT's one-time session warnings (Memcpy/scatter/EP notes) so the
+        # sidecar's captured stderr stays clean; failures still surface as errors.
+        session_options.log_severity_level = 3
+        self.session = ort.InferenceSession(
+            model_path, providers=[provider], sess_options=session_options
+        )
+        active = self.session.get_providers()
+        if not active or active[0] != provider:
             raise RuntimeError("ONNX Runtime did not honor the exact configured provider")
         self.engine = Kokoro.from_session(self.session, voices_path)
         if VOICE not in self.engine.get_voices():

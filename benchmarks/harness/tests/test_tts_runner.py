@@ -17,7 +17,7 @@ from benchmarks.harness.tts_runner import (
 )
 from services.audio.src.tts.base import AudioChunk, SynthesisResult
 
-CONFIG = ROOT / "benchmarks/configs/tts/kokoro.yaml"
+CONFIG = ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml"
 PROMPTS = ROOT / "benchmarks/datasets/tts-prompts-v1.manifest.json"
 
 
@@ -30,7 +30,7 @@ class FakeTtsAdapter:
 
     def prepare(self, config: dict[str, Any]) -> None:
         assert config["candidate"]["voice"] == "af_heart"
-        assert config["candidate"]["provider"] == "CPUExecutionProvider"
+        assert config["candidate"]["provider"] == "CUDAExecutionProvider"
         self.prepared = True
 
     def synthesize_stream(self, text: str, cancel: CancelToken, on_audio=None) -> SynthesisResult:  # type: ignore[no-untyped-def]
@@ -84,7 +84,7 @@ def test_tts_runner_writes_valid_pcm_metadata_and_recomputable_summary(tmp_path:
     summary = json.loads((run / "summary.json").read_text())
     items = [json.loads(line) for line in (run / "items.jsonl").read_text().splitlines()]
     assert data["models"][0]["voice"] == "af_heart"
-    assert data["models"][0]["provider"] == "CPUExecutionProvider"
+    assert data["models"][0]["provider"] == "CUDAExecutionProvider"
     assert summary["counts"] == {"total": 24, "passed": 24, "failed": 0, "cancelled": 0}
     assert summary["totalSamples"] == 14_400
     assert summary["ttsTimeToFirstAudioMs"]["p95"] >= 0

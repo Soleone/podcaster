@@ -119,7 +119,7 @@ def prepared(backend: FakeBackend | None = None) -> tuple[KokoroStreamingAdapter
         (("candidate", "runtimeRevision"), "wrong"),
         (("candidate", "runtime"), "latest"),
         (("candidate", "voice"), "af_bella"),
-        (("candidate", "provider"), "CUDAExecutionProvider"),
+        (("candidate", "provider"), "CPUExecutionProvider"),
         (("candidate", "precision"), "float16"),
         (("language",), "en-US"),
         (("nativeSampleRate",), 16_000),
@@ -188,17 +188,58 @@ def test_runtime_origin_revision_verifier_fails_closed(monkeypatch: Any) -> None
             return '{"url":"https://evil.invalid/fork.git","vcs_info":{"vcs":"git","commit_id":"bad","requested_revision":"bad"}}'
 
     monkeypatch.setattr("importlib.metadata.distribution", lambda name: Distribution())
-    monkeypatch.setattr("importlib.metadata.version", lambda name: "1.22.1")
     with pytest.raises(RuntimeError, match="origin/revision"):
         _verify_runtime_distribution()
 
 
-def test_prepare_passes_verified_paths_and_cpu_provider() -> None:
+def test_runtime_gpu_and_proxy_versions_fail_closed(monkeypatch: Any) -> None:
+    class Kokoro:
+        version = "0.5.0"
+        def read_text(self, name: str) -> str:
+            assert name == "direct_url.json"
+            return (
+                '{"url":"https://github.com/thewh1teagle/kokoro-onnx.git",'
+                '"vcs_info":{"vcs":"git","commit_id":"98ea02a5692534c2ba496708e2f19de25028412b",'
+                '"requested_revision":"98ea02a5692534c2ba496708e2f19de25028412b"}}'
+            )
+
+    def distribution(name: str) -> Any:
+        if name == "kokoro-onnx":
+            return Kokoro()
+        return type("Dist", (), {"version": "1.22.0"})()
+
+    monkeypatch.setattr("importlib.metadata.distribution", distribution)
+    _verify_runtime_distribution()
+
+    def wrong_gpu(name: str) -> Any:
+        if name == "kokoro-onnx":
+            return Kokoro()
+        if name == "onnxruntime-gpu":
+            return type("Dist", (), {"version": "1.23.0"})()
+        return type("Dist", (), {"version": "1.22.0"})()
+
+    monkeypatch.setattr("importlib.metadata.distribution", wrong_gpu)
+    with pytest.raises(RuntimeError, match="onnxruntime-gpu version"):
+        _verify_runtime_distribution()
+
+    def wrong_proxy(name: str) -> Any:
+        if name == "kokoro-onnx":
+            return Kokoro()
+        if name == "onnxruntime":
+            return type("Dist", (), {"version": "1.22.1"})()
+        return type("Dist", (), {"version": "1.22.0"})()
+
+    monkeypatch.setattr("importlib.metadata.distribution", wrong_proxy)
+    with pytest.raises(RuntimeError, match="proxy version"):
+        _verify_runtime_distribution()
+
+
+def test_prepare_passes_verified_paths_and_cuda_provider() -> None:
     adapter, backend = prepared()
     assert backend.prepared == (
         "/verified/kokoro-v1.0.onnx",
         "/verified/voices-v1.0.bin",
-        "CPUExecutionProvider",
+        "CUDAExecutionProvider",
     )
     adapter.close()
 

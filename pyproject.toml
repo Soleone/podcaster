@@ -7,7 +7,7 @@ dependencies = [
   "kokoro-onnx",
   "librosa==0.11.0",
   "numpy==2.3.2",
-  "onnxruntime==1.22.1",
+  "onnxruntime==1.22.0",
   "pydantic==2.11.7",
   "rfc3339-validator==0.1.4",
   "torch==2.12.1",
@@ -24,6 +24,12 @@ package = false
 
 [tool.uv.sources]
 kokoro-onnx = { git = "https://github.com/thewh1teagle/kokoro-onnx.git", rev = "98ea02a5692534c2ba496708e2f19de25028412b" }
+# Proxy wheel for onnxruntime-gpu 1.22.0 (CUDA build). onnxruntime-gpu is a
+# separate package name, so installing both wheels races for the onnxruntime/
+# module files and the CPU wheel wins; the proxy satisfies the onnxruntime
+# requirement with the GPU build only. Regenerate with
+# `uv run python scripts/build-ort-proxy-wheel.py` (no CPU wheel in graph).
+onnxruntime = { path = "vendor/onnxruntime-1.22.0-py3-none-any.whl" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
