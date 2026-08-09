@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { maintainConversationScroll } from './SessionScreen';
+import { conversationItemStartsTurn } from '../components/conversation/conversation-item';
+import type { ConversationItem } from './conversation';
 
-describe('conversation scroll retention', () => {
-  it('does not let appended messages steal scroll after the user scrolls upward', () => {
-    const viewport = { scrollTop: 240, scrollHeight: 1200 };
-    maintainConversationScroll(viewport, false);
-    expect(viewport.scrollTop).toBe(240);
+describe('conversation turn anchors', () => {
+  it('anchors stable and control user turns without anchoring streamed output rows', () => {
+    const user: ConversationItem = { kind: 'user', id: 'user', text: 'Question', status: 'stable', sequence: 1 };
+    const control: ConversationItem = { kind: 'user', id: 'control', text: 'Carry on', status: 'control', sequence: 2 };
+    const assistant: ConversationItem = { kind: 'assistant', id: 'assistant', responseId: 'response', text: 'Answer', playback: 'playing', sequence: 3 };
+    const marker: ConversationItem = { kind: 'continuation', id: 'continued', responseId: 'response', label: 'Continued previous response', sequence: 4 };
 
-    maintainConversationScroll(viewport, true);
-    expect(viewport.scrollTop).toBe(1200);
+    expect([user, control, assistant, marker].map(conversationItemStartsTurn)).toEqual([true, true, false, false]);
   });
 });

@@ -1,10 +1,28 @@
 import type { ConversationItem } from '../../session/conversation';
 import { Badge } from '../ui/badge';
-import { Card } from '../ui/card';
+import { Bubble, BubbleContent } from '../ui/bubble';
+import { Marker, MarkerContent } from '../ui/marker';
+import { Message, MessageContent, MessageFooter, MessageHeader } from '../ui/message';
+
+export function conversationItemStartsTurn(item: ConversationItem): boolean {
+  return item.kind === 'user';
+}
 
 export function ConversationRow({ item }: { item: ConversationItem }) {
-  if (item.kind === 'continuation') return <p className="continuation-marker">↳ {item.label}</p>;
-  if (item.kind === 'notice') return <p className={`conversation-notice ${item.tone}`}>{item.text}</p>;
-  if (item.kind === 'user') return <div className="conversation-row user-row"><Card className="conversation-bubble user-bubble"><span className="speaker">You</span><p>{item.text}</p>{item.status === 'control' ? <Badge>Control only</Badge> : null}</Card></div>;
-  return <div className="conversation-row assistant-row"><Card className="conversation-bubble assistant-bubble"><span className="speaker">Companion</span><p>{item.text}</p><Badge>{item.playback}</Badge></Card></div>;
+  if (item.kind === 'continuation') return <Marker variant="separator" className="continuation-marker"><MarkerContent>{item.label}</MarkerContent></Marker>;
+  if (item.kind === 'notice') return <Marker className={`conversation-notice ${item.tone}`}><MarkerContent>{item.text}</MarkerContent></Marker>;
+  if (item.kind === 'user') return <Message align="end" className="conversation-message user-row">
+    <MessageContent>
+      <MessageHeader>You</MessageHeader>
+      <Bubble variant="default"><BubbleContent className="conversation-bubble user-bubble"><p>{item.text}</p></BubbleContent></Bubble>
+      {item.status === 'control' ? <MessageFooter><Badge>Control only</Badge></MessageFooter> : null}
+    </MessageContent>
+  </Message>;
+  return <Message className="conversation-message assistant-row">
+    <MessageContent>
+      <MessageHeader>Companion</MessageHeader>
+      <Bubble variant="secondary"><BubbleContent className="conversation-bubble assistant-bubble"><p>{item.text}</p></BubbleContent></Bubble>
+      <MessageFooter><Badge>{item.playback}</Badge></MessageFooter>
+    </MessageContent>
+  </Message>;
 }
