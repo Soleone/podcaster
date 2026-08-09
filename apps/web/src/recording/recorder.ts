@@ -1,9 +1,10 @@
 import type { StableEvent } from '../storage/stable-turn-writer';
 import type { RecordingSampleRate, RecordingStore, StoredRecordingItem, TerminalReason } from '../storage/recording-store';
 import { uuidV7 } from '../session/envelope';
+import type { EncodeMp3 } from './encode';
 
+export type { EncodeMp3 } from './encode';
 export const PER_TURN_KBPS = 64;
-export interface EncodeMp3 { (pcm16: Int16Array, sampleRate: RecordingSampleRate, bitrateKbps: number): Promise<Uint8Array> }
 
 interface FrameChunk { sequence: number; pcm16: Int16Array }
 interface OpenUserSlice {

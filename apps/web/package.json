@@ -10,6 +10,7 @@
   "dependencies": {
     "@app/contracts": "workspace:^",
     "@base-ui/react": "^1.7.0",
+    "@breezystack/lamejs": "1.2.7",
     "@shadcn/react": "^0.3.0",
     "@vitejs/plugin-react": "4.7.0",
     "class-variance-authority": "^0.7.1",

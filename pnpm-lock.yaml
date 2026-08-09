@@ -60,6 +60,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.7.0
         version: 1.7.0(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+      '@breezystack/lamejs':
+        specifier: 1.2.7
+        version: 1.2.7
       '@shadcn/react':
         specifier: ^0.3.0
         version: 0.3.0(@types/react@19.2.2)(react@19.2.0)
@@ -263,6 +266,9 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  '@breezystack/lamejs@1.2.7':
+    resolution: {integrity: sha512-6wc7ck65ctA75Hq7FYHTtTvGnYs6msgdxiSUICQ+A01nVOWg6rqouZB8IdyteRlfpYYiFovkf67dIeOgWIUzTA==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -1853,6 +1859,8 @@ snapshots:
       use-sync-external-store: 1.6.0(react@19.2.0)
     optionalDependencies:
       '@types/react': 19.2.2
+
+  '@breezystack/lamejs@1.2.7': {}
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true
