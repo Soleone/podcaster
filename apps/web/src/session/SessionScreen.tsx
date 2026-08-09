@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
+import { Brain, Captions, CircleAlert, CircleStop, Ear, Loader2, MessageCircleQuestion, Pause, Volume2, type LucideIcon } from 'lucide-react';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert } from '../components/ui/alert';
+import { Badge } from '../components/ui/badge';
 import { Bubble, BubbleContent } from '../components/ui/bubble';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -13,6 +15,9 @@ import './session.css';
 const headings: Record<SessionViewState['dominant'], string> = {
   idle: 'Session stopped', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
 };
+const stateIcons: Record<SessionViewState['dominant'], LucideIcon> = {
+  idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: Loader2, degraded: CircleAlert,
+};
 
 export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; onConfirmEcho: () => void; onRejectEcho: () => void }) {
   useEffect(() => {
@@ -24,9 +29,13 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
   }, [props.onCancelAssistant, props.state.dominant, props.state.echoConfirmation]);
 
   const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking' || props.state.echoConfirmation;
+  const StateIcon = stateIcons[props.state.dominant];
   return <main className="session-shell">
-    <header className="session-header"><div><p className="eyebrow">Active voice session</p><p aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</p></div><Button className="danger" onClick={props.onStop}>Stop session</Button></header>
-    <Card className={`status-card state-${props.state.dominant}`}><span className="state-cue" aria-hidden="true">●</span><div><p className="state-kicker">Current state</p><h1 id="session-status-heading" tabIndex={-1}>{headings[props.state.dominant]}</h1></div></Card>
+    <header className="session-header"><p className="eyebrow">Active voice session</p><Button className="danger" onClick={props.onStop}>Stop session</Button></header>
+    <Card className={`status-bar state-${props.state.dominant}`}>
+      <div className="status-label"><StateIcon className={`state-icon${props.state.dominant === 'stopping' ? ' state-icon-spin' : ''}`} aria-hidden="true" /><h1 id="session-status-heading">{headings[props.state.dominant]}</h1></div>
+      <div className="status-actions"><Badge className="elapsed-badge" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>{assistantActive ? <Button className="secondary stop-speaking" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}</div>
+    </Card>
     <p className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{props.state.announcement}</p>
     {props.state.degradedMessage ? <Alert>{props.state.degradedMessage}</Alert> : null}
     <section aria-labelledby="conversation-title" className="conversation"><h2 id="conversation-title">Conversation</h2>
@@ -47,7 +56,6 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
       </div>
     </section>
     {props.state.echoConfirmation ? <Card className="interruption-controls" role="group" aria-label="Paused response choices"><p>The previous response is paused while your intent is considered.</p><div className="button-row"><Button className="secondary" onClick={props.onRejectEcho}>Continue previous response</Button><Button onClick={props.onConfirmEcho}>Respond to me instead</Button></div></Card> : null}
-    {assistantActive ? <Button className="secondary stop-speaking" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}
   </main>;
 }
 function formatElapsed(seconds: number): string { const minutes = Math.floor(seconds / 60); return `${minutes}:${String(seconds % 60).padStart(2, '0')}`; }

@@ -39,7 +39,8 @@ export class PiInterruptionIntentClassifier implements InterruptionIntentClassif
     const instruction = [
       "Classify whether this speech takes over a paused answer. Return ONLY compact JSON with exactly action,intent,confidence,reason.",
       "action is resume or accept. intent is non_substantive,continue_previous,new_request,correction,topic_change,stop_previous.",
-      "Use resume for fragments, acknowledgements, uncertainty, noise, or requests to carry on. Use accept only for a clear new request, correction, topic change, or stop. Bias ambiguous cases to resume.",
+      "Use resume only for fragments, acknowledgements, noise, or explicit requests to carry on. Use accept for a clear new request, correction, topic change, or stop.",
+      "Negation or rejection of the paused answer (no, not, don't, wrong, different, something else, 'not those') is a correction — accept it even when the speech is disfluent. Bare redirections like 'Fantasy setting' are topic changes. Bias only genuinely ambiguous speech without a takeover cue to resume.",
       `Paused answer: ${input.interruptedResponseText.slice(0, 1000)}`,
       `Transcript: ${input.transcript.slice(0, 1000)}`,
     ].join("\n");
@@ -59,22 +60,89 @@ export function hasLexicalContent(value: string): boolean {
   return /[\p{L}\p{N}]/u.test(value.normalize("NFKC"));
 }
 
+const continueCues = /\b(?:continue|carry on|go on|keep going|finish (?:that|your thought))\b/iu;
+const negatedContinueCues = /\b(?:don'?t|do not|never)\s+(?:continue|carry on|go on|keep going)\b/iu;
+const acknowledgementCues = /\b(?:no (?:problem|worries|thanks|thank you)|(?:don'?t|do not) worry|no no (?:go on|continue|keep going))\b/iu;
+const correctionCues = /\b(?:no+|nope|nah|not|don'?t|doesn'?t|didn'?t|never|wrong|different|something else|anything else|another|try again)\b/iu;
+// Speech that means "keep the paused answer going" when it appears as a lone
+// word or opens a phrase: backchannels, acknowledgements, hedges, and short
+// answers ("yes", "right", "thanks", "please", "more").
+const resumeOpeners = new Set(["yes", "yeah", "yea", "yep", "yup", "right", "sure", "great", "cool", "awesome", "perfect", "nice", "wow", "aha", "okay", "ok", "okey", "fine", "good", "exactly", "absolutely", "definitely", "indeed", "alright", "true", "fair", "thanks", "thank", "please", "more", "sorry", "pardon", "oh", "mhm", "uh", "umm", "uhh", "um", "mm", "mmm", "ah", "er", "like", "k", "one", "got", "understood"]);
+// A fragment continuing the user's own interrupted thought starts with a
+// discourse connective or evaluative hedge ("and then…", "so the thing…",
+// "well…", "very cool"). Such openers keep the paused answer.
+const continuationStarters = new Set(["and", "but", "or", "so", "because", "then", "also", "well", "anyway", "though", "although", "if", "since", "while", "whereas", "yet", "plus", "else", "basically", "besides", "very", "really", "pretty", "quite", "too", "like"]);
+// A lone function word carries no topic ("the…", "it…", "there…").
+const loneFunctionWords = new Set(["the", "a", "an", "this", "that", "it", "i", "you", "we", "they", "he", "she", "there", "here", "to", "of", "for", "with", "on", "at", "by", "from", "in"]);
+// Sentence scaffolding (copula, auxiliaries, common predicates) signals an
+// evaluation or explanation about the paused answer rather than a bare topic
+// phrase: "that's really interesting", "sounds good", "I think…".
+const sentenceScaffolding = /\b(?:is|are|was|were|am|be|been|being|'re|'m|have|has|had|do|does|did|will|would|can|could|should|might|may|must|shall|want|need|think|know|mean|say|said|tell|talk|go|going|make|let|see|take|give|happen)\b/iu;
+const copulaContraction = /\b(?:that|it|he|she|we|they|there|here|what|who)'s\b/iu;
+// Evaluative acknowledgements ("sounds good", "looks fine") and comparison
+// continuations ("looks like…") keep the paused answer.
+const acknowledgementPhrases = /\b(?:sounds|feels|looks|seems) (?:good|great|right|fine|perfect|interesting|fun|cool|nice|amazing)\b/iu;
+const continuationPhrases = /\b(?:looks like|sounds like|seems like|feels like)\b/iu;
+
+/**
+ * Deterministic detection of a bare content-bearing redirection: short speech
+ * that names a topic or thing without sentence scaffolding ("Fantasy setting",
+ * "the third chapter", "the other one") and so must take over the paused
+ * answer instead of resuming it. Fillers, acknowledgements, noise, explicit
+ * continue requests, corrections, and continuation fragments are excluded.
+ */
+export function isBareRedirection(value: string): boolean {
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  const words = normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? [];
+  if (words.length === 0 || words.length > 6) return false;
+  if (continueCues.test(normalized)) return false;
+  if (acknowledgementCues.test(normalized)) return false;
+  if (acknowledgementPhrases.test(normalized) || continuationPhrases.test(normalized)) return false;
+  const lower = words.map(word => word.toLocaleLowerCase());
+  if (lower.length === 1 && (loneFunctionWords.has(lower[0]!) || resumeOpeners.has(lower[0]!))) return false;
+  if (continuationStarters.has(lower[0]!) || resumeOpeners.has(lower[0]!)) return false;
+  if (copulaContraction.test(normalized) || sentenceScaffolding.test(normalized)) return false;
+  return true;
+}
+
+/**
+ * Deterministic detection of speech that rejects or negates the paused answer
+ * ("No, I don't mean that…", "No no no not those…", "That's wrong"). Explicit
+ * continuation requests and acknowledgements that merely contain negation words
+ * ("no problem", "don't worry", "no no, go on") are not corrections; a
+ * negated continuation ("don't continue") is a correction.
+ */
+export function hasCorrectionIntent(value: string): boolean {
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  if (!normalized) return false;
+  if (negatedContinueCues.test(normalized)) return true;
+  if (continueCues.test(normalized)) return false;
+  if (acknowledgementCues.test(normalized)) return false;
+  return correctionCues.test(normalized);
+}
+
 export function fallbackInterruptionDecision(value: string): InterruptionIntentDecision {
   const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
   const words = normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? [];
   if (words.length === 0) return { action: "resume", intent: "non_substantive", confidence: "high", reason: "No lexical speech." };
-  if (/\b(?:continue|carry on|go on|keep going|finish (?:that|your thought))\b/iu.test(normalized)) {
+  if (continueCues.test(normalized)) {
     return { action: "resume", intent: "continue_previous", confidence: "high", reason: "Explicit request to continue." };
+  }
+  if (hasCorrectionIntent(normalized)) {
+    return { action: "accept", intent: "correction", confidence: "high", reason: "Rejects or negates the paused answer." };
   }
   if (/\b(?:stop|wait|hold on|hold off|pause|actually|instead)\b/iu.test(normalized)) {
     return { action: "accept", intent: "stop_previous", confidence: "medium", reason: "Clear takeover cue." };
   }
-  const filler = new Set(["ah", "er", "hmm", "hm", "like", "okay", "ok", "uh", "um", "yeah", "yep"]);
+  const filler = new Set(["ah", "er", "hmm", "hm", "like", "okay", "ok", "uh", "umm", "uhh", "um", "mm", "yeah", "yep"]);
   if (words.length <= 2 && words.every(word => filler.has(word.toLocaleLowerCase()))) {
     return { action: "resume", intent: "non_substantive", confidence: "high", reason: "Only a brief filler or acknowledgement." };
   }
   if (/\?/u.test(normalized) || /\b(?:(?:can|could|would|will) you|what|why|how|tell me|explain|let(?:'s| us))\b/iu.test(normalized)) {
     return { action: "accept", intent: "new_request", confidence: "medium", reason: "Explicit question or request." };
+  }
+  if (isBareRedirection(normalized)) {
+    return { action: "accept", intent: "topic_change", confidence: "medium", reason: "Bare content-bearing redirection." };
   }
   return { action: "resume", intent: "non_substantive", confidence: "low", reason: "Ambiguous speech resumes by default." };
 }

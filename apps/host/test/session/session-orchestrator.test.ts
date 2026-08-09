@@ -325,6 +325,112 @@ describe("safe session orchestrator", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "interruption.decision", payload: expect.objectContaining({ action: "resume", pausedSampleOffset: 120 }) }));
   });
 
+  it("accepts a deterministic correction even when the model says resume", async () => {    const { session, pi, speech, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "resume", intent: "continue_previous", confidence: "high", reason: "Carry on." }) } });
+    await session.handleStableFinal(turn(0, "Let us discuss reliable voice agents"));
+    const first = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    session.handleSpeechEnd();
+    await session.handleStableFinal(turn(1, "No no no not those try to think of something else"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "acceptance_pending_terminal", activeResponseId: first });
+    expect(events.filter(event => event.type === "interruption.decision").at(-1)!.payload).toMatchObject({ action: "accept", intent: "correction", confidence: "high", disposition: "accept_takeover" });
+    expect((speech as FakeSpeech).cancelled).toEqual([first]);
+    expect((speech as FakeSpeech).resumed).toEqual([]);
+    session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: "cancelled" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(session.snapshot().epoch).toBe(1);
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    expect(events.filter(event => event.type === "barge_in.confirmed")).toHaveLength(1);
+  });
+
+  it("accepts a bare redirection even when the model says resume", async () => {
+    const { session, pi, speech, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "resume", intent: "continue_previous", confidence: "high", reason: "Carry on." }) } });
+    await session.handleStableFinal(turn(0, "Let us discuss reliable voice agents"));
+    const first = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    session.handleSpeechEnd();
+    await session.handleStableFinal(turn(1, "Fantasy setting"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "acceptance_pending_terminal", activeResponseId: first });
+    expect(events.filter(event => event.type === "interruption.decision").at(-1)!.payload).toMatchObject({ action: "accept", intent: "topic_change", disposition: "accept_takeover" });
+    expect((speech as FakeSpeech).cancelled).toEqual([first]);
+    expect((speech as FakeSpeech).resumed).toEqual([]);
+    session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: "cancelled" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(session.snapshot().epoch).toBe(1);
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    // The redirect becomes the next turn's content rather than being swallowed
+    // as control-only speech.
+    expect((pi as FakePi).inputs[1]!.transcript).toBe("Fantasy setting");
+    expect(events.filter(event => event.type === "barge_in.confirmed")).toHaveLength(1);
+  });
+
+  it("accepts a bare redirection through the fallback when model classification fails", async () => {
+    const { session, pi, events } = setup({ interruptionClassifier: { decide: async () => { throw new Error("classifier unavailable"); } } });
+    await session.handleStableFinal(turn(0, "Let us discuss reliable voice agents"));
+    const first = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    session.handleSpeechEnd();
+    await session.handleStableFinal(turn(1, "Fantasy setting"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "acceptance_pending_terminal", activeResponseId: first });
+    expect(events.filter(event => event.type === "interruption.decision").at(-1)!.payload).toMatchObject({ action: "accept", intent: "topic_change", confidence: "medium", disposition: "accept_takeover" });
+    session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: "cancelled" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(session.snapshot().epoch).toBe(1);
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    expect((pi as FakePi).inputs[1]!.transcript).toBe("Fantasy setting");
+    expect(events.filter(event => event.type === "barge_in.confirmed")).toHaveLength(1);
+  });
+
+  it("still resumes an explicit continue request when model classification fails", async () => {
+    const { session, speech, events } = setup({ interruptionClassifier: { decide: async () => { throw new Error("classifier unavailable"); } } });
+    await session.handleStableFinal(turn(0));
+    const first = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 120, generatedSamples: 6400 });
+    session.handleSpeechEnd();
+    await session.handleStableFinal(turn(1, "Go on"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "playing", activeResponseId: first });
+    expect((speech as FakeSpeech).cancelled).toEqual([]);
+    expect((speech as FakeSpeech).resumed).toEqual([first]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "barge_in.rejected", payload: expect.objectContaining({ resumable: true }) }));
+  });
+
+  it("accepts a low-confidence correction verdict instead of downgrading it to resume", async () => {
+    const { session, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "accept", intent: "correction", confidence: "low", reason: "Hedged." }) } });
+    await session.handleStableFinal(turn(0, "Let us discuss reliable voice agents"));
+    const first = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    await session.handleStableFinal(turn(1, "No no no not those try to think of something else"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "acceptance_pending_terminal", activeResponseId: first });
+    expect(events.filter(event => event.type === "interruption.decision").at(-1)!.payload).toMatchObject({ action: "accept", intent: "correction", disposition: "accept_takeover" });
+  });
+
+  it("accepts a correction through the fallback when model classification fails", async () => {
+    const { session, pi, events } = setup({ interruptionClassifier: { decide: async () => { throw new Error("classifier unavailable"); } } });
+    await session.handleStableFinal(turn(0, "Let us discuss reliable voice agents"));
+    const first = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(first);
+    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    session.handleSpeechEnd();
+    await session.handleStableFinal(turn(1, "No I no I don't mean that it's a more recent one"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "acceptance_pending_terminal", activeResponseId: first });
+    expect(events.filter(event => event.type === "interruption.decision").at(-1)!.payload).toMatchObject({ action: "accept", intent: "correction", disposition: "accept_takeover" });
+    session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: "cancelled" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(session.snapshot().epoch).toBe(1);
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    expect(events.filter(event => event.type === "barge_in.confirmed")).toHaveLength(1);
+  });
+
   it("waits for the matching first terminal receipt before processing an accepted takeover exactly once", async () => {
     const { session, pi, speech, events } = setup();
     await session.handleStableFinal(turn(0));

@@ -82,7 +82,7 @@ describe('SessionController', () => {
     expect(controller.snapshot()).toMatchObject({
       dominant: 'speaking',
       echoConfirmation: false,
-      playbackNotice: 'No interruption was confirmed, so the response continued.',
+      playbackNotice: '',
     });
     writer.close();
   });

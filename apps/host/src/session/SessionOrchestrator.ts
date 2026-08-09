@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { DEFAULT_PERSONA_MARKDOWN, parsePersona, type PersonaInterpretation } from "@app/contracts";
 import { decide, POLICY_VERSION, type PolicyDecision, type PolicyInput, type Posture } from "@app/policy";
 import type { PiClient, PiEvent, PiPosture } from "../pi/PiClient.js";
-import { fallbackInterruptionDecision, hasLexicalContent, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
+import { fallbackInterruptionDecision, hasCorrectionIntent, hasLexicalContent, isBareRedirection, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
 import { ReasoningSpeechAssembler } from "./ReasoningSpeechAssembler.js";
 
 export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
@@ -559,7 +559,9 @@ export class SessionOrchestrator {
       this.resolveProvisional("rejected");
       return false;
     }
-    const accept = decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text);
+    const correction = hasCorrectionIntent(turn.text);
+    const redirection = !correction && isBareRedirection(turn.text);
+    const accept = correction || redirection || (decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text));
     const disposition = accept ? "accept_takeover" : decision.intent === "continue_previous" ? "resume_requested" : hasLexicalContent(turn.text) ? "resume_fragment" : "resume_noise";
     this.emit("interruption.decision", {
       turnId: turn.turnId,
@@ -567,7 +569,7 @@ export class SessionOrchestrator {
       playbackId: active.playbackId,
       outputEpoch: provisional.outputEpoch,
       action: accept ? "accept" : "resume",
-      intent: accept ? decision.intent : decision.intent === "continue_previous" ? "continue_previous" : "non_substantive",
+      intent: accept ? (decision.action === "accept" ? decision.intent : redirection ? "topic_change" : "correction") : decision.intent,
       confidence: decision.confidence,
       disposition,
       pausedSampleOffset: provisional.pausedSampleOffset,

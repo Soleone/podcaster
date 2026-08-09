@@ -55,4 +55,24 @@ describe('session presentation state', () => {
     partial = reduceSessionState(partial, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'reasoning_invalid' }));
     expect(partial.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', text: 'Heard part of this', playback: 'interrupted' }));
   });
+
+  it('resumes the same assistant item in place without transcript notices', () => {
+    let state = reduceSessionState(initialSessionState, event('transcript.final', { turnId: 'original', text: 'Tell me more' }));
+    state = reduceSessionState(state, event('reasoning.started', { turnId: 'original', responseId: 'r' }));
+    state = reduceSessionState(state, event('reasoning.final', { turnId: 'original', responseId: 'r', text: 'One complete answer' }));
+    state = reduceSessionState(state, event('tts.started', { responseId: 'r', playbackId: 'p' }));
+    for (let index = 0; index < 10; index += 1) {
+      const turnId = `control-${index}`;
+      state = reduceSessionState(state, event('transcript.final', { turnId, text: 'keep going' }));
+      state = reduceSessionState(state, event('barge_in.provisional', { responseId: 'r' }));
+      state = reduceSessionState(state, event('interruption.decision', { action: 'resume', responseId: 'r', turnId }));
+    }
+    expect(state.conversationItems.filter(item => item.kind === 'assistant' && item.responseId === 'r')).toEqual([
+      expect.objectContaining({ text: 'One complete answer', playback: 'playing' }),
+    ]);
+    expect(state.conversationItems.filter(item => item.kind === 'continuation')).toEqual([]);
+    expect(state.conversationItems.filter(item => item.kind === 'user' && item.status === 'control')).toHaveLength(10);
+    expect(state.playbackNotice).toBe('');
+    expect(state.announcement).toBe('Continuing the response');
+  });
 });
