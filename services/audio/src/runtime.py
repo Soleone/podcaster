@@ -248,6 +248,7 @@ class SelectedAudioRuntime:
                 self._feed_stt(state.utterance, frame.pcm16)
             if transition == "speech_end" and state.utterance is not None:
                 utterance = state.utterance
+                endpointer = state.endpointer.config
                 state.emit_json(
                     {
                         "type": "vad.speech_end",
@@ -255,6 +256,9 @@ class SelectedAudioRuntime:
                             "streamId": stream_id,
                             "utteranceId": utterance.utterance_id,
                             "captureStartSequence": utterance.capture_start_sequence,
+                            "captureEndSequence": max(
+                                0, frame.sequence - (endpointer.speech_end_frames * endpointer.frame_ms) // 20
+                            ),
                         },
                     }
                 )

@@ -12,12 +12,13 @@ function rawBytes(raw: RawData): Uint8Array {
   return new Uint8Array(raw);
 }
 type JsonObject = Record<string, unknown>;
-export interface VadEvent { streamId: string; utteranceId: string; captureStartSequence: number }
+export interface VadStartEvent { streamId: string; utteranceId: string; captureStartSequence: number }
+export interface VadEndEvent { streamId: string; utteranceId: string; captureStartSequence: number; captureEndSequence: number }
 export interface SttPartial { streamId: string; utteranceId: string; epoch: number; sequence: number; text: string; replacedCharacters: number }
 export interface SttFinal { streamId: string; utteranceId: string; epoch: number; text: string; endpointComplete: true }
 export interface AudioClientEvents {
-  speechStart?(event: VadEvent): void;
-  speechEnd?(event: VadEvent): void;
+  speechStart?(event: VadStartEvent): void;
+  speechEnd?(event: VadEndEvent): void;
   partial?(event: SttPartial): void;
   final?(event: SttFinal): void;
   failure?(code: string): void;
@@ -264,13 +265,15 @@ export class AudioClient implements SpeechOutputPort {
   private speechStart(payload: JsonObject): void {
     if (this.utterance) return this.protocolFailure();
     this.utterance = { utteranceId: String(payload.utteranceId), captureStartSequence: Number(payload.captureStartSequence), expectedPartialSequence: 0, speechEnded: false };
-    this.events.speechStart?.(payload as unknown as VadEvent);
+    this.events.speechStart?.(payload as unknown as VadStartEvent);
   }
   private speechEnd(payload: JsonObject): void {
     const utterance = this.utterance;
+    const captureEndSequence = payload.captureEndSequence;
     if (!utterance || utterance.speechEnded || payload.utteranceId !== utterance.utteranceId || payload.captureStartSequence !== utterance.captureStartSequence) return this.protocolFailure();
+    if (!Number.isSafeInteger(captureEndSequence) || Number(captureEndSequence) < 0 || Number(captureEndSequence) < utterance.captureStartSequence) return this.protocolFailure();
     utterance.speechEnded = true;
-    this.events.speechEnd?.(payload as unknown as VadEvent);
+    this.events.speechEnd?.(payload as unknown as VadEndEvent);
   }
   private sttPartial(payload: JsonObject): void {
     const utterance = this.utterance;

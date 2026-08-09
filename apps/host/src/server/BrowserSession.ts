@@ -3,7 +3,7 @@ import { CONTRACT_VALIDATORS, decodeBinaryAudioFrame } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
 import { SessionOrchestrator, type SessionEvent } from '../session/SessionOrchestrator.js';
-import { AudioClient, type SttFinal, type SttPartial, type VadEvent } from '../sidecar/AudioClient.js';
+import { AudioClient, type SttFinal, type SttPartial, type VadEndEvent, type VadStartEvent } from '../sidecar/AudioClient.js';
 import type { SidecarProcess } from '../sidecar/process.js';
 
 const MAX_PENDING_FINALS = 8;
@@ -123,15 +123,18 @@ export class BrowserSession {
     this.captureStreamId = undefined;
   }
 
-  private speechStart(value: VadEvent): void {
+  private speechStart(value: VadStartEvent): void {
     const orchestrator = this.orchestrator;
     if (!orchestrator || this.stopped) return;
     const epoch = orchestrator.handleSpeechStart();
     try { this.audio.bindEpoch(value.utteranceId, epoch); } catch { this.failure('invalid_utterance'); }
+    if (this.sessionId) this.send(event(this.sessionId, epoch, 'vad.speech_start', { streamId: value.streamId, utteranceId: value.utteranceId, captureStartSequence: value.captureStartSequence }));
   }
-  private speechEnd(_value: VadEvent): void {
-    if (!this.orchestrator || this.stopped) return;
-    this.orchestrator.handleSpeechEnd();
+  private speechEnd(value: VadEndEvent): void {
+    const orchestrator = this.orchestrator;
+    if (!orchestrator || this.stopped) return;
+    orchestrator.handleSpeechEnd();
+    if (this.sessionId) this.send(event(this.sessionId, orchestrator.snapshot().epoch, 'vad.speech_end', { streamId: value.streamId, utteranceId: value.utteranceId, captureStartSequence: value.captureStartSequence, captureEndSequence: value.captureEndSequence }));
   }
   private partial(value: SttPartial): void {
     if (!this.sessionId || !this.orchestrator || value.epoch !== this.orchestrator.snapshot().epoch) return;

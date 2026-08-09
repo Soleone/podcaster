@@ -51,7 +51,7 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: opened } }));
       } else if (message.type === 'stt.bind_epoch') {
         const boundUtterance = String(message.payload.utteranceId);
-        socket.send(JSON.stringify({ type: 'vad.speech_end', payload: { streamId: opened, utteranceId: boundUtterance, captureStartSequence: utteranceSequence - 1 } }));
+        socket.send(JSON.stringify({ type: 'vad.speech_end', payload: { streamId: opened, utteranceId: boundUtterance, captureStartSequence: utteranceSequence - 1, captureEndSequence: utteranceSequence - 1 } }));
         socket.send(JSON.stringify({ type: 'stt.partial', payload: { streamId: opened, utteranceId: boundUtterance, epoch: message.payload.epoch, sequence: 0, text: 'Could you share', replacedCharacters: 0 } }));
         socket.send(JSON.stringify({ type: 'stt.final', payload: { streamId: opened, utteranceId: boundUtterance, epoch: message.payload.epoch, text: 'Could you share what you think about this complete idea?', endpointComplete: true } }));
       } else if (message.type === 'stream.close') {
@@ -124,6 +124,11 @@ describe('browser conversation routing', () => {
     socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    const speechStart = await waitFor(messages, 'vad.speech_start');
+    const speechEnd = await waitFor(messages, 'vad.speech_end');
+    expect(speechStart.payload).toEqual({ streamId: expect.any(String), utteranceId, captureStartSequence: 0 });
+    expect(speechEnd.payload).toEqual({ streamId: expect.any(String), utteranceId, captureStartSequence: 0, captureEndSequence: 0 });
+    expect(speechStart.epoch).toBe(0);
     const final = await waitFor(messages, 'transcript.final');
     const finalPayload = final.payload as Record<string, unknown>;
     socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));

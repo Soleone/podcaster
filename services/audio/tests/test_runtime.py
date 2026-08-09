@@ -85,6 +85,12 @@ def test_vad_pre_roll_binding_partial_and_final_order() -> None:
     endpoint_sequence = 4 + EndpointerConfig().speech_end_frames
     for sequence in range(4, endpoint_sequence):
         runtime.accept_audio(stream, frame(sequence, 0))
+    speech_end = next(event for event in events if event["type"] == "vad.speech_end")
+    assert speech_end["payload"]["captureStartSequence"] == 0
+    # captureEndSequence is the inclusive last speech frame: the frame at which
+    # speech_end fires minus the configured trailing silence window.
+    assert speech_end["payload"]["captureEndSequence"] == endpoint_sequence - 1 - EndpointerConfig().speech_end_frames
+    assert speech_end["payload"]["captureEndSequence"] == 3
     wait_for(events, "stt.final")
     kinds = [event["type"] for event in events]
     assert kinds.index("vad.speech_start") < kinds.index("vad.speech_end") < kinds.index("stt.partial") < kinds.index("stt.final")

@@ -157,6 +157,37 @@ const responseA = '018f1f32-7ac1-7def-8abc-0123456789ab';
 const responseB = '018f1f32-7ac2-7def-8abc-0123456789ab';
 const playbackA = '018f1f32-7ac3-7def-8abc-0123456789ab';
 const playbackB = '018f1f32-7ac4-7def-8abc-0123456789ab';
+const streamUuid = '018f1f32-7ac5-7def-8abc-0123456789ab';
+
+describe('WebSocketSessionTransport VAD relay', () => {
+  it('forwards strict vad.speech_start and vad.speech_end events to listeners', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const seen: string[] = [];
+    transport.onEvent(event => { seen.push(event.type); });
+    emitText(socket, hostEvent('vad.speech_start', { streamId: streamUuid, utteranceId: turnUuid, captureStartSequence: 3 }));
+    emitText(socket, hostEvent('vad.speech_end', { streamId: streamUuid, utteranceId: turnUuid, captureStartSequence: 3, captureEndSequence: 41 }));
+    expectNoProtocolFailure(socket);
+    expect(seen).toEqual(['vad.speech_start', 'vad.speech_end']);
+  });
+
+  it('rejects malformed VAD payloads fail-closed', async () => {
+    const badStream = new EventSocket();
+    await wiredTransport(badStream);
+    emitText(badStream, hostEvent('vad.speech_start', { streamId: 'not-a-uuid', utteranceId: turnUuid, captureStartSequence: 0 }));
+    expect(badStream.closed).toBe(1008);
+
+    const missingEnd = new EventSocket();
+    await wiredTransport(missingEnd);
+    emitText(missingEnd, hostEvent('vad.speech_end', { streamId: streamUuid, utteranceId: turnUuid, captureStartSequence: 0 }));
+    expect(missingEnd.closed).toBe(1008);
+
+    const negativeEnd = new EventSocket();
+    await wiredTransport(negativeEnd);
+    emitText(negativeEnd, hostEvent('vad.speech_end', { streamId: streamUuid, utteranceId: turnUuid, captureStartSequence: 0, captureEndSequence: -1 }));
+    expect(negativeEnd.closed).toBe(1008);
+  });
+});
 
 function expectNoProtocolFailure(socket: EventSocket) {
   expect(socket.closed).toBeUndefined();

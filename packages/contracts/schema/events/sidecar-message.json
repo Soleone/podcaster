@@ -137,10 +137,7 @@
     {
       "properties": {
         "type": {
-          "enum": [
-            "vad.speech_start",
-            "vad.speech_end"
-          ]
+          "const": "vad.speech_start"
         },
         "payload": {
           "type": "object",
@@ -157,6 +154,44 @@
               "$ref": "#/$defs/utterance"
             },
             "captureStartSequence": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "vad.speech_end"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "utteranceId",
+            "captureStartSequence",
+            "captureEndSequence"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "utteranceId": {
+              "$ref": "#/$defs/utterance"
+            },
+            "captureStartSequence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "captureEndSequence": {
               "type": "integer",
               "minimum": 0
             }
