@@ -171,6 +171,27 @@ describe('WebSocketSessionTransport VAD relay', () => {
     expect(seen).toEqual(['vad.speech_start', 'vad.speech_end']);
   });
 
+  it('accepts and forwards a real host UUIDv4 streamId for both VAD events', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const seen: string[] = [];
+    transport.onEvent(event => { seen.push(event.type); });
+    // The real host emits a sidecar stream id from node:crypto randomUUID() (UUIDv4).
+    const v4Stream = 'b39b7a1c-2d4e-4f6a-9b8c-0d1e2f3a4b5c';
+    emitText(socket, hostEvent('vad.speech_start', { streamId: v4Stream, utteranceId: turnUuid, captureStartSequence: 3 }));
+    emitText(socket, hostEvent('vad.speech_end', { streamId: v4Stream, utteranceId: turnUuid, captureStartSequence: 3, captureEndSequence: 41 }));
+    expectNoProtocolFailure(socket);
+    expect(seen).toEqual(['vad.speech_start', 'vad.speech_end']);
+  });
+
+  it('still fails closed when a UUIDv4 streamId is combined with a malformed value elsewhere', async () => {
+    const socket = new EventSocket();
+    await wiredTransport(socket);
+    const v4Stream = 'b39b7a1c-2d4e-4f6a-9b8c-0d1e2f3a4b5c';
+    emitText(socket, hostEvent('vad.speech_start', { streamId: v4Stream, utteranceId: 'not-a-uuid', captureStartSequence: 0 }));
+    expect(socket.closed).toBe(1008);
+  });
+
   it('rejects malformed VAD payloads fail-closed', async () => {
     const badStream = new EventSocket();
     await wiredTransport(badStream);

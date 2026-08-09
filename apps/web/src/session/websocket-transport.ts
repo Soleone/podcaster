@@ -157,6 +157,9 @@ export class WebSocketSessionTransport implements SessionTransport {
 }
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// The sidecar stream id is generated host-side with node:crypto randomUUID() (UUIDv4),
+// so VAD streamIds accept any RFC 4122 UUID version (v1-v8), not just v7.
+const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function exact(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).sort().join(',') === [...keys].sort().join(','); }
 function integer(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0; }
 function isStrictHostEvent(value: unknown): value is StableEvent {
@@ -169,12 +172,13 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
     || typeof event.payload !== 'object' || event.payload === null) return false;
   const payload = event.payload as Record<string, unknown>;
   const uuid = (key: string) => typeof payload[key] === 'string' && UUID_V7.test(String(payload[key]));
+  const anyUuid = (key: string) => typeof payload[key] === 'string' && UUID_ANY.test(String(payload[key]));
   switch (event.type) {
     case 'session.state': return exact(payload, ['phase', 'personaDigest']) && typeof payload.phase === 'string' && typeof payload.personaDigest === 'string' && /^[a-f0-9]{64}$/.test(payload.personaDigest);
     case 'transcript.partial': return exact(payload, ['utteranceId', 'sequence', 'text', 'replacedCharacters']) && uuid('utteranceId') && integer(payload.sequence) && typeof payload.text === 'string' && payload.text.length <= 16_384 && integer(payload.replacedCharacters);
     case 'transcript.final': return exact(payload, ['turnId', 'text', 'endpointComplete']) && uuid('turnId') && typeof payload.text === 'string' && payload.text.length <= 16_384 && payload.endpointComplete === true;
-    case 'vad.speech_start': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence']) && uuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence);
-    case 'vad.speech_end': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence', 'captureEndSequence']) && uuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence) && integer(payload.captureEndSequence);
+    case 'vad.speech_start': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence']) && anyUuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence);
+    case 'vad.speech_end': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence', 'captureEndSequence']) && anyUuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence) && integer(payload.captureEndSequence);
     case 'policy.decision': return exact(payload, ['turnId', 'policyVersion', 'eligible', 'posture', 'reasonCodes', 'inputDigest']) && uuid('turnId') && payload.policyVersion === 'v1.experimental' && typeof payload.eligible === 'boolean' && ['riff', 'question', 'challenge', 'silence'].includes(String(payload.posture)) && Array.isArray(payload.reasonCodes) && payload.reasonCodes.length > 0 && payload.reasonCodes.every(code => typeof code === 'string' && code.length > 0) && typeof payload.inputDigest === 'string' && /^[a-f0-9]{64}$/.test(payload.inputDigest);
     case 'reasoning.started': return exact(payload, ['turnId', 'responseId', 'posture']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture));
     case 'response.failed': return exact(payload, ['turnId', 'responseId', 'reasonCode']) && uuid('turnId') && uuid('responseId') && ['reasoning_unavailable', 'reasoning_invalid', 'tts_failed'].includes(String(payload.reasonCode));
