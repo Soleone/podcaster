@@ -73,10 +73,20 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   };
   app.post('/api/readiness', async (request, reply) => {
     if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
+    // The browser owns microphone permission; the server cannot observe it, so the
+    // readiness screen reports the client's granted state instead of always showing
+    // a perpetual needs-action warning for voice input.
+    const body = (request.body ?? {}) as { microphoneGranted?: unknown };
+    const microphoneGranted = body.microphoneGranted === true;
     const [audioReady, pi] = await Promise.all([sidecarHealth(options.sidecar), (options.pi ?? unavailablePi).probe()]);
     return {
       capabilities: [
-        { id: 'voice_input', label: 'Voice input', state: 'needs_action', reason: 'Microphone permission is required before capture.', action: 'Enable microphone after acknowledging the disclosure.' },
+        {
+          id: 'voice_input', label: 'Voice input',
+          state: microphoneGranted ? 'ready' : 'needs_action',
+          reason: microphoneGranted ? 'Microphone permission is ready.' : 'Microphone permission is required before capture.',
+          action: microphoneGranted ? 'No action needed.' : 'Enable microphone after acknowledging the disclosure.',
+        },
         { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: audioReady ? 'Selected Nemotron and Kokoro runtime is ready.' : 'Selected local audio runtime is not ready.', action: audioReady ? 'No action needed.' : 'Wait for selected model startup or restart the host.' },
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
       ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi.status,

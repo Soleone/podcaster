@@ -14,6 +14,7 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const restored = useRef(false);
+  const lastReportedMic = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
     if (restored.current) return;
@@ -24,23 +25,41 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
   }, []);
 
   useEffect(() => {
-    if (!acknowledged || !capability || snapshot?.sidecar === 'ready') return;
+    if (!acknowledged || !capability) return;
+    // Poll while the sidecar is still starting; once ready, only refresh to
+    // re-report microphone-state changes so the voice-input row stops showing a
+    // stale needs-action warning after the mic is granted.
+    if (snapshot?.sidecar === 'ready' && lastReportedMic.current === microphoneReady) return;
     let cancelled = false;
     const refresh = async () => {
       try {
-        const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } });
-        if (response.ok && !cancelled) setSnapshot(await response.json() as Snapshot);
+        const response = await fetch('/api/readiness', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json', 'x-podcaster-capability': capability },
+          body: JSON.stringify({ microphoneGranted: microphoneReady }),
+        });
+        if (response.ok && !cancelled) {
+          lastReportedMic.current = microphoneReady;
+          setSnapshot(await response.json() as Snapshot);
+        }
       } catch { /* the visible snapshot remains authoritative until the next retry */ }
     };
     const timer = setInterval(() => void refresh(), 2_000);
+    void refresh();
     return () => { cancelled = true; clearInterval(timer); };
-  }, [acknowledged, capability, snapshot?.sidecar]);
+  }, [acknowledged, capability, snapshot?.sidecar, microphoneReady]);
 
-  async function restoreMicrophonePermission() {
+  async function microphoneGrantedStatus(): Promise<boolean> {
     try {
       const permission = await navigator.permissions?.query({ name: 'microphone' as PermissionName });
-      if (permission?.state === 'granted') setMicrophoneReady(true);
-    } catch { /* permission status is optional; explicit button remains available */ }
+      return permission?.state === 'granted';
+    } catch {
+      return false;
+    }
+  }
+
+  async function restoreMicrophonePermission() {
+    if (await microphoneGrantedStatus()) setMicrophoneReady(true);
   }
 
   async function checkReadiness(remember: boolean) {
@@ -49,13 +68,14 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
       const bootstrap = await fetch('/api/bootstrap', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ disclosureAcknowledged: true }) });
       if (!bootstrap.ok) throw new Error('Secure bootstrap failed. Retry from this page.');
       const boot = await bootstrap.json() as { capability: string };
-      const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': boot.capability } });
+      const granted = await microphoneGrantedStatus();
+      const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-podcaster-capability': boot.capability }, body: JSON.stringify({ microphoneGranted: granted }) });
       if (!response.ok) throw new Error('Readiness check failed. Retry from this page.');
       setCapability(boot.capability); setSnapshot(await response.json() as Snapshot); setAcknowledged(true);
       if (remember) {
         try { localStorage.setItem(DISCLOSURE_KEY, DISCLOSURE_VERSION); } catch { /* session can continue without persistence */ }
       }
-      await restoreMicrophonePermission();
+      if (granted) setMicrophoneReady(true);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Readiness failed.'); }
     finally { setLoading(false); }
   }
