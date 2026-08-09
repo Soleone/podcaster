@@ -306,7 +306,7 @@ async function main() {
       playbackBinaryFrames,
       failures: failures.map((e) => ({ type: e.type, payload: e.payload })),
       durationMs: stamp(started),
-      timeline: log.filter((e) => ['transcript.final', 'policy.decision', 'reasoning.started', 'reasoning.final', 'tts.started', 'tts.ended', 'barge_in.confirmed', 'playback.completed', 'turn.0.outcome', 'replacement.observed', 'response.failed', 'failure'].includes(e.event))
+      timeline: log.filter((e) => ['transcript.partial', 'transcript.final', 'policy.decision', 'reasoning.started', 'reasoning.final', 'tts.started', 'tts.ended', 'barge_in.confirmed', 'playback.completed', 'turn.0.outcome', 'replacement.observed', 'response.failed', 'failure'].includes(e.event))
         .map((e) => ({ t: e.t, event: e.event, epoch: e.epoch, payload: e.payload })),
     };
     console.log(JSON.stringify(summary, null, 2));

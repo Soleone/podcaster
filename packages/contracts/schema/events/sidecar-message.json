@@ -55,7 +55,7 @@
               "const": "nemotron-3.5-transformers-fp32-320ms-paced-v1"
             },
             "tts": {
-              "const": "kokoro-82m-onnx-fp32-af-heart-cpu-v1"
+              "const": "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
             }
           },
           "additionalProperties": false

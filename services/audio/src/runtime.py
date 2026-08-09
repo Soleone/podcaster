@@ -25,12 +25,12 @@ from .vad.endpointer import DeterministicEndpointer, EndpointerConfig
 
 ROOT = Path(__file__).resolve().parents[3]
 STT_CONFIG = ROOT / "benchmarks/configs/stt/nemotron-320ms.yaml"
-TTS_CONFIG = ROOT / "benchmarks/configs/tts/kokoro.yaml"
+TTS_CONFIG = ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml"
 MODEL_MANIFEST = ROOT / "docs/model-manifest.json"
 STT_CONFIG_ID = "nemotron-3.5-transformers-fp32-320ms-paced-v1"
 STT_CONFIG_SHA256 = "140151ebb3d74b09a25fd0ebb4016aee2392f93f9410d87f015378b548b8660e"
-TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cpu-v1"
-TTS_CONFIG_SHA256 = "8ff4fe605bf40c92e7a28a2e7609293b1b82db6800c4402e98551d21a35637e4"
+TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
+TTS_CONFIG_SHA256 = "64de64feba08bcb97efc4e148c30e342a800dae847768929f4c93d6c161af9a5"
 CAPTURE_BYTES = 320 * 2
 STT_CHUNK_BYTES = 5_120 * 2
 MAX_STT_CHUNKS = 64

@@ -23,7 +23,7 @@ async function fakeSidecar(options: { gap?: boolean; cancelRace?: boolean; cance
     let ttsCount = 0;
     expect(request.headers.authorization).toBe('Bearer secret');
     expect(request.headers.origin).toBeUndefined();
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cpu-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
     socket.on('message', raw => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
       const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
@@ -86,7 +86,7 @@ async function fakeVadSidecar() {
   let sidecarSocket: WebSocket | undefined;
   wss.on('connection', socket => {
     sidecarSocket = socket;
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cpu-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
     socket.on('message', raw => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
       const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };

@@ -35,7 +35,7 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
     let utteranceSequence = 0;
     let activeUtterance = utteranceId;
     let progressiveStarted = false;
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cpu-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
     socket.on('message', (raw, binary) => {
       if (binary) {
         activeUtterance = options.multiUtterance

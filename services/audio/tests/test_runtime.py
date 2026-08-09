@@ -222,11 +222,11 @@ def test_selected_kokoro_config_manifest_and_files_are_verified(tmp_path: Path) 
         "modelId": "hexgrad/Kokoro-82M", "revision": "model-revision",
         "onnxReleaseRevision": "onnx-revision", "runtimeRevision": "runtime-revision",
         "runtime": "runtime-contract", "voice": "af_heart",
-        "provider": "CPUExecutionProvider", "precision": "float32",
+        "provider": "CUDAExecutionProvider", "precision": "float32",
         "modelSha256": model_digest, "voicesSha256": voices_digest,
     }
     config = {
-        "schemaVersion": 1, "id": "kokoro-82m-onnx-fp32-af-heart-cpu-v1",
+        "schemaVersion": 1, "id": "kokoro-82m-onnx-fp32-af-heart-cuda-v1",
         "candidate": candidate, "modelPath": "models/kokoro/kokoro.onnx",
         "voicesPath": "models/kokoro/voices.bin", "language": "en-us",
         "nativeSampleRate": 24_000, "comparisonSampleRate": 24_000,
@@ -261,7 +261,7 @@ def test_selected_kokoro_config_manifest_and_files_are_verified(tmp_path: Path) 
     assert verified["voicesPath"] == str(voices.resolve())
     for field, invalid, message in (
         ("voice", "wrong", "identity or digest"),
-        ("provider", "CUDAExecutionProvider", "identity or digest"),
+        ("provider", "CPUExecutionProvider", "identity or digest"),
         ("precision", "float16", "identity or digest"),
         ("language", "fr-fr", "language or sample rate"),
         ("nativeSampleRate", 16_000, "language or sample rate"),

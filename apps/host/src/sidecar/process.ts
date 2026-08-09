@@ -52,6 +52,6 @@ export async function sidecarHealth(sidecar: SidecarProcess): Promise<boolean> {
     const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown };
     return value.status === 'ready'
       && value.stt === 'nemotron-3.5-transformers-fp32-320ms-paced-v1'
-      && value.tts === 'kokoro-82m-onnx-fp32-af-heart-cpu-v1';
+      && value.tts === 'kokoro-82m-onnx-fp32-af-heart-cuda-v1';
   } catch { return false; }
 }
