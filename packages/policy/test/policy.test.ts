@@ -23,7 +23,6 @@ function input(overrides: Partial<PolicyInput> = {}): PolicyInput {
     stableUserTurnCount: 3,
     recentDecisions: [],
     eligibleTurnsSinceChallenge: 3,
-    interruptionCooldownActive: false,
     ...overrides,
   };
 }
@@ -41,7 +40,6 @@ describe("deterministic posture policy", () => {
     ["empty", { transcript: "" }, "empty"],
     ["short", { transcript: "only three words" }, "too_short"],
     ["unfinished", { endpointComplete: false }, "unfinished"],
-    ["cooldown", { interruptionCooldownActive: true }, "interruption_cooldown"],
     ["invitation", { persona: { ...persona, invitation_only: true } }, "invitation_required"],
   ] as const)("silences %s input", (_name, override, reason) => {
     expect(decide(input(override))).toMatchObject({ eligible: false, posture: "silence", reasonCodes: [reason] });
@@ -57,21 +55,18 @@ describe("deterministic posture policy", () => {
     }
   });
 
-  it("enforces two spoken responses in the current five eligible turns", () => {
-    const recentDecisions = [
-      { turnId: "1", eligible: true, posture: "riff" as const },
-      { turnId: "2", eligible: true, posture: "silence" as const },
-      { turnId: "3", eligible: true, posture: "question" as const },
-    ];
-    expect(decide(input({ recentDecisions }))).toMatchObject({ eligible: true, posture: "silence", reasonCodes: ["response_budget_exhausted"] });
-    const oldestResponseFallsOut = [
-      { turnId: "1", eligible: true, posture: "riff" as const },
-      { turnId: "2", eligible: true, posture: "question" as const },
-      { turnId: "3", eligible: true, posture: "silence" as const },
-      { turnId: "4", eligible: true, posture: "silence" as const },
-      { turnId: "5", eligible: true, posture: "silence" as const },
-    ];
-    expect(decide(input({ recentDecisions: oldestResponseFallsOut })).posture).not.toBe("silence");
+  it("keeps responding throughout a long eligible conversation", () => {
+    const recentDecisions = Array.from({ length: 20 }, (_, index) => ({
+      turnId: String(index),
+      eligible: true,
+      posture: index % 2 === 0 ? "riff" as const : "question" as const,
+    }));
+    expect(decide(input({ recentDecisions })).posture).not.toBe("silence");
+  });
+
+  it("lets an explicit short invitation hand the turn to the agent", () => {
+    expect(decide(input({ transcript: "Hello, please respond" })).posture).not.toBe("silence");
+    expect(decide(input({ transcript: "Please respond" })).posture).not.toBe("silence");
   });
 
   it("never selects challenge until every challenge guard passes", () => {

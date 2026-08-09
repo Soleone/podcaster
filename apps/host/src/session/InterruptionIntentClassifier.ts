@@ -58,3 +58,23 @@ export class PiInterruptionIntentClassifier implements InterruptionIntentClassif
 export function hasLexicalContent(value: string): boolean {
   return /[\p{L}\p{N}]/u.test(value.normalize("NFKC"));
 }
+
+export function fallbackInterruptionDecision(value: string): InterruptionIntentDecision {
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  const words = normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? [];
+  if (words.length === 0) return { action: "resume", intent: "non_substantive", confidence: "high", reason: "No lexical speech." };
+  if (/\b(?:continue|carry on|go on|keep going|finish (?:that|your thought))\b/iu.test(normalized)) {
+    return { action: "resume", intent: "continue_previous", confidence: "high", reason: "Explicit request to continue." };
+  }
+  if (/\b(?:stop|wait|hold on|hold off|pause|actually|instead)\b/iu.test(normalized)) {
+    return { action: "accept", intent: "stop_previous", confidence: "medium", reason: "Clear takeover cue." };
+  }
+  const filler = new Set(["ah", "er", "hmm", "hm", "like", "okay", "ok", "uh", "um", "yeah", "yep"]);
+  if (words.length <= 2 && words.every(word => filler.has(word.toLocaleLowerCase()))) {
+    return { action: "resume", intent: "non_substantive", confidence: "high", reason: "Only a brief filler or acknowledgement." };
+  }
+  if (/\?/u.test(normalized) || /\b(?:(?:can|could|would|will) you|what|why|how|tell me|explain|let(?:'s| us))\b/iu.test(normalized)) {
+    return { action: "accept", intent: "new_request", confidence: "medium", reason: "Explicit question or request." };
+  }
+  return { action: "resume", intent: "non_substantive", confidence: "low", reason: "Ambiguous speech resumes by default." };
+}

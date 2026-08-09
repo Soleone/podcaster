@@ -31,15 +31,37 @@ async function fakeSidecar(options: { gap?: boolean; cancelRace?: boolean; cance
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
         if (options.unexpectedPartial) socket.send(JSON.stringify({ type: 'stt.partial', payload: { streamId: message.payload.streamId, utteranceId: streamId, epoch: 0, sequence: 0, text: 'invalid', replacedCharacters: 0 } }));
       }
-      if (message.type === 'tts.request') {
+      if (message.type === 'tts.request' || message.type === 'tts.open') {
+        const requestIndex = ttsCount;
+        // Only increment for tts.request (one-shot); tts.open waits for commit
+        const responseId = message.payload.responseId as string;
+        const epoch = message.payload.epoch as number;
+        const outputStreamId = 55 + requestIndex;
+        const currentPlaybackId = requestIndex === 0 ? playbackId : playbackId2;
+
+        if (message.type === 'tts.request') {
+          ttsCount++;
+          // Legacy one-shot: emit immediately
+          socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, outputStreamId, sampleRate: 24000 } }));
+          socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
+          if (!options.cancelRace || requestIndex > 0) setTimeout(() => {
+            socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: options.gap && requestIndex === 0 ? 2 : 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
+            socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, generatedSamples: 960 } }));
+          }, 20);
+        }
+      }
+      if (message.type === 'tts.commit') {
+        // Progressive stream: commit triggers the full synthesis
         const requestIndex = ttsCount++;
         const outputStreamId = 55 + requestIndex;
         const currentPlaybackId = requestIndex === 0 ? playbackId : playbackId2;
-        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId: currentPlaybackId, outputStreamId, sampleRate: 24000 } }));
+        const responseId = message.payload.responseId as string;
+        const epoch = message.payload.epoch as number;
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, outputStreamId, sampleRate: 24000 } }));
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
         if (!options.cancelRace || requestIndex > 0) setTimeout(() => {
           socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: options.gap && requestIndex === 0 ? 2 : 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
-          socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: message.payload.streamId, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId: currentPlaybackId, generatedSamples: 960 } }));
+          socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, generatedSamples: 960 } }));
         }, 20);
       }
       if (message.type === 'tts.cancel' && options.cancelRace) {

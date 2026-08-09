@@ -10,7 +10,7 @@ export type BenchmarkSummaryDistribution = { "p50": number; "p95": number; "p99"
 export type BenchmarkSummary = { "counts": { "total": number; "passed": number; "failed": number; "cancelled": number; }; "speechStartToFirstPartialMs": BenchmarkSummaryDistribution | null; "endpointToFinalMs": BenchmarkSummaryDistribution | null; "ttsTimeToFirstAudioMs": BenchmarkSummaryDistribution | null; "rtf": BenchmarkSummaryDistribution | null; "wer": number | null; "cer": number | null; "partialRevisionCount": number; "partialChurnCharacters": number; "underruns": number; "droppedFrames": number; "peakVramBytes": number | null; "steadyVramBytes": number | null; "failures": Array<{ "sourceId": string; "code": string; "stage": string; "message": string; }>; "soak": { "durationSeconds": number; "passed": boolean; "severeFailures": number; "underruns": number; "droppedFrames": number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "deadlineLatenessP95Ms"?: number; "deadlineLatenessMaxMs"?: number; "timingConformance"?: boolean; "resetCount"?: number; "workerLeaks"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; }; "totalAudioDurationSeconds"?: number; "totalSamples"?: number; "droppedOutputChunks"?: number; "peakRssBytes"?: number | null; "synthesisWindowWholeProcessPeakRssBytes"?: number | null; };
 export type BargeInEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out"; "monotonicMs": number; "payload": { "responseId": string; "outputEpoch": number; "resumable": boolean; }; };
 export type BrowserCommand = ({ "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; }) & ({ "type": "session.start"; "payload": { "sessionSeed": string; "reasoningMode": "full" | "transcript_only"; }; } | { "type": "audio.start"; "payload": { "streamId": number; "sampleRate": 16000; "channels": 1; "frameSamples": 320; }; } | { "type": "audio.stop"; "payload": { "streamId": number; }; } | { "type": "turn.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "barge_in.confirm" | "barge_in.reject"; "payload": { "responseId": string; "outputEpoch": number; }; } | { "type": "turn.persisted"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; }; } | { "type": "turn.persistence_failed"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; "reasonCode": "quota" | "unavailable" | "aborted"; }; } | { "type": "session.stop"; "payload": { "reason": "user" | "expired" | "disconnect"; }; } | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent);
-export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.paused" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "interruption.decision" | "reasoning.delta" | "reasoning.final" | "tts.started" | "tts.ended" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
+export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.paused" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "interruption.decision" | "reasoning.started" | "reasoning.delta" | "reasoning.final" | "tts.started" | "tts.ended" | "response.failed" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
 export type FailureEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "failure"; "monotonicMs": number; "payload": { "code": string; "detail": string; "correctiveAction": string; "recoverable": boolean; }; };
 export type InterruptionDecisionEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "interruption.decision"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "playbackId": string; "outputEpoch": number; "action": "resume" | "accept"; "intent": "non_substantive" | "continue_previous" | "new_request" | "correction" | "topic_change" | "stop_previous"; "confidence": "low" | "medium" | "high"; "disposition": "resume_noise" | "resume_fragment" | "resume_requested" | "accept_takeover"; "pausedSampleOffset": number; }; };
 export type PlaybackPausedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.paused"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "outputEpoch": number; "pausedSampleOffset": number; "generatedSamples": number; }; };
@@ -18,11 +18,13 @@ export type PlaybackProgressEvent = { "protocolVersion": 1; "sessionId": string;
 export type PlaybackStoppedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.stopped"; "monotonicMs": number; "payload": { "playbackId": string; "cancelledEpoch": number; "finalPlayedSampleOffset": number; "reason": "completed" | "cancelled" | "stopped" | "failed"; }; };
 export type PolicyDecisionEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "policy.decision"; "monotonicMs": number; "payload": { "turnId": string; "policyVersion": "v1.experimental"; "eligible": boolean; "posture": "riff" | "question" | "challenge" | "silence"; "reasonCodes": Array<string>; "inputDigest": string; }; };
 export type ReasoningFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "reasoning.final"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "posture": "riff" | "question" | "challenge"; "text": string; }; };
+export type ReasoningStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "reasoning.started"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "posture": "riff" | "question" | "challenge"; }; };
+export type ResponseFailedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "response.failed"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "reasonCode": "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"; }; };
 export type SessionStateEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.state"; "monotonicMs": number; "payload": { "phase": "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "stopped"; "personaDigest": string; }; };
 export type SidecarMessageStream = string;
 export type SidecarMessageUtterance = string;
 export type SidecarMessageResponse = string;
-export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": "kokoro-82m-onnx-fp32-af-heart-cpu-v1"; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; }; } | { "type": "vad.speech_start" | "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; };
+export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": "kokoro-82m-onnx-fp32-af-heart-cpu-v1"; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; }; } | { "type": "vad.speech_start" | "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; }; } | { "type": "tts.open"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; }; } | { "type": "tts.append"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "sequence": number; "text": string; }; } | { "type": "tts.commit"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "nextSequence": number; "textSha256": string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; };
 export type TranscriptFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.final"; "monotonicMs": number; "payload": { "turnId": string; "text": string; "endpointComplete": true; }; };
 export type TranscriptPartialEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.partial"; "monotonicMs": number; "payload": { "utteranceId": string; "sequence": number; "text": string; "replacedCharacters": number; }; };
 export type TtsEndedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.ended"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "generatedSamples": number; }; };
@@ -55,10 +57,12 @@ export const CORE_EVENT_TYPES = [
   "barge_in.rejected",
   "barge_in.timed_out",
   "interruption.decision",
+  "reasoning.started",
   "reasoning.delta",
   "reasoning.final",
   "tts.started",
   "tts.ended",
+  "response.failed",
   "failure",
   "stream.open",
   "stream.opened",
@@ -1782,10 +1786,12 @@ export const CONTRACT_SCHEMAS = {
               "barge_in.rejected",
               "barge_in.timed_out",
               "interruption.decision",
+              "reasoning.started",
               "reasoning.delta",
               "reasoning.final",
               "tts.started",
               "tts.ended",
+              "response.failed",
               "failure",
               "stream.open",
               "stream.opened",
@@ -2225,6 +2231,102 @@ export const CONTRACT_SCHEMAS = {
       }
     ]
   },
+  "events/reasoning-started.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/reasoning-started.json",
+    "title": "ReasoningStartedEvent",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "const": "reasoning.started"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "turnId",
+              "responseId",
+              "posture"
+            ],
+            "properties": {
+              "turnId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "responseId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "posture": {
+                "enum": [
+                  "riff",
+                  "question",
+                  "challenge"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
+  "events/response-failed.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/response-failed.json",
+    "title": "ResponseFailedEvent",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "const": "response.failed"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "turnId",
+              "responseId",
+              "reasonCode"
+            ],
+            "properties": {
+              "turnId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "responseId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "reasonCode": {
+                "enum": [
+                  "reasoning_unavailable",
+                  "reasoning_invalid",
+                  "tts_failed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
   "events/session-state.json": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://podcaster.local/schema/events/session-state.json",
@@ -2597,6 +2699,126 @@ export const CONTRACT_SCHEMAS = {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 4000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.open"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.append"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch",
+              "sequence",
+              "text"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sequence": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "tts.commit"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "responseId",
+              "epoch",
+              "nextSequence",
+              "textSha256"
+            ],
+            "properties": {
+              "streamId": {
+                "$ref": "#/$defs/stream"
+              },
+              "responseId": {
+                "$ref": "#/$defs/response"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "nextSequence": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "textSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
               }
             },
             "additionalProperties": false
@@ -3214,4 +3436,4 @@ export const CONTRACT_SCHEMAS = {
   }
 } as const;
 export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;
-export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningFinalEvent" | "SessionStateEvent" | "SidecarMessage" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope";
+export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningFinalEvent" | "ReasoningStartedEvent" | "ResponseFailedEvent" | "SessionStateEvent" | "SidecarMessage" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope";

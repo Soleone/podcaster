@@ -200,6 +200,67 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('stops only the matching playback with reason failed on response.failed', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'riff' }));
+    await transport.emit(event('session', 0, 'reasoning.final', { turnId: 'turn', responseId: 'response', posture: 'riff', text: 'Heard part of this answer' }));
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'response.failed', { turnId: 'turn', responseId: 'response', reasonCode: 'tts_failed' }));
+    expect(players[0]!.stops).toEqual(['failed']);
+    expect(transport.terminalReceipts.get('0:playback')).toMatchObject({ finalPlayedSampleOffset: 0, reason: 'failed' });
+    expect(controller.snapshot().conversationItems).toContainEqual(expect.objectContaining({ responseId: 'response', text: 'Heard part of this answer', playback: 'interrupted' }));
+    writer.close();
+  });
+
+  it('never stops a newer or mismatched playback on response.failed', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'response.failed', { turnId: 'turn', responseId: 'other', reasonCode: 'tts_failed' }));
+    expect(players[0]!.stops).toEqual([]);
+    expect(transport.terminalReceipts.size).toBe(0);
+    await transport.emit(event('session', 1, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 1, 'response.failed', { turnId: 'turn', responseId: 'response', reasonCode: 'tts_failed' }));
+    expect(players[1]!.stops).toEqual(['failed']);
+    expect(players[0]!.stops).toEqual([]);
+    writer.close();
+  });
+
+  it('performs no playback operation when playback never started', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'response.failed', { turnId: 'turn', responseId: 'response', reasonCode: 'reasoning_invalid' }));
+    expect(players).toHaveLength(0);
+    expect(transport.terminalReceipts.size).toBe(0);
+    expect(controller.snapshot().conversationItems).toEqual([]);
+    writer.close();
+  });
+
+  it('stops a superseded playback when a new response starts before the old one terminalized', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'reasoning.started', { turnId: 'turn-a', responseId: 'response-a', posture: 'riff' }));
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response-a', playbackId: 'playback-a', sampleRate: 24000 }));
+    await transport.emit(event('session', 1, 'reasoning.started', { turnId: 'turn-b', responseId: 'response-b', posture: 'riff' }));
+    expect(players[0]!.stops).toEqual(['cancelled']);
+    expect(transport.terminalReceipts.get('0:playback-a')).toMatchObject({ reason: 'cancelled' });
+    // A completed playback is already terminal and must not be double-stopped.
+    await transport.emit(event('session', 1, 'tts.started', { responseId: 'response-b', playbackId: 'playback-b', sampleRate: 24000 }));
+    await controller.reportPlaybackTerminal({ playbackId: 'playback-b', cancelledEpoch: 1, finalPlayedSampleOffset: 0, reason: 'completed' });
+    await transport.emit(event('session', 2, 'reasoning.started', { turnId: 'turn-c', responseId: 'response-c', posture: 'riff' }));
+    expect(players[1]!.stops).toEqual([]);
+    writer.close();
+  });
+
+  it('clears provisional interruption state on response.failed without resuming', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    expect(players[0]!.pause).toHaveBeenCalledOnce();
+    await transport.emit(event('session', 0, 'response.failed', { turnId: 'turn', responseId: 'response', reasonCode: 'tts_failed' }));
+    expect(players[0]!.stops).toEqual(['failed']);
+    expect(players[0]!.resume).not.toHaveBeenCalled();
+    expect(controller.snapshot().echoConfirmation).toBe(false);
+    writer.close();
+  });
+
   it('reaches a clear stopped state and surfaces end-session persistence failure', async () => {
     const successful = await setup();
     await successful.controller.stop();

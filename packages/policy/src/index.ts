@@ -3,7 +3,7 @@ import type { PersonaInterpretation } from "@app/contracts";
 
 export const POLICY_VERSION = "v1.experimental" as const;
 export type Posture = "riff" | "question" | "challenge" | "silence";
-export type PolicyReasonCode = "empty" | "too_short" | "unfinished" | "interruption_cooldown" | "invitation_required" | "response_budget_exhausted" | "selected";
+export type PolicyReasonCode = "empty" | "too_short" | "unfinished" | "invitation_required" | "response_budget_exhausted" | "selected";
 
 export interface PriorPolicyDecision { turnId: string; eligible: boolean; posture: Posture }
 export interface PolicyInput {
@@ -17,7 +17,6 @@ export interface PolicyInput {
   stableUserTurnCount: number;
   recentDecisions: readonly PriorPolicyDecision[];
   eligibleTurnsSinceChallenge: number;
-  interruptionCooldownActive: boolean;
 }
 export interface PolicyDecision {
   policyVersion: typeof POLICY_VERSION;
@@ -64,13 +63,10 @@ export function decide(input: PolicyInput): PolicyDecision {
   const inputDigest = digest(canonicalize(normalized));
   const silence = (reason: PolicyReasonCode, eligible = false): PolicyDecision => ({ policyVersion: POLICY_VERSION, eligible, posture: "silence", reasonCodes: [reason], inputDigest });
   if (!transcript) return silence("empty");
-  if (lexicalWords(transcript).length < 4) return silence("too_short");
   if (!input.endpointComplete) return silence("unfinished");
-  if (input.interruptionCooldownActive) return silence("interruption_cooldown");
-  if (input.persona.invitation_only && !explicitInvitation(transcript)) return silence("invitation_required");
-
-  const recentEligible = input.recentDecisions.filter(item => item.eligible).slice(-4);
-  if (recentEligible.filter(item => item.posture !== "silence").length >= 2) return silence("response_budget_exhausted", true);
+  const invited = explicitInvitation(transcript);
+  if (lexicalWords(transcript).length < 4 && !invited) return silence("too_short");
+  if (input.persona.invitation_only && !invited) return silence("invitation_required");
 
   const challengeAllowed = input.persona.challenge_enabled && input.stableUserTurnCount >= 2 && input.eligibleTurnsSinceChallenge >= 3;
   const weighted: Array<{ posture: Exclude<Posture, "silence">; weight: number }> = [

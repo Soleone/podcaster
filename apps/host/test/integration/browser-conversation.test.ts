@@ -3,7 +3,7 @@ import { encodeBinaryAudioFrame } from '@app/contracts';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { PiClient } from '../../src/pi/PiClient.js';
+import type { PiClient, PiRequestInput } from '../../src/pi/PiClient.js';
 import { buildApp } from '../../src/server/app.js';
 import type { SidecarProcess } from '../../src/sidecar/process.js';
 
@@ -18,13 +18,13 @@ function command(type: string, payload: Record<string, unknown>, epoch = 0) {
 }
 const pi: PiClient = {
   async probe() { return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' }; },
-  async *request() { yield { type: 'final' as const, text: 'A concise response.' }; },
+  async *request() { yield { type: 'delta' as const, text: 'A concise response.' }; yield { type: 'final' as const, text: 'A concise response.' }; },
   async shutdown() {},
 };
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
-async function fakeAudio(options: { tts?: boolean; multiUtterance?: boolean; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
+async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; multiUtterance?: boolean; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
   const server = createServer();
   const wss = new WebSocketServer({ server });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -34,6 +34,7 @@ async function fakeAudio(options: { tts?: boolean; multiUtterance?: boolean; onS
     let opened = '';
     let utteranceSequence = 0;
     let activeUtterance = utteranceId;
+    let progressiveStarted = false;
     socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cpu-v1' } }));
     socket.on('message', (raw, binary) => {
       if (binary) {
@@ -55,7 +56,18 @@ async function fakeAudio(options: { tts?: boolean; multiUtterance?: boolean; onS
         socket.send(JSON.stringify({ type: 'stt.final', payload: { streamId: opened, utteranceId: boundUtterance, epoch: message.payload.epoch, text: 'Could you share what you think about this complete idea?', endpointComplete: true } }));
       } else if (message.type === 'stream.close') {
         options.onStreamClose?.();
-      } else if (message.type === 'tts.request' && options.tts) {
+      } else if (message.type === 'tts.open' || message.type === 'tts.append') {
+        if (options.progressiveTts && message.type === 'tts.append' && !progressiveStarted) {
+          // Progressive synthesis: first append starts playback immediately, before commit/final.
+          progressiveStarted = true;
+          socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, outputStreamId: 55, sampleRate: 24000 } }));
+          socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
+        }
+        // Progressive TTS: open/appends are acked silently, commit triggers the remainder
+      } else if (message.type === 'tts.commit' && options.progressiveTts) {
+        socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 1, monotonicUs: 3n, pcm16: new Int16Array(480) }, 64 * 1024));
+        socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, generatedSamples: 960 } }));
+      } else if ((message.type === 'tts.request' || message.type === 'tts.commit') && options.tts) {
         socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, outputStreamId: 55, sampleRate: 24000 } }));
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
         setTimeout(() => {
@@ -199,6 +211,74 @@ describe('browser conversation routing', () => {
     await new Promise(resolve => setTimeout(resolve, 20));
     socket.close();
     await expect(sidecarClosed).resolves.toBeUndefined();
+  });
+
+  it('proves deterministic progressive speech: first-sentence PCM reaches the browser while Pi final is blocked', async () => {
+    const releases: Array<() => void> = [];
+    const piInputs: Array<{ boundedContext: string }> = [];
+    const controlledPi: PiClient = {
+      async probe() { return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' }; },
+      async *request(input: PiRequestInput, _signal: AbortSignal) {
+        piInputs.push({ boundedContext: input.boundedContext });
+        yield { type: 'delta' as const, text: 'First sentence. S' };
+        await new Promise<void>(resolve => releases.push(resolve));
+        yield { type: 'delta' as const, text: 'econd sentence.' };
+        yield { type: 'final' as const, text: 'First sentence. Second sentence.' };
+      },
+      async shutdown() {},
+    };
+    const sidecar = await fakeAudio({ progressiveTts: true, multiUtterance: true });
+    const app = await buildApp({ sidecar, pi: controlledPi });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    const binary: Buffer[] = [];
+    socket.on('message', (raw, isBinary) => { if (isBinary) binary.push(Buffer.from(raw as Buffer)); else messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    const final = await waitFor(messages, 'transcript.final');
+    const finalPayload = final.payload as Record<string, unknown>;
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));
+
+    // Pi final is blocked after "First sentence. S". Prove early identity, early
+    // tts.started, and at least one browser-bound PCM frame with no reasoning.final.
+    await waitFor(messages, 'reasoning.started');
+    await waitFor(messages, 'tts.started');
+    await waitForWhere(messages, () => binary.length >= 1);
+    expect(messages.some(message => message.type === 'reasoning.final')).toBe(false);
+    expect(messages.some(message => message.type === 'tts.ended')).toBe(false);
+    const reasoningStarted = messages.find(message => message.type === 'reasoning.started')!;
+    const ttsStarted = messages.find(message => message.type === 'tts.started')!;
+    expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe((ttsStarted.payload as Record<string, unknown>).responseId);
+    expect((ttsStarted.payload as Record<string, unknown>).playbackId).toBe(playbackId);
+    expect(messages.filter(message => message.type === 'reasoning.started')).toHaveLength(1);
+    expect(messages.filter(message => message.type === 'tts.started')).toHaveLength(1);
+
+    // Release the blocked final.
+    releases[0]!();
+    await waitFor(messages, 'reasoning.final');
+    await waitFor(messages, 'tts.ended');
+    await waitForWhere(messages, () => binary.length === 2);
+    const ended = messages.find(message => message.type === 'tts.ended')!;
+    expect((ended.payload as Record<string, unknown>).generatedSamples).toBe(960);
+    expect((ended.payload as Record<string, unknown>).playbackId).toBe(playbackId);
+    expect((messages.find(message => message.type === 'reasoning.final')!.payload as Record<string, unknown>).text).toBe('First sentence. Second sentence.');
+
+    // Authoritative browser terminal receipt commits assistant context for the next turn.
+    socket.send(JSON.stringify(command('playback.progress', { playbackId, outputEpoch: 0, playedSampleOffset: 960, generatedSamples: 960 })));
+    socket.send(JSON.stringify(command('playback.stopped', { playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 960, reason: 'completed' })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 1, monotonicUs: 4n, pcm16: new Int16Array(320) }, 64 * 1024));
+    await waitForWhere(messages, () => messages.filter(message => message.type === 'transcript.final').length >= 2);
+    const secondFinal = messages.filter(message => message.type === 'transcript.final')[1]!;
+    const secondPayload = secondFinal.payload as Record<string, unknown>;
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: secondPayload.turnId, finalEventId: secondFinal.eventId, persistedEpoch: secondFinal.epoch })));
+    await waitForWhere(messages, () => messages.filter(message => message.type === 'reasoning.started').length >= 2);
+    expect(piInputs[1]!.boundedContext).toContain('First sentence. Second sentence.');
+    socket.close();
   });
 
   it('holds a stable final until the exact durable acknowledgement', async () => {

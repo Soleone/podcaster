@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/response-failed.json",
+  "title": "ResponseFailedEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    { "type": "object", "required": ["type", "payload"], "properties": {
+      "type": { "const": "response.failed" },
+      "payload": { "type": "object", "required": ["turnId", "responseId", "reasonCode"], "properties": {
+        "turnId": { "type": "string", "format": "uuid" },
+        "responseId": { "type": "string", "format": "uuid" },
+        "reasonCode": { "enum": ["reasoning_unavailable", "reasoning_invalid", "tts_failed"] }
+      }, "additionalProperties": false }
+    } }
+  ]
+}

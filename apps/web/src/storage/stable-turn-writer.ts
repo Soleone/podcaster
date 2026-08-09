@@ -106,10 +106,19 @@ export class StableTurnWriter {
         if (typeof event.payload.eligible === 'boolean') turn.eligible = event.payload.eligible;
         const reasonCodes = Array.isArray(event.payload.reasonCodes) ? event.payload.reasonCodes : [];
         if (typeof reasonCodes[0] === 'string') turn.policyReason = reasonCodes[0];
+      } else if (event.type === 'reasoning.started' && turn && responseId) {
+        // Associate the response identity with the user turn before any early
+        // tts.started needs to reconcile playback accounting against it.
+        turn.responseId = responseId;
       } else if (event.type === 'reasoning.final' && turn) {
         if (responseId) turn.responseId = responseId;
         const text = stringValue(event.payload.text);
         if (text !== undefined) turn.assistantText = text;
+      } else if (event.type === 'response.failed' && turn) {
+        // Scope the failure to the matching turn instead of session-level storage.
+        const code = stringValue(event.payload.reasonCode) ?? 'response_failed';
+        if (!turn.failures.includes(code)) turn.failures.push(code);
+        turn.interrupted = true;
       } else if (event.type === 'tts.started' && turn && playbackId) {
         turn.playbackId = playbackId;
         turn.outputEpoch = event.epoch;

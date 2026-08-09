@@ -71,6 +71,26 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  it('reconciles early tts.started through reasoning.started identity and upserts final without losing playback', async () => {
+    const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
+    await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));
+    await writer.apply(event('s', 'reasoning.started', { turnId: 't', responseId: 'r', posture: 'question' }));
+    await writer.apply(event('s', 'tts.started', { responseId: 'r', playbackId: 'p', sampleRate: 24000 }));
+    await writer.apply(event('s', 'tts.ended', { responseId: 'r', playbackId: 'p', generatedSamples: 960 }));
+    await writer.apply(event('s', 'reasoning.final', { turnId: 't', responseId: 'r', posture: 'question', text: 'answer text' }));
+    expect(await writer.getTurns('s')).toMatchObject([{ turnId: 't', responseId: 'r', playbackId: 'p', assistantText: 'answer text', generatedSamples: 960 }]);
+    writer.close();
+  });
+
+  it('records a response failure on the matching turn instead of session scope', async () => {
+    const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
+    await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));
+    await writer.apply(event('s', 'reasoning.started', { turnId: 't', responseId: 'r', posture: 'question' }));
+    await writer.apply(event('s', 'response.failed', { turnId: 't', responseId: 'r', reasonCode: 'tts_failed' }));
+    expect(await writer.getTurns('s')).toMatchObject([{ turnId: 't', responseId: 'r', failures: ['tts_failed'], interrupted: true, assistantText: null }]);
+    writer.close();
+  });
+
   it('keeps first terminal extent authoritative over progress arriving afterward', async () => {
     const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
     await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));

@@ -5,7 +5,7 @@ import { createEnvelope, type Envelope } from './envelope';
 import type { OutputAudioChunk, SessionTransport } from './transport';
 
 const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
-interface OutputBinding { playbackId: string; outputEpoch: number; streamId?: number; expectedSequence: number; sampleOffset: number; terminal: boolean }
+interface OutputBinding { playbackId: string; responseId: string; outputEpoch: number; streamId?: number; expectedSequence: number; sampleOffset: number; terminal: boolean }
 
 export class WebSocketSessionTransport implements SessionTransport {
   private socket: WebSocket | undefined;
@@ -42,14 +42,34 @@ export class WebSocketSessionTransport implements SessionTransport {
         if (!isStrictHostEvent(value)) { this.protocolFailure(); return; }
         const hostEvent = value as StableEvent;
         if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure(); return; }
-        if (hostEvent.type === 'tts.started') {
+        if (hostEvent.type === 'reasoning.started') {
+          const responseId = String(hostEvent.payload.responseId);
+          if (this.latestResponseId !== undefined) {
+            // A duplicate reasoning.started for the SAME response is a protocol anomaly.
+            if (responseId === this.latestResponseId) { this.protocolFailure(); return; }
+            // A different response superseded the previous one before it terminalized
+            // (e.g. rapid re-engagement while the old response was still generating).
+            // The previous output binding is dead and its late PCM must be rejected.
+            if (this.output && !this.output.terminal) this.output.terminal = true;
+          }
+          this.latestResponseId = responseId;
+        } else if (hostEvent.type === 'reasoning.final') {
+          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure(); return; }
+        } else if (hostEvent.type === 'tts.started') {
           if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId || (this.output && !this.output.terminal)) { this.protocolFailure(); return; }
-          this.output = { playbackId: String(hostEvent.payload.playbackId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false };
+          this.output = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false };
+        } else if (hostEvent.type === 'response.failed') {
+          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure(); return; }
+          if (this.output && this.output.responseId === hostEvent.payload.responseId && !this.output.terminal) this.output.terminal = true;
+          this.latestResponseId = undefined;
         } else if (hostEvent.type === 'tts.ended') {
           if (!this.output || this.output.playbackId !== hostEvent.payload.playbackId || this.output.outputEpoch !== hostEvent.epoch) { this.protocolFailure(); return; }
           this.output.terminal = true;
           const generated = Number(hostEvent.payload.generatedSamples);
           if (generated !== this.output.sampleOffset) { this.protocolFailure(); return; }
+          // Terminal identity cleanup: the response is fully delivered, so a later
+          // reasoning.started for the next response can establish fresh identity.
+          this.latestResponseId = undefined;
         }
         for (const listener of this.eventListeners) void listener(hostEvent);
       };
@@ -98,9 +118,8 @@ export class WebSocketSessionTransport implements SessionTransport {
   }
   private latestResponseId: string | undefined;
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void {
-    const wrapped = (event: StableEvent) => { if (event.type === 'reasoning.final' && typeof event.payload.responseId === 'string') this.latestResponseId = event.payload.responseId; return listener(event); };
-    this.eventListeners.add(wrapped);
-    return () => this.eventListeners.delete(wrapped);
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
   onAudio(listener: (chunk: OutputAudioChunk) => void): () => void { this.audioListeners.add(listener); return () => this.audioListeners.delete(listener); }
   onFailure(listener: (message: string) => void): () => void { this.failureListeners.add(listener); return () => this.failureListeners.delete(listener); }
@@ -155,6 +174,8 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
     case 'transcript.partial': return exact(payload, ['utteranceId', 'sequence', 'text', 'replacedCharacters']) && uuid('utteranceId') && integer(payload.sequence) && typeof payload.text === 'string' && payload.text.length <= 16_384 && integer(payload.replacedCharacters);
     case 'transcript.final': return exact(payload, ['turnId', 'text', 'endpointComplete']) && uuid('turnId') && typeof payload.text === 'string' && payload.text.length <= 16_384 && payload.endpointComplete === true;
     case 'policy.decision': return exact(payload, ['turnId', 'policyVersion', 'eligible', 'posture', 'reasonCodes', 'inputDigest']) && uuid('turnId') && payload.policyVersion === 'v1.experimental' && typeof payload.eligible === 'boolean' && ['riff', 'question', 'challenge', 'silence'].includes(String(payload.posture)) && Array.isArray(payload.reasonCodes) && payload.reasonCodes.length > 0 && payload.reasonCodes.every(code => typeof code === 'string' && code.length > 0) && typeof payload.inputDigest === 'string' && /^[a-f0-9]{64}$/.test(payload.inputDigest);
+    case 'reasoning.started': return exact(payload, ['turnId', 'responseId', 'posture']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture));
+    case 'response.failed': return exact(payload, ['turnId', 'responseId', 'reasonCode']) && uuid('turnId') && uuid('responseId') && ['reasoning_unavailable', 'reasoning_invalid', 'tts_failed'].includes(String(payload.reasonCode));
     case 'reasoning.final': return exact(payload, ['turnId', 'responseId', 'posture', 'text']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture)) && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096;
     case 'tts.started': return exact(payload, ['responseId', 'playbackId', 'sampleRate']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0;
     case 'tts.ended': return exact(payload, ['responseId', 'playbackId', 'generatedSamples']) && uuid('responseId') && uuid('playbackId') && integer(payload.generatedSamples);

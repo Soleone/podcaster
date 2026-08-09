@@ -9,6 +9,7 @@ import os
 import signal
 import socket
 import threading
+from collections import deque
 from http import HTTPStatus
 from typing import NoReturn
 
@@ -22,7 +23,7 @@ from .generated.contracts import SidecarMessage
 from .runtime import MAX_BINARY_PAYLOAD, SelectedAudioRuntime
 
 MAX_BODY = 16 * 1024
-MAX_QUEUE = 64
+MAX_QUEUE = 512
 
 
 def _response(status: HTTPStatus, value: dict[str, object]) -> Response:
@@ -102,19 +103,40 @@ class SidecarServer:
         loop = asyncio.get_running_loop()
         opened_stream: str | None = None
         failed = False
+        # Thread-safe bounded handoff so the TTS worker applies real backpressure
+        # instead of overflowing a fixed async queue and killing the session.
+        sync_queue: deque[str | bytes] = deque()
+        sync_lock = threading.Condition()
 
         def enqueue(value: str | bytes) -> None:
             nonlocal failed
             if failed:
                 return
-            def put() -> None:
-                nonlocal failed
+            with sync_lock:
+                while len(sync_queue) >= MAX_QUEUE and not failed:
+                    sync_lock.wait()
+                if failed:
+                    return
+                sync_queue.append(value)
+                sync_lock.notify_all()
+            loop.call_soon_threadsafe(pump)
+
+        def pump() -> None:
+            nonlocal failed
+            if failed:
+                return
+            while True:
+                with sync_lock:
+                    if not sync_queue:
+                        return
+                    value = sync_queue.popleft()
+                    sync_lock.notify_all()
                 try:
                     queue.put_nowait(value)
                 except asyncio.QueueFull:
-                    failed = True
-                    asyncio.create_task(connection.close(1011, "sidecar output queue overflow"))
-            loop.call_soon_threadsafe(put)
+                    with sync_lock:
+                        sync_queue.appendleft(value)
+                    return
 
         def emit_json(value: dict[str, object]) -> None:
             enqueue(json.dumps(value, separators=(",", ":")))
@@ -125,6 +147,9 @@ class SidecarServer:
                 if value is None:
                     return
                 await connection.send(value)
+                # Keep the pipeline moving: drain more from the sync handoff after
+                # every send so a blocked producer unblocks promptly.
+                pump()
 
         sender_task = asyncio.create_task(sender())
         emit_json(self.runtime.readiness())
@@ -158,6 +183,24 @@ class SidecarServer:
                     raise ValueError("unknown stream")
                 elif message_type == "stt.bind_epoch":
                     self.runtime.bind_epoch(opened_stream, str(payload["utteranceId"]), int(payload["epoch"]))
+                elif message_type == "tts.open":
+                    self.runtime.open_tts(opened_stream, str(payload["responseId"]), int(payload["epoch"]))
+                elif message_type == "tts.append":
+                    self.runtime.append_tts(
+                        opened_stream,
+                        str(payload["responseId"]),
+                        int(payload["epoch"]),
+                        int(payload["sequence"]),
+                        str(payload["text"]),
+                    )
+                elif message_type == "tts.commit":
+                    self.runtime.commit_tts(
+                        opened_stream,
+                        str(payload["responseId"]),
+                        int(payload["epoch"]),
+                        int(payload["nextSequence"]),
+                        str(payload["textSha256"]),
+                    )
                 elif message_type == "tts.request":
                     self.runtime.request_tts(opened_stream, str(payload["responseId"]), int(payload["epoch"]), str(payload["text"]))
                 elif message_type == "tts.cancel":
@@ -170,10 +213,23 @@ class SidecarServer:
                 else:
                     raise ValueError("unsupported sidecar command")
         except (ValueError, RuntimeError):
-            emit_json({"type": "sidecar.failure", "payload": {"code": "invalid_message", "recoverable": False}})
+            failed = True
+            with sync_lock:
+                sync_lock.notify_all()
+            failure_message = json.dumps(
+                {"type": "sidecar.failure", "payload": {"code": "invalid_message", "recoverable": False}},
+                separators=(",", ":"),
+            )
+            try:
+                queue.put_nowait(failure_message)
+            except asyncio.QueueFull:
+                pass
             await asyncio.sleep(0)
             await connection.close(1008, "invalid stream message")
         finally:
+            failed = True
+            with sync_lock:
+                sync_lock.notify_all()
             if opened_stream is not None:
                 self.runtime.close_stream(opened_stream)
             sender_task.cancel()

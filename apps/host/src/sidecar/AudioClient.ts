@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { decodeBinaryAudioFrame, CONTRACT_VALIDATORS } from '@app/contracts';
 import WebSocket, { type RawData } from 'ws';
 import type { SidecarProcess } from './process.js';
-import type { SpeechOutputPort, SpeechSynthesisStart } from '../session/SessionOrchestrator.js';
+import type { SpeechOutputPort, SpeechOutputStream, SpeechSynthesisStart } from '../session/SessionOrchestrator.js';
 
 const MAX_PAYLOAD = 64 * 1024;
 const MAX_BUFFERED_OUTPUT_CHUNKS = 64;
@@ -128,17 +128,22 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   synthesize(input: { sessionId: string; epoch: number; responseId: string; text: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): Promise<SpeechSynthesisStart> {
+    const stream = this.begin({ sessionId: input.sessionId, epoch: input.epoch, responseId: input.responseId, signal: input.signal, ...(input.onGeneratedSamples ? { onGeneratedSamples: input.onGeneratedSamples } : {}) });
+    stream.append(input.text);
+    stream.finish();
+    return stream.started;
+  }
+
+  begin(input: { sessionId: string; epoch: number; responseId: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): SpeechOutputStream {
     void input.sessionId;
     this.requireOpened();
-    if (this.pending.has(input.responseId)) return Promise.reject(new Error('duplicate TTS response'));
+    if (this.pending.has(input.responseId)) throw new Error('duplicate TTS response');
     let resolveStart!: (value: SpeechSynthesisStart) => void;
     let rejectStart!: (error: Error) => void;
     let resolveCompletion!: (value: { generatedSamples: number }) => void;
     let rejectCompletion!: (error: Error) => void;
-    const start = new Promise<SpeechSynthesisStart>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; });
+    const started = new Promise<SpeechSynthesisStart>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; });
     const completion = new Promise<{ generatedSamples: number }>((resolve, reject) => { resolveCompletion = resolve; rejectCompletion = reject; });
-    // The completion is handed to the orchestrator as soon as tts.started arrives.
-    // Suppress a transient unhandled-rejection report if cancellation wins before start.
     void completion.catch(() => undefined);
     const abort = () => this.cancel(input.responseId);
     const pending: PendingTts = {
@@ -152,10 +157,32 @@ export class AudioClient implements SpeechOutputPort {
       pending.cutoff = true;
       this.rejectPending(pending, new Error('TTS cancelled'));
       this.pending.delete(input.responseId);
-    } else this.sendForStream('tts.request', { responseId: input.responseId, epoch: input.epoch, text: input.text });
-    // ttsStarted resolves this with the independently awaited completion.
+    } else {
+      this.sendForStream('tts.open', { responseId: input.responseId, epoch: input.epoch });
+    }
     (pending as PendingTts & { completion?: Promise<{ generatedSamples: number }> }).completion = completion;
-    return start;
+
+    let appendSequence = 0;
+    const hasher = createHash('sha256');
+    const client = this;
+
+    const stream: SpeechOutputStream = {
+      started,
+      append(text: string): void {
+        if (pending.cutoff || pending.remoteTerminal) throw new Error('TTS stream is terminated');
+        if (!text.trim()) throw new Error('empty append');
+        hasher.update(text, 'utf8');
+        client.sendForStream('tts.append', { responseId: input.responseId, epoch: input.epoch, sequence: appendSequence, text });
+        appendSequence++;
+      },
+      finish(): void {
+        if (pending.cutoff || pending.remoteTerminal) throw new Error('TTS stream is terminated');
+        const sha256 = hasher.digest('hex');
+        client.sendForStream('tts.commit', { responseId: input.responseId, epoch: input.epoch, nextSequence: appendSequence, textSha256: sha256 });
+      },
+    };
+
+    return stream;
   }
 
   release(responseId: string): void {

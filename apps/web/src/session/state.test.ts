@@ -29,4 +29,30 @@ describe('session presentation state', () => {
       expect(canSafelyResume(unsafe)).toBe(false);
     }
   });
+
+  it('holds a hidden placeholder until final text and never renders an empty bubble', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'question' }));
+    expect(state.conversationItems).toEqual([{ kind: 'assistant', id: 'assistant:r', responseId: 'r', text: '', playback: 'preparing', sequence: state.conversationItems[0]!.sequence }]);
+    state = reduceSessionState(state, event('tts.started', { responseId: 'r', playbackId: 'p', sampleRate: 24000 }));
+    expect(state.dominant).toBe('speaking');
+    expect(state.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', playbackId: 'p', playback: 'playing', text: '' }));
+    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'question', text: 'Final answer' }));
+    const item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    // Upsert preserves the already-known playbackId and playing status.
+    expect(item).toMatchObject({ text: 'Final answer', playbackId: 'p', playback: 'playing' });
+    expect(state.assistantText).toBe('Final answer');
+    // A response already speaking must not regress to the forming state.
+    expect(state.dominant).toBe('speaking');
+  });
+
+  it('removes an empty placeholder and marks a partial response interrupted on failure', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    state = reduceSessionState(state, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'tts_failed' }));
+    expect(state.conversationItems.filter(item => item.kind === 'assistant')).toEqual([]);
+
+    let partial = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    partial = reduceSessionState(partial, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'Heard part of this' }));
+    partial = reduceSessionState(partial, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'reasoning_invalid' }));
+    expect(partial.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', text: 'Heard part of this', playback: 'interrupted' }));
+  });
 });

@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { DEFAULT_PERSONA_MARKDOWN, parsePersona, type PersonaInterpretation } from "@app/contracts";
 import { decide, POLICY_VERSION, type PolicyDecision, type PolicyInput, type Posture } from "@app/policy";
 import type { PiClient, PiEvent, PiPosture } from "../pi/PiClient.js";
-import { hasLexicalContent, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
+import { fallbackInterruptionDecision, hasLexicalContent, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
+import { ReasoningSpeechAssembler } from "./ReasoningSpeechAssembler.js";
 
 export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
 export interface SessionEvent { protocolVersion: 1; sessionId: string; epoch: number; eventId: string; type: string; monotonicMs: number; payload: Record<string, unknown> }
@@ -12,7 +13,13 @@ export interface SpeechSynthesisStart {
   generatedSamples?: number;
   completion?: Promise<{ generatedSamples: number }>;
 }
+export interface SpeechOutputStream {
+  readonly started: Promise<SpeechSynthesisStart>;
+  append(text: string): void;
+  finish(): void;
+}
 export interface SpeechOutputPort {
+  begin(input: { sessionId: string; epoch: number; responseId: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): SpeechOutputStream;
   synthesize(input: { sessionId: string; epoch: number; responseId: string; text: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): Promise<SpeechSynthesisStart>;
   pause(responseId: string): void;
   resume(responseId: string): void;
@@ -57,15 +64,27 @@ interface ActiveResponse {
   cancelled: boolean;
   playbackId?: string;
   assistantText?: string;
+  reasoningPrefix: string;
   generatedSamples: number;
   phaseBeforeProvisional?: SessionPhase;
 }
-interface ProvisionalState { responseId: string; outputEpoch: number; cancelTimer: () => void; echoRecovered: boolean; pausedSampleOffset?: number; generatedSamples?: number; deciding?: AbortController; turnId?: string }
+interface ProvisionalState {
+  responseId: string;
+  outputEpoch: number;
+  echoRecovered: boolean;
+  pausedSampleOffset?: number;
+  generatedSamples?: number;
+  deciding?: AbortController;
+  turnId?: string;
+  pendingTurn?: { epoch: number; turnId: string; text: string; endpointComplete: boolean };
+  cancelTimer: () => void;
+}
 interface AcceptancePendingTerminal {
   responseId: string;
   playbackId: string;
   outputEpoch: number;
   turn: { epoch: number; turnId: string; text: string; endpointComplete: boolean };
+  cancelTimer: () => void;
 }
 
 export class PersonaValidationError extends Error {
@@ -135,9 +154,9 @@ export class SessionOrchestrator {
   private active: ActiveResponse | undefined;
   private provisional: ProvisionalState | undefined;
   private acceptancePendingTerminal: AcceptancePendingTerminal | undefined;
+  private timedOutInterruptionEpoch: number | undefined;
   private stableUserTurnCount = 0;
   private eligibleTurnsSinceChallenge = 3;
-  private interruptionCooldownActive = false;
   private readonly emitFn: (event: SessionEvent) => void;
   private readonly now: () => number;
   private readonly idFactory: () => string;
@@ -187,13 +206,19 @@ export class SessionOrchestrator {
   }
 
   async handleStableFinal(turn: { epoch: number; turnId: string; text: string; endpointComplete: boolean }): Promise<void> {
-    if (turn.epoch !== this.epoch) return;
-    if (this.phase === "stopped" || this.acceptancePendingTerminal || this.seenTurns.has(turn.turnId)) return;
+    if (turn.epoch !== this.epoch || this.phase === "stopped" || this.seenTurns.has(turn.turnId)) return;
     this.seenTurns.add(turn.turnId);
+    if (this.timedOutInterruptionEpoch === turn.epoch) {
+      this.timedOutInterruptionEpoch = undefined;
+      return;
+    }
+    if (this.acceptancePendingTerminal) return;
     if (this.provisional) {
       await this.decideInterruption(turn);
       return;
-    } else if (this.active) { this.advanceEpochAndCancel(); this.interruptionCooldownActive = true; }
+    } else if (this.active) {
+      this.advanceEpochAndCancel();
+    }
     const operationEpoch = this.epoch;
     this.phase = "deciding";
     const boundedContext = this.boundedContext();
@@ -208,9 +233,7 @@ export class SessionOrchestrator {
       stableUserTurnCount: this.stableUserTurnCount + 1,
       recentDecisions: this.recentDecisions,
       eligibleTurnsSinceChallenge: this.eligibleTurnsSinceChallenge,
-      interruptionCooldownActive: this.interruptionCooldownActive,
     });
-    this.interruptionCooldownActive = false;
     this.emit("policy.decision", { turnId: turn.turnId, ...policy });
     this.recentDecisions.push({ turnId: turn.turnId, eligible: policy.eligible, posture: policy.posture });
     if (this.recentDecisions.length > 10) this.recentDecisions.splice(0, this.recentDecisions.length - 10);
@@ -221,65 +244,156 @@ export class SessionOrchestrator {
 
     const responseId = this.idFactory();
     const controller = new AbortController();
-    const active: ActiveResponse = { responseId, turnId: turn.turnId, epoch: operationEpoch, posture: policy.posture, controller, cancelled: false, generatedSamples: 0 };
+    const active: ActiveResponse = { responseId, turnId: turn.turnId, epoch: operationEpoch, posture: policy.posture, controller, cancelled: false, reasoningPrefix: "", generatedSamples: 0 };
     this.active = active;
     this.phase = "reasoning";
+    this.emit("reasoning.started", { turnId: active.turnId, responseId: active.responseId, posture: active.posture });
+    const assembler = new ReasoningSpeechAssembler(active.posture);
     try {
+      const speechStream = this.options.speech.begin({
+        sessionId: this.options.sessionId,
+        epoch: active.epoch,
+        responseId: active.responseId,
+        signal: controller.signal,
+        onGeneratedSamples: total => this.recordGeneratedSamples(active, total),
+      });
+      // Attach rejection handling immediately so cancel-before-first-sentence
+      // cannot create an unhandled rejection.
+      void speechStream.started.catch(() => undefined);
+      speechStream.started.then(
+        meta => {
+          if (!this.isCurrent(active)) return;
+          if (!Number.isSafeInteger(meta.sampleRate) || meta.sampleRate <= 0) { this.failResponse(active, "tts_failed"); return; }
+          if (meta.generatedSamples !== undefined && (!Number.isSafeInteger(meta.generatedSamples) || meta.generatedSamples <= 0)) { this.failResponse(active, "tts_failed"); return; }
+          active.playbackId = meta.playbackId;
+          this.playback.set(meta.playbackId, { outputEpoch: active.epoch, generatedSamples: Math.max(active.generatedSamples, meta.generatedSamples ?? 0), delivered: 0, terminal: false });
+          this.emit("tts.started", { responseId: active.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate });
+          this.options.speech.release?.(active.responseId);
+          this.setUnderlyingPhase(active, "playing");
+          if (this.hasProvisional(active.responseId)) this.options.speech.pause(active.responseId);
+          if (meta.completion) {
+            void meta.completion.then(
+              completed => {
+                if (!this.isCurrent(active)) return;
+                if (!Number.isSafeInteger(completed.generatedSamples) || completed.generatedSamples <= 0) {
+                  this.failResponse(active, "tts_failed");
+                  return;
+                }
+                const ledger = this.playback.get(meta.playbackId);
+                if (!ledger || ledger.outputEpoch !== active.epoch || ledger.terminal) return;
+                ledger.generatedSamples = completed.generatedSamples;
+                this.emit("tts.ended", { responseId: active.responseId, playbackId: meta.playbackId, generatedSamples: completed.generatedSamples });
+              },
+              () => {
+                if (this.isCurrent(active)) this.failResponse(active, "tts_failed");
+              },
+            );
+          }
+        },
+        () => {
+          if (this.isCurrent(active)) this.failResponse(active, "tts_failed");
+        },
+      );
+
       let finalText: string | undefined;
       let duplicateFinal = false;
       for await (const event of this.options.pi.request({ posture: policy.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, personaInterpretation: this.personaForPi, maxWords: 45 }, controller.signal)) {
         if (!this.isCurrent(active)) return;
-        if (event.type === "final") { if (finalText !== undefined) duplicateFinal = true; else finalText = event.text; }
-        else if (event.type === "error") { this.fail("reasoning_unavailable", event.detail, event.correctiveAction); this.clearActive(active); return; }
+        if (event.type === "final") {
+          if (finalText !== undefined) duplicateFinal = true;
+          else finalText = event.text;
+        } else if (event.type === "delta") {
+          const chunks = assembler.append(event.text);
+          active.reasoningPrefix = assembler.canonicalPrefix;
+          for (const chunk of chunks) speechStream.append(chunk.text);
+        } else if (event.type === "error") {
+          this.failResponse(active, "reasoning_unavailable");
+          return;
+        }
       }
       if (!this.isCurrent(active)) return;
-      const validated = finalText === undefined || duplicateFinal ? undefined : validReasoning(finalText, active.posture);
-      if (!validated) { this.fail("reasoning_invalid", "Reasoning output did not satisfy the concise posture contract.", "Continue listening; no speech was produced."); this.clearActive(active); return; }
+      if (duplicateFinal) {
+        this.failResponse(active, "reasoning_invalid");
+        return;
+      }
+
+      let validated: string | undefined;
+      try {
+        const finalized = assembler.final(finalText ?? "");
+        validated = finalized.result.canonical;
+        if (finalized.tail) speechStream.append(finalized.tail.text);
+        if (!validated || validated.split(/\s+/u).filter(Boolean).length > 45) validated = undefined;
+        if (active.posture === "question" && (validated?.match(/\?/gu) ?? []).length > 1) validated = undefined;
+        if (validated && /^(?:```|\{|\[|assistant\s*:|system\s*:|<\/?(?:script|iframe)\b)/iu.test(validated)) validated = undefined;
+        if (validated && !assembler.validateFull(validated)) validated = undefined;
+      } catch {
+        validated = undefined;
+      }
+      if (!validated) {
+        this.failResponse(active, "reasoning_invalid");
+        return;
+      }
       this.emit("reasoning.final", { turnId: active.turnId, responseId: active.responseId, posture: active.posture, text: validated });
       active.assistantText = validated;
-      this.setUnderlyingPhase(active, "synthesizing");
-      const synthesized = await this.options.speech.synthesize({
-        sessionId: this.options.sessionId,
-        epoch: active.epoch,
-        responseId: active.responseId,
-        text: validated,
-        signal: controller.signal,
-        onGeneratedSamples: total => this.recordGeneratedSamples(active, total),
-      });
+      speechStream.finish();
+    } catch {
       if (!this.isCurrent(active)) return;
-      if (!Number.isSafeInteger(synthesized.sampleRate) || synthesized.sampleRate <= 0 || (!synthesized.completion && (!Number.isSafeInteger(synthesized.generatedSamples) || synthesized.generatedSamples! <= 0))) throw new Error("invalid speech output metadata");
-      active.playbackId = synthesized.playbackId;
-      this.playback.set(synthesized.playbackId, { outputEpoch: active.epoch, generatedSamples: Math.max(active.generatedSamples, synthesized.generatedSamples ?? 0), delivered: 0, terminal: false });
-      this.emit("tts.started", { responseId: active.responseId, playbackId: synthesized.playbackId, sampleRate: synthesized.sampleRate });
-      this.options.speech.release?.(active.responseId);
-      this.setUnderlyingPhase(active, "playing");
-      if (this.hasProvisional(active.responseId)) this.options.speech.pause(active.responseId);
-      const completed = synthesized.completion ? await synthesized.completion : { generatedSamples: synthesized.generatedSamples! };
-      if (!this.isCurrent(active)) return;
-      if (!Number.isSafeInteger(completed.generatedSamples) || completed.generatedSamples <= 0) throw new Error("invalid speech output completion");
-      const ledger = this.playback.get(synthesized.playbackId);
-      if (!ledger || ledger.outputEpoch !== active.epoch || ledger.terminal) return;
-      ledger.generatedSamples = completed.generatedSamples;
-      this.emit("tts.ended", { responseId: active.responseId, playbackId: synthesized.playbackId, generatedSamples: completed.generatedSamples });
-    } catch (error) {
-      if (!this.isCurrent(active)) return;
-      this.fail("response_failed", "Local response generation failed.", "Continue in transcript-only mode or retry.");
-      this.clearActive(active);
+      this.failResponse(active, "reasoning_unavailable");
     }
   }
 
   handleSpeechStart(): number {
+    if (this.phase === "stopped") return this.epoch;
+    this.timedOutInterruptionEpoch = undefined;
+    if (this.acceptancePendingTerminal) {
+      this.acceptancePendingTerminal.cancelTimer();
+      this.acceptancePendingTerminal = undefined;
+      this.advanceEpochAndCancel();
+      this.phase = "listening";
+      this.emitState();
+      return this.epoch;
+    }
     const active = this.active;
-    if (!active || this.phase === "stopped") return this.epoch;
-    if (this.phase === "playing" || this.phase === "echo_provisional") {
+    if (!active) return this.epoch;
+    if (this.provisional?.responseId === active.responseId) {
+      // A newer utterance extends the same provisional pause. Invalidate the
+      // older decision. The answer must not resume while the user is speaking.
+      this.provisional.cancelTimer();
+      this.provisional.cancelTimer = () => {};
+      this.provisional.deciding?.abort();
+      delete this.provisional.deciding;
+      delete this.provisional.turnId;
+      delete this.provisional.pendingTurn;
+      this.phase = "echo_provisional";
+      return this.epoch;
+    }
+    if (this.phase === "playing") {
       this.beginProvisionalBargeIn(active.responseId);
       return this.epoch;
     }
     this.advanceEpochAndCancel();
-    this.interruptionCooldownActive = true;
     this.phase = "listening";
     this.emitState();
     return this.epoch;
+  }
+
+  handleSpeechEnd(): void {
+    if (this.phase === "stopped") return;
+    if (this.provisional) {
+      const provisional = this.provisional;
+      provisional.cancelTimer();
+      provisional.cancelTimer = this.scheduler.schedule(this.provisionalTimeoutMs, () => {
+        if (this.provisional === provisional) {
+          this.timedOutInterruptionEpoch = provisional.outputEpoch;
+          this.resolveProvisional("timed_out");
+        }
+      });
+      return;
+    }
+    if (!this.active && this.phase === "listening") {
+      this.phase = "deciding";
+      this.emitState();
+    }
   }
 
   beginProvisionalBargeIn(responseId: string): boolean {
@@ -289,7 +403,6 @@ export class SessionOrchestrator {
     this.options.speech.pause(responseId);
     const ledger = active.playbackId ? this.playback.get(active.playbackId) : undefined;
     const provisional: ProvisionalState = { responseId, outputEpoch: active.epoch, echoRecovered: false, cancelTimer: () => {}, ...(ledger ? { generatedSamples: ledger.generatedSamples } : {}) };
-    provisional.cancelTimer = this.scheduler.schedule(this.provisionalTimeoutMs, () => this.resolveProvisional("timed_out"));
     this.provisional = provisional;
     this.phase = "echo_provisional";
     this.emit("barge_in.provisional", { responseId, outputEpoch: active.epoch, resumable: true });
@@ -305,6 +418,11 @@ export class SessionOrchestrator {
     ledger.delivered = input.pausedSampleOffset;
     provisional.pausedSampleOffset = input.pausedSampleOffset;
     provisional.generatedSamples = input.generatedSamples;
+    const pendingTurn = provisional.pendingTurn;
+    if (pendingTurn) {
+      delete provisional.pendingTurn;
+      void this.decideInterruption(pendingTurn);
+    }
   }
 
   setEchoRecovered(recovered: boolean): void { if (this.provisional) this.provisional.echoRecovered = recovered; }
@@ -317,7 +435,6 @@ export class SessionOrchestrator {
     const responseId = provisional.responseId;
     const outputEpoch = provisional.outputEpoch;
     this.advanceEpochAndCancel();
-    this.interruptionCooldownActive = true;
     this.phase = "listening";
     this.emit("barge_in.confirmed", { responseId, outputEpoch, resumable: false });
     return true;
@@ -327,7 +444,11 @@ export class SessionOrchestrator {
   playbackProgress(input: { playbackId: string; outputEpoch: number; playedSampleOffset: number; generatedSamples: number }): void {
     const ledger = this.playback.get(input.playbackId);
     if (!ledger || ledger.terminal || !this.validOffset(input.outputEpoch) || !this.validOffset(input.playedSampleOffset) || !this.validOffset(input.generatedSamples)) return;
-    if (input.outputEpoch !== this.epoch || ledger.outputEpoch !== input.outputEpoch || input.generatedSamples !== ledger.generatedSamples || input.playedSampleOffset > ledger.generatedSamples) return;
+    if (input.outputEpoch !== this.epoch || ledger.outputEpoch !== input.outputEpoch) return;
+    // Progressive speech: browser may report an older generated prefix after host ledger has advanced.
+    // Accept as long as the browser's generatedSamples is not beyond what the host has received.
+    if (input.generatedSamples > ledger.generatedSamples) return;
+    if (input.playedSampleOffset > input.generatedSamples) return;
     ledger.delivered = Math.max(ledger.delivered, input.playedSampleOffset);
   }
 
@@ -342,13 +463,7 @@ export class SessionOrchestrator {
       && pending.playbackId === input.playbackId
       && pending.outputEpoch === input.cancelledEpoch
       && pending.responseId === this.active?.responseId) {
-      this.acceptancePendingTerminal = undefined;
-      this.advanceEpochAndCancel();
-      this.interruptionCooldownActive = true;
-      this.phase = "listening";
-      this.emit("barge_in.confirmed", { responseId: pending.responseId, outputEpoch: pending.outputEpoch, resumable: false });
-      this.seenTurns.delete(pending.turn.turnId);
-      void this.handleStableFinal({ ...pending.turn, epoch: this.epoch });
+      this.finalizeAcceptedTakeover(pending);
       return;
     }
     if (input.cancelledEpoch !== this.epoch) return;
@@ -370,6 +485,7 @@ export class SessionOrchestrator {
 
   cancelCurrentTurn(): void {
     if (this.phase === "stopped") return;
+    this.acceptancePendingTerminal?.cancelTimer();
     this.acceptancePendingTerminal = undefined;
     const provisional = this.provisional;
     provisional?.cancelTimer();
@@ -379,13 +495,13 @@ export class SessionOrchestrator {
     const outputEpoch = provisional?.outputEpoch;
     if (this.active || provisional) this.advanceEpochAndCancel();
     if (responseId && outputEpoch !== undefined) this.emit("barge_in.confirmed", { responseId, outputEpoch, resumable: false });
-    this.interruptionCooldownActive = true;
     this.phase = "listening";
     this.emitState();
   }
 
   stop(): void {
     if (this.phase === "stopped") return;
+    this.acceptancePendingTerminal?.cancelTimer();
     this.acceptancePendingTerminal = undefined;
     const provisional = this.provisional;
     provisional?.cancelTimer();
@@ -398,7 +514,6 @@ export class SessionOrchestrator {
     this.seenTurns.clear();
     this.stableUserTurnCount = 0;
     this.eligibleTurnsSinceChallenge = 3;
-    this.interruptionCooldownActive = false;
     this.phase = "stopped";
     this.emitState();
   }
@@ -407,10 +522,16 @@ export class SessionOrchestrator {
     const provisional = this.provisional;
     const active = this.active;
     if (!provisional || !active || active.responseId !== provisional.responseId || !active.playbackId) return false;
-    provisional.cancelTimer();
     provisional.turnId = turn.turnId;
     this.phase = "interruption_deciding";
-    let decision: InterruptionIntentDecision = { action: "resume", intent: "non_substantive", confidence: "low", reason: "No substantive lexical speech." };
+    if (provisional.pausedSampleOffset === undefined || provisional.generatedSamples === undefined) {
+      provisional.pendingTurn = turn;
+      return false;
+    }
+    provisional.cancelTimer();
+    provisional.cancelTimer = () => {};
+    delete provisional.pendingTurn;
+    let decision: InterruptionIntentDecision = fallbackInterruptionDecision(turn.text);
     if (hasLexicalContent(turn.text) && provisional.pausedSampleOffset !== undefined && provisional.generatedSamples !== undefined) {
       const controller = new AbortController();
       provisional.deciding = controller;
@@ -418,7 +539,7 @@ export class SessionOrchestrator {
       try {
         decision = await Promise.race([
           this.interruptionClassifier.decide({
-            interruptedResponseText: active.assistantText ?? "",
+            interruptedResponseText: active.reasoningPrefix || active.assistantText || "",
             deliveredSampleOffset: provisional.pausedSampleOffset,
             generatedSamples: provisional.generatedSamples,
             transcript: turn.text,
@@ -426,15 +547,19 @@ export class SessionOrchestrator {
           }, controller.signal),
           new Promise<InterruptionIntentDecision>((_resolve, reject) => { timeout = setTimeout(() => reject(new Error("interruption classification timed out")), this.classifierTimeoutMs); }),
         ]);
-      } catch { decision = { action: "resume", intent: "non_substantive", confidence: "low", reason: "Classification unavailable." }; }
+      } catch { decision = fallbackInterruptionDecision(turn.text); }
       finally { if (timeout) clearTimeout(timeout); controller.abort(); }
     }
-    if (this.provisional !== provisional || this.active !== active) return false;
-    const accept = decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text) && provisional.pausedSampleOffset !== undefined;
-    if (provisional.pausedSampleOffset === undefined) {
-      this.resolveProvisional("timed_out");
+    if (this.provisional !== provisional) return false;
+    // Newer speech re-entered classification and replaced this pending decision.
+    if (provisional.turnId !== turn.turnId) return false;
+    if (!this.active || this.active !== active) {
+      // The response was superseded or cancelled while classifying. Never leave
+      // the browser waiting on an orphaned provisional.
+      this.resolveProvisional("rejected");
       return false;
     }
+    const accept = decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text);
     const disposition = accept ? "accept_takeover" : decision.intent === "continue_previous" ? "resume_requested" : hasLexicalContent(turn.text) ? "resume_fragment" : "resume_noise";
     this.emit("interruption.decision", {
       turnId: turn.turnId,
@@ -452,15 +577,18 @@ export class SessionOrchestrator {
       this.resolveProvisional("rejected");
       return false;
     }
-    provisional.deciding?.abort();
     provisional.cancelTimer();
+    provisional.deciding?.abort();
     this.provisional = undefined;
-    this.acceptancePendingTerminal = {
+    const pending: AcceptancePendingTerminal = {
       responseId: provisional.responseId,
       playbackId: active.playbackId,
       outputEpoch: provisional.outputEpoch,
       turn: { epoch: provisional.outputEpoch, turnId: turn.turnId, text: turn.text, endpointComplete: turn.endpointComplete },
+      cancelTimer: () => {},
     };
+    pending.cancelTimer = this.scheduler.schedule(this.provisionalTimeoutMs, () => this.finalizeAcceptedTakeover(pending));
+    this.acceptancePendingTerminal = pending;
     this.cancelResponse(active);
     this.phase = "acceptance_pending_terminal";
     return true;
@@ -491,11 +619,22 @@ export class SessionOrchestrator {
       this.phase = "playing";
     } else {
       this.advanceEpochAndCancel();
-      this.interruptionCooldownActive = true;
       this.phase = "listening";
     }
     this.emit(`barge_in.${type}`, { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: safe });
+    this.emitState();
     return true;
+  }
+
+  private finalizeAcceptedTakeover(pending: AcceptancePendingTerminal): void {
+    if (this.acceptancePendingTerminal !== pending || pending.responseId !== this.active?.responseId) return;
+    pending.cancelTimer();
+    this.acceptancePendingTerminal = undefined;
+    this.advanceEpochAndCancel();
+    this.phase = "listening";
+    this.emit("barge_in.confirmed", { responseId: pending.responseId, outputEpoch: pending.outputEpoch, resumable: false });
+    this.seenTurns.delete(pending.turn.turnId);
+    void this.handleStableFinal({ ...pending.turn, epoch: this.epoch });
   }
 
   private advanceEpochAndCancel(): void {
@@ -516,7 +655,6 @@ export class SessionOrchestrator {
       provisional.cancelTimer();
       this.provisional = undefined;
       this.advanceEpochAndCancel();
-      this.interruptionCooldownActive = true;
       this.phase = "listening";
       this.emit("barge_in.rejected", { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: false });
     } else {
@@ -549,6 +687,15 @@ export class SessionOrchestrator {
     return truncateUtf8(lines.join("\n"), this.maxContextBytes);
   }
   private fail(code: string, detail: string, correctiveAction: string): void { this.emit("failure", { code, detail, correctiveAction, recoverable: true }); }
+  private failResponse(active: ActiveResponse, reasonCode: "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"): void {
+    this.emit("response.failed", { turnId: active.turnId, responseId: active.responseId, reasonCode });
+    this.fail(reasonCode, "The response could not be completed successfully.", "Continue listening.");
+    // Establish the local TTS forwarding cutoff before clearing state so a failed
+    // response cannot leave the sidecar progressive stream open and block a
+    // later successful response. cancelResponse is idempotent.
+    this.cancelResponse(active);
+    this.clearActive(active);
+  }
   private emitState(): void { this.emit("session.state", { phase: this.phase, personaDigest: this.personaDigest }); }
   private emit(type: string, payload: Record<string, unknown>): void {
     this.emitFn({ protocolVersion: 1, sessionId: this.options.sessionId, epoch: this.epoch, eventId: this.idFactory(), type, monotonicMs: Math.max(0, this.now()), payload });

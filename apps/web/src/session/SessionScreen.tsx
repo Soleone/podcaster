@@ -36,7 +36,7 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
             <MessageScrollerViewport aria-label="Conversation transcript">
               <MessageScrollerContent className="conversation-list" aria-busy={props.state.dominant === 'reasoning'}>
                 {props.state.conversationItems.length === 0 && !props.state.tentativeText ? <MessageScrollerItem messageId="conversation-empty"><p className="hint">Your conversation will appear here.</p></MessageScrollerItem> : null}
-                {props.state.conversationItems.map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} /></MessageScrollerItem>)}
+                {props.state.conversationItems.filter(item => !(item.kind === 'assistant' && !item.text)).map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} /></MessageScrollerItem>)}
                 {props.state.tentativeText ? <MessageScrollerItem messageId="tentative-transcript"><Message align="end" className="conversation-message user-row"><MessageContent><MessageHeader>You · tentative</MessageHeader><Bubble variant="tinted"><BubbleContent className="conversation-bubble tentative"><p>{props.state.tentativeText}</p></BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
                 {props.state.playbackNotice ? <MessageScrollerItem messageId="playback-notice"><Marker variant="separator" className="continuation-marker"><MarkerContent>{props.state.playbackNotice}</MarkerContent></Marker></MessageScrollerItem> : null}
               </MessageScrollerContent>

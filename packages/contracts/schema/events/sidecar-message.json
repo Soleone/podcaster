@@ -335,6 +335,126 @@
     {
       "properties": {
         "type": {
+          "const": "tts.open"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts.append"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch",
+            "sequence",
+            "text"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts.commit"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "streamId",
+            "responseId",
+            "epoch",
+            "nextSequence",
+            "textSha256"
+          ],
+          "properties": {
+            "streamId": {
+              "$ref": "#/$defs/stream"
+            },
+            "responseId": {
+              "$ref": "#/$defs/response"
+            },
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nextSequence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "textSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
           "const": "tts.cancel"
         },
         "payload": {

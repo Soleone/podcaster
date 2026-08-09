@@ -55,11 +55,30 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
       return dominant(next, posture === 'silence' ? 'intentional_silence' : 'reasoning');
     }
   }
+  if (event.type === 'reasoning.started') {
+    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+    if (!responseId) return next;
+    // Hidden placeholder: carries response identity so an early tts.started can
+    // attach playback before final text exists. Rendered only once text exists.
+    const item: ConversationItem = { kind: 'assistant', id: `assistant:${responseId}`, responseId, text: '', playback: 'preparing', sequence: event.monotonicMs };
+    return { ...next, conversationItems: [...next.conversationItems.filter(existing => existing.id !== item.id), item] };
+  }
   if (event.type === 'reasoning.final') {
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
-    const item: ConversationItem = { kind: 'assistant', id: `assistant:${responseId}`, responseId, text, playback: 'preparing', sequence: event.monotonicMs };
-    return { ...dominant(next, 'reasoning'), assistantText: text, conversationItems: [...next.conversationItems.filter(existing => existing.id !== item.id), item] };
+    const existing = next.conversationItems.find((item): item is Extract<ConversationItem, { kind: 'assistant' }> => item.kind === 'assistant' && item.responseId === responseId);
+    // Upsert the placeholder without resetting an already-playing item to preparing.
+    const item: ConversationItem = existing
+      ? { ...existing, text }
+      : { kind: 'assistant', id: `assistant:${responseId}`, responseId, text, playback: 'preparing', sequence: event.monotonicMs };
+    // Never regress an already-speaking response back to the forming state.
+    const phase: DominantState = next.dominant === 'speaking' ? 'speaking' : 'reasoning';
+    return { ...dominant(next, phase), assistantText: text, conversationItems: [...next.conversationItems.filter(existing => existing.id !== item.id), item] };
+  }
+  if (event.type === 'response.failed') {
+    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+    // Remove an empty placeholder and mark any visible partial response interrupted.
+    return { ...next, conversationItems: next.conversationItems.map(item => item.kind === 'assistant' && item.responseId === responseId && item.text ? { ...item, playback: 'interrupted' as const } : item).filter(item => !(item.kind === 'assistant' && item.responseId === responseId && !item.text)) };
   }
   if (event.type === 'tts.started') {
     const responseId = String(event.payload.responseId ?? '');
@@ -82,7 +101,10 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   }
   if (event.type === 'barge_in.confirmed') return { ...dominant(next, 'listening'), echoConfirmation: false, playbackNotice: '' };
   if (event.type === 'barge_in.rejected') return { ...next, echoConfirmation: false, playbackNotice: 'Continuing the response.', announcement: 'Continuing the response' };
-  if (event.type === 'barge_in.timed_out') return { ...next, echoConfirmation: false, playbackNotice: 'No interruption was confirmed, so the response continued.', announcement: 'No interruption was confirmed. Continuing the response' };
+  if (event.type === 'barge_in.timed_out') {
+    const resumed = event.payload.resumable === true;
+    return { ...next, echoConfirmation: false, playbackNotice: resumed ? 'No interruption was confirmed, so the response continued.' : 'The response stopped because interruption recovery timed out.', announcement: resumed ? 'No interruption was confirmed. Continuing the response' : 'The response stopped' };
+  }
   if (event.type === 'failure') return { ...dominant(next, 'degraded'), degradedMessage: typeof event.payload.detail === 'string' ? event.payload.detail : 'A session component failed.' };
   if (event.type === 'session.state') {
     const phase = event.payload.phase;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasLexicalContent, parseInterruptionDecision } from '../../src/session/InterruptionIntentClassifier.js';
+import { fallbackInterruptionDecision, hasLexicalContent, parseInterruptionDecision } from '../../src/session/InterruptionIntentClassifier.js';
 
 describe('interruption intent contract', () => {
   it.each([
@@ -14,4 +14,16 @@ describe('interruption intent contract', () => {
   ])('rejects invalid classifier output %s', json => expect(parseInterruptionDecision(json)).toBeUndefined());
 
   it.each([['', false], ['…', false], ['uh', true], ['¿podrías seguir?', true]])('uses only lexical preflight for %j', (text, expected) => expect(hasLexicalContent(text)).toBe(expected));
+
+  it.each([
+    ['', 'resume'],
+    ['um', 'resume'],
+    ['okay continue', 'resume'],
+    ["that's really interesting", 'resume'],
+    ['No wait', 'accept'],
+    ['Hold off for a second', 'accept'],
+    ['Can we discuss another system?', 'accept'],
+  ])('falls back safely for %j when model classification is unavailable', (text, action) => {
+    expect(fallbackInterruptionDecision(text).action).toBe(action);
+  });
 });

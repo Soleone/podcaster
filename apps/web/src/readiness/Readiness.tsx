@@ -23,6 +23,19 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
     } catch { /* storage may be unavailable; show disclosure normally */ }
   }, []);
 
+  useEffect(() => {
+    if (!acknowledged || !capability || snapshot?.sidecar === 'ready') return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } });
+        if (response.ok && !cancelled) setSnapshot(await response.json() as Snapshot);
+      } catch { /* the visible snapshot remains authoritative until the next retry */ }
+    };
+    const timer = setInterval(() => void refresh(), 2_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [acknowledged, capability, snapshot?.sidecar]);
+
   async function restoreMicrophonePermission() {
     try {
       const permission = await navigator.permissions?.query({ name: 'microphone' as PermissionName });

@@ -42,6 +42,7 @@ export class BrowserSession {
   constructor(private readonly socket: WebSocket, sidecar: SidecarProcess, private readonly pi: PiClient) {
     this.audio = new AudioClient(sidecar, {
       speechStart: value => this.speechStart(value),
+      speechEnd: value => this.speechEnd(value),
       partial: value => this.partial(value),
       final: value => this.final(value),
       failure: code => this.failure(code),
@@ -127,6 +128,10 @@ export class BrowserSession {
     if (!orchestrator || this.stopped) return;
     const epoch = orchestrator.handleSpeechStart();
     try { this.audio.bindEpoch(value.utteranceId, epoch); } catch { this.failure('invalid_utterance'); }
+  }
+  private speechEnd(_value: VadEvent): void {
+    if (!this.orchestrator || this.stopped) return;
+    this.orchestrator.handleSpeechEnd();
   }
   private partial(value: SttPartial): void {
     if (!this.sessionId || !this.orchestrator || value.epoch !== this.orchestrator.snapshot().epoch) return;

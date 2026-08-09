@@ -99,6 +99,26 @@ export class SessionController {
       }
     } else if (event.type === 'tts.ended' && this.active && event.payload.playbackId === this.active.playbackId) {
       this.active.player.setGeneratedSamples(Number(event.payload.generatedSamples));
+    } else if (event.type === 'reasoning.started') {
+      // A new response superseded the current one before it terminalized (rapid
+      // re-engagement). Stop the superseded playback so its audio cannot keep
+      // playing or leak. A completed playback is already terminal, so no-op.
+      const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+      const active = this.active;
+      if (active && active.responseId !== responseId && !active.terminal) {
+        await this.terminalize('cancelled');
+      }
+    } else if (event.type === 'response.failed') {
+      // Identity-matched failure: stop only the matching playback with reason
+      // 'failed' and send its exact terminal receipt. Clear any provisional
+      // interruption state first so an in-flight pause checkpoint cannot be
+      // persisted after the cutoff. If playback never started, no-op.
+      this.clearProvisional();
+      this.setState({ ...this.state, echoConfirmation: false, playbackNotice: '' });
+      const active = this.active;
+      if (active && active.responseId === event.payload.responseId) {
+        await this.terminalize('failed');
+      }
     } else if (event.type === 'barge_in.provisional' && this.active && event.payload.responseId === this.active.responseId && event.payload.outputEpoch === this.active.outputEpoch) {
       const active = this.active;
       let completeCheckpoint!: (ready: boolean) => void;

@@ -79,6 +79,25 @@ class CancellationToken:
 
 
 @dataclass
+class TtsTextStream:
+    response_id: str
+    epoch: int
+    token: CancellationToken
+    condition: threading.Condition
+    chunks: deque[str]
+    next_sequence: int = 0
+    total_characters: int = 0
+    exact_text_hasher: object = field(default_factory=hashlib.sha256)
+    committed: bool = False
+    started: bool = False
+    playback_id: str = ""
+    output_stream_id: int = 0
+    output_sequence: int = 0
+    generated_samples: int = 0
+    done: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
 class Utterance:
     utterance_id: str
     capture_start_sequence: int
@@ -108,6 +127,7 @@ class StreamState:
     utterance: Utterance | None = None
     tts: dict[str, CancellationToken] = field(default_factory=dict)
     tts_done: dict[str, threading.Event] = field(default_factory=dict)
+    tts_stream: TtsTextStream | None = None
     used_output_stream_ids: set[int] = field(default_factory=set)
     closed: bool = False
 
@@ -253,69 +273,129 @@ class SelectedAudioRuntime:
             self._maybe_start_stt(state, utterance)
 
     def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str) -> None:
+        """Compatibility wrapper: one-shot TTS through the progressive path."""
+        self.open_tts(stream_id, response_id, epoch)
+        self.append_tts(stream_id, response_id, epoch, 0, text)
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        try:
+            self.commit_tts(stream_id, response_id, epoch, 1, text_hash)
+        except (RuntimeError, ValueError):
+            # The worker can poison the runtime immediately after the first
+            # append. In that race the sidecar failure is already authoritative;
+            # the one-shot compatibility wrapper must not surface a second,
+            # timing-dependent commit exception to its caller.
+            if self.status == "failed":
+                return
+            raise
+
+    def open_tts(self, stream_id: str, response_id: str, epoch: int) -> None:
         state = self._state(stream_id)
         with self._lock:
             if self.status != "ready":
                 raise RuntimeError("selected runtime requires restart")
             if state.closed:
                 raise RuntimeError("audio stream is closing")
+            existing = state.tts_stream
+            if existing is not None and not existing.token.cancelled:
+                raise RuntimeError("a progressive TTS stream is already open")
             if response_id in state.tts:
                 raise ValueError("duplicate TTS response")
             if len(state.tts) >= 2:
                 raise RuntimeError("TTS request queue exceeded bound")
-            # One replacement may wait behind the currently terminalizing
-            # adapter call. Register it immediately so cancel-before-start is
-            # owned, but never enter the single-active Kokoro adapter early.
             prior_fences = tuple(state.tts_done.values())
-            token = CancellationToken()
-            done = threading.Event()
-            state.tts[response_id] = token
-            state.tts_done[response_id] = done
             playback_id = _uuid7()
             output_stream_id = secrets.randbelow(2**32)
             while output_stream_id in state.used_output_stream_ids:
                 output_stream_id = secrets.randbelow(2**32)
             state.used_output_stream_ids.add(output_stream_id)
+            token = CancellationToken()
+            done = threading.Event()
+            state.tts[response_id] = token
+            state.tts_done[response_id] = done
+            text_stream = TtsTextStream(
+                response_id=response_id,
+                epoch=epoch,
+                token=token,
+                condition=threading.Condition(),
+                chunks=deque(),
+                playback_id=playback_id,
+                output_stream_id=output_stream_id,
+                done=done,
+            )
+            state.tts_stream = text_stream
 
         def work() -> None:
             try:
                 for fence in prior_fences:
                     if not fence.wait(timeout=10):
                         raise RuntimeError("prior TTS worker did not terminalize")
-                token.raise_if_cancelled()
+                text_stream.token.raise_if_cancelled()
                 with self._lock:
                     if self.status != "ready" or state.closed:
-                        token.cancel()
-                token.raise_if_cancelled()
-                state.emit_json(
-                    {
-                        "type": "tts.started",
-                        "payload": {
-                            "streamId": stream_id,
-                            "responseId": response_id,
-                            "epoch": epoch,
-                            "playbackId": playback_id,
-                            "outputStreamId": output_stream_id,
-                            "sampleRate": 24_000,
-                        },
-                    }
-                )
+                        text_stream.token.cancel()
+                text_stream.token.raise_if_cancelled()
 
-                def audio(chunk: AudioChunk) -> None:
-                    encoded = encode_frame(
-                        BinaryAudioFrame(
-                            2,
-                            output_stream_id,
-                            chunk.sequence,
-                            max(0, int(__import__("time").monotonic_ns() // 1000)),
-                            chunk.pcm16,
-                        ),
-                        MAX_BINARY_PAYLOAD,
+                # Wait for the first chunk or commit/cancellation
+                with text_stream.condition:
+                    while not text_stream.chunks and not text_stream.committed and not text_stream.token.cancelled:
+                        text_stream.condition.wait(timeout=0.25)
+                text_stream.token.raise_if_cancelled()
+
+                if not text_stream.started and text_stream.chunks:
+                    # Emit tts.started only when first nonempty chunk is ready
+                    text_stream.started = True
+                    state.emit_json(
+                        {
+                            "type": "tts.started",
+                            "payload": {
+                                "streamId": stream_id,
+                                "responseId": response_id,
+                                "epoch": epoch,
+                                "playbackId": text_stream.playback_id,
+                                "outputStreamId": text_stream.output_stream_id,
+                                "sampleRate": 24_000,
+                            },
+                        }
                     )
-                    token.accept_unless_cancelled(lambda: state.emit_binary(encoded))
 
-                result = self.tts.synthesize_stream(text, token, audio)
-                token.raise_if_cancelled()
+                # Synthesize chunks sequentially
+                while True:
+                    with text_stream.condition:
+                        while not text_stream.chunks and not text_stream.committed and not text_stream.token.cancelled:
+                            text_stream.condition.wait(timeout=0.25)
+                        text_stream.token.raise_if_cancelled()
+                        if text_stream.chunks:
+                            chunk_text = text_stream.chunks.popleft()
+                        elif text_stream.committed:
+                            break
+                        else:
+                            continue
+
+                    # Synthesize this chunk
+                    local_sequence = 0
+
+                    def audio(chunk: AudioChunk) -> None:
+                        nonlocal local_sequence
+                        encoded = encode_frame(
+                            BinaryAudioFrame(
+                                2,
+                                text_stream.output_stream_id,
+                                text_stream.output_sequence,
+                                max(0, int(__import__("time").monotonic_ns() // 1000)),
+                                chunk.pcm16,
+                            ),
+                            MAX_BINARY_PAYLOAD,
+                        )
+                        text_stream.token.accept_unless_cancelled(lambda: state.emit_binary(encoded))
+                        text_stream.output_sequence += 1
+                        text_stream.generated_samples += len(chunk.pcm16) // 2
+                        local_sequence += 1
+
+                    self.tts.synthesize_stream(chunk_text, text_stream.token, audio)
+                    text_stream.token.raise_if_cancelled()
+
+                # All chunks synthesized, emit tts.ended
+                text_stream.token.raise_if_cancelled()
                 state.emit_json(
                     {
                         "type": "tts.ended",
@@ -323,13 +403,13 @@ class SelectedAudioRuntime:
                             "streamId": stream_id,
                             "responseId": response_id,
                             "epoch": epoch,
-                            "playbackId": playback_id,
-                            "generatedSamples": result.total_samples,
+                            "playbackId": text_stream.playback_id,
+                            "generatedSamples": text_stream.generated_samples,
                         },
                     }
                 )
             except BaseException:
-                if token.cancelled:
+                if text_stream.token.cancelled:
                     state.emit_json(
                         {
                             "type": "tts.cancelled",
@@ -342,10 +422,70 @@ class SelectedAudioRuntime:
                 with self._lock:
                     state.tts.pop(response_id, None)
                     state.tts_done.pop(response_id, None)
-                    done.set()
+                    if state.tts_stream is text_stream:
+                        state.tts_stream = None
+                    text_stream.done.set()
                 self._drop_worker(threading.current_thread())
 
         self._spawn("selected-tts", work)
+
+    def append_tts(
+        self, stream_id: str, response_id: str, epoch: int, sequence: int, text: str
+    ) -> None:
+        state = self._state(stream_id)
+        with self._lock:
+            if self.status != "ready":
+                raise RuntimeError("selected runtime requires restart")
+            if state.closed:
+                raise RuntimeError("audio stream is closing")
+            text_stream = state.tts_stream
+            if text_stream is None:
+                raise ValueError("no progressive TTS stream is open")
+            if text_stream.response_id != response_id or text_stream.epoch != epoch:
+                raise ValueError("response or epoch mismatch")
+            if text_stream.committed:
+                raise ValueError("TTS stream is already committed")
+            if sequence != text_stream.next_sequence:
+                raise ValueError("append sequence gap or duplicate")
+            if not text or not text.strip():
+                raise ValueError("empty or whitespace-only append")
+            total = text_stream.total_characters + len(text)
+            if total > 4000:
+                raise ValueError("TTS text exceeds 4000 characters")
+            text_stream.next_sequence += 1
+            text_stream.total_characters = total
+            text_stream.exact_text_hasher.update(text.encode("utf-8"))
+            text_stream.chunks.append(text)
+            with text_stream.condition:
+                text_stream.condition.notify_all()
+
+    def commit_tts(
+        self,
+        stream_id: str,
+        response_id: str,
+        epoch: int,
+        next_sequence: int,
+        text_sha256: str,
+    ) -> None:
+        state = self._state(stream_id)
+        with self._lock:
+            if self.status != "ready":
+                raise RuntimeError("selected runtime requires restart")
+            text_stream = state.tts_stream
+            if text_stream is None:
+                raise ValueError("no progressive TTS stream is open")
+            if text_stream.response_id != response_id or text_stream.epoch != epoch:
+                raise ValueError("response or epoch mismatch")
+            if text_stream.committed:
+                raise ValueError("TTS stream is already committed")
+            if next_sequence != text_stream.next_sequence:
+                raise ValueError("commit next_sequence does not match")
+            expected_hash = text_stream.exact_text_hasher.hexdigest()
+            if text_sha256 != expected_hash:
+                raise ValueError("commit text SHA-256 mismatch")
+            text_stream.committed = True
+            with text_stream.condition:
+                text_stream.condition.notify_all()
 
     def cancel_tts(self, stream_id: str, response_id: str) -> None:
         state = self._state(stream_id)
@@ -371,6 +511,8 @@ class SelectedAudioRuntime:
             state.closed = True
             if state.utterance:
                 self._cancel_utterance(state.utterance)
+            if state.tts_stream is not None:
+                state.tts_stream.token.cancel()
             for token in tuple(state.tts.values()):
                 token.cancel()
             terminal_fences = tuple(state.tts_done.values())

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACT_VALIDATORS } from "@app/contracts";
-import type { PolicyDecision, PolicyInput } from "@app/policy";
+import { decide, type PolicyDecision, type PolicyInput } from "@app/policy";
 import type { PiClient, PiEvent, PiRequestInput } from "../../src/pi/PiClient.js";
 import { PersonaValidationError, SessionOrchestrator, type Scheduler, type SessionEvent, type SpeechOutputPort } from "../../src/session/SessionOrchestrator.js";
 
@@ -10,23 +10,45 @@ const policy = (posture: PolicyDecision["posture"]): ((input: PolicyInput) => Po
 
 class FakePi implements PiClient {
   readonly inputs: PiRequestInput[] = [];
-  constructor(private readonly respond: (input: PiRequestInput, signal: AbortSignal) => AsyncIterable<PiEvent> = async function* () { yield { type: "final", text: "A concise response for this turn." }; }) {}
+  constructor(private readonly respond: (input: PiRequestInput, signal: AbortSignal) => AsyncIterable<PiEvent> = async function* () {
+    yield { type: "delta", text: "A concise response for this turn." };
+    yield { type: "final", text: "A concise response for this turn." };
+  }) {}
   async probe() { return { status: "ready" as const, detail: "ready", correctiveAction: "None." }; }
   request(input: PiRequestInput, signal: AbortSignal): AsyncIterable<PiEvent> { this.inputs.push(input); return this.respond(input, signal); }
   async shutdown() {}
 }
 class FakeSpeech implements SpeechOutputPort {
   readonly synthesized: Array<{ responseId: string; text: string }> = [];
+  readonly appended: Array<{ responseId: string; text: string }> = [];
+  readonly finished: Array<{ responseId: string }> = [];
   readonly paused: string[] = [];
   readonly resumed: string[] = [];
   readonly cancelled: string[] = [];
-  synthesize(input: { responseId: string; text: string }): Promise<{ playbackId: string; sampleRate: number; generatedSamples: number }> {
+  readonly releases: string[] = [];
+  private speechIndex = 0;
+  synthesize(input: { responseId: string; text: string; signal?: AbortSignal }): Promise<{ playbackId: string; sampleRate: number; generatedSamples: number; completion?: Promise<{ generatedSamples: number }> }> {
     this.synthesized.push({ responseId: input.responseId, text: input.text });
-    return Promise.resolve({ playbackId: ids[80 + this.synthesized.length]!, sampleRate: 24000, generatedSamples: 6400 });
+    const stream = this.begin({ responseId: input.responseId, signal: input.signal ?? new AbortController().signal });
+    stream.append(input.text);
+    stream.finish();
+    return stream.started;
+  }
+  begin(input: { responseId: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): SpeechOutputStream {
+    const self = this;
+    self.speechIndex++;
+    const playbackId = ids[80 + self.speechIndex]!;
+    const meta = { playbackId, sampleRate: 24000, generatedSamples: 6400, completion: Promise.resolve({ generatedSamples: 6400 }) };
+    return {
+      started: Promise.resolve(meta),
+      append(text: string): void { self.appended.push({ responseId: input.responseId, text }); },
+      finish(): void { self.finished.push(input.responseId); },
+    };
   }
   pause(responseId: string) { this.paused.push(responseId); }
   resume(responseId: string) { this.resumed.push(responseId); }
   cancel(responseId: string) { this.cancelled.push(responseId); }
+  release?(responseId: string): void { this.releases.push(responseId); }
 }
 class FakeScheduler implements Scheduler {
   callbacks: Array<() => void> = [];
@@ -47,7 +69,9 @@ function turn(index: number, text = "This is a stable user thought", epoch = 0) 
 const schemaForType: Record<string, keyof typeof CONTRACT_VALIDATORS> = {
   "session.state": "SessionStateEvent",
   "policy.decision": "PolicyDecisionEvent",
+  "reasoning.started": "ReasoningStartedEvent",
   "reasoning.final": "ReasoningFinalEvent",
+  "response.failed": "ResponseFailedEvent",
   "tts.started": "TtsStartedEvent",
   "tts.ended": "TtsEndedEvent",
   "failure": "FailureEvent",
@@ -63,13 +87,18 @@ describe("safe session orchestrator", () => {
     const released: string[] = [];
     const speech = new FakeSpeech() as FakeSpeech & { release(responseId: string): void };
     speech.release = responseId => released.push(responseId);
-    speech.synthesize = input => {
-      speech.synthesized.push({ responseId: input.responseId, text: input.text });
-      return Promise.resolve({
+    speech.begin = input => {
+      speech.synthesized.push({ responseId: input.responseId, text: "" });
+      const meta = {
         playbackId: ids[81]!,
         sampleRate: 24_000,
         completion: new Promise<{ generatedSamples: number }>(resolve => { finish = resolve; }),
-      }) as never;
+      };
+      return {
+        started: Promise.resolve(meta),
+        append(text: string): void { speech.appended.push({ responseId: input.responseId, text }); },
+        finish(): void { speech.finished.push(input.responseId); },
+      };
     };
     const { session, events } = setup({ speech });
     const handling = session.handleStableFinal(turn(0));
@@ -86,15 +115,20 @@ describe("safe session orchestrator", () => {
     let finish!: (value: { generatedSamples: number }) => void;
     let generated!: (total: number) => void;
     const speech = new FakeSpeech();
-    speech.synthesize = ((input: { responseId: string; text: string; onGeneratedSamples?: (total: number) => void }) => {
-      speech.synthesized.push({ responseId: input.responseId, text: input.text });
+    speech.begin = ((input: { responseId: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }) => {
+      speech.synthesized.push({ responseId: input.responseId, text: "" });
       generated = input.onGeneratedSamples!;
-      return Promise.resolve({
+      const meta = {
         playbackId: ids[82]!,
         sampleRate: 24_000,
         completion: new Promise<{ generatedSamples: number }>(resolve => { finish = resolve; }),
-      });
-    }) as never;
+      };
+      return {
+        started: Promise.resolve(meta),
+        append(text: string): void { speech.appended.push({ responseId: input.responseId, text }); },
+        finish(): void { speech.finished.push(input.responseId); },
+      };
+    }) as (input: { responseId: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }) => SpeechOutputStream;
     const { session } = setup({ speech });
     const handling = session.handleStableFinal(turn(0));
     await new Promise<void>(resolve => setImmediate(resolve));
@@ -120,7 +154,7 @@ describe("safe session orchestrator", () => {
 
   it("cancels only the current turn and remains available for listening", async () => {
     let release!: (value: string) => void;
-    const pi = new FakePi(() => ({ async *[Symbol.asyncIterator]() { yield { type: "final" as const, text: await new Promise<string>(resolve => { release = resolve; }) }; } }));
+    const pi = new FakePi(() => ({ async *[Symbol.asyncIterator]() { const text = await new Promise<string>(resolve => { release = resolve; }); yield { type: "delta" as const, text }; yield { type: "final" as const, text }; } }));
     const { session, speech } = setup({ pi });
     const handling = session.handleStableFinal(turn(0));
     await Promise.resolve();
@@ -164,7 +198,7 @@ describe("safe session orchestrator", () => {
     const { session, events, pi, speech } = setup();
     await Promise.all([session.handleStableFinal(turn(0)), session.handleStableFinal(turn(0))]);
     expect((pi as FakePi).inputs).toHaveLength(1);
-    expect((speech as FakeSpeech).synthesized).toHaveLength(1);
+    expect((speech as FakeSpeech).appended).toHaveLength(1);
     expect(events.filter(event => event.type === "policy.decision")).toHaveLength(1);
     for (const event of events) {
       const title = schemaForType[event.type];
@@ -206,7 +240,7 @@ describe("safe session orchestrator", () => {
   it("suppresses stale Pi completion after a superseding final", async () => {
     const releases: Array<(value: string) => void> = [];
     const pi = new FakePi((_input, _signal) => ({
-      async *[Symbol.asyncIterator]() { const text = await new Promise<string>(resolve => releases.push(resolve)); yield { type: "final" as const, text }; },
+      async *[Symbol.asyncIterator]() { const text = await new Promise<string>(resolve => releases.push(resolve)); yield { type: "delta" as const, text }; yield { type: "final" as const, text }; },
     }));
     const { session, speech, events } = setup({ pi });
     const first = session.handleStableFinal(turn(0));
@@ -216,25 +250,32 @@ describe("safe session orchestrator", () => {
     releases[0]!("First stale response");
     releases[1]!("Second current response");
     await Promise.all([first, second]);
-    expect((speech as FakeSpeech).synthesized.map(item => item.text)).toEqual(["Second current response"]);
+    expect((speech as FakeSpeech).appended.map(item => item.text)).toEqual(["Second current response"]);
     expect(session.snapshot().epoch).toBe(1);
     expect(events.filter(event => event.type === "reasoning.final")).toHaveLength(1);
   });
 
   it("keeps output paused when synthesis completes during provisional state", async () => {
-    let finish!: (value: { playbackId: string; sampleRate: number; generatedSamples: number }) => void;
+    let resolveStart!: (value: { playbackId: string; sampleRate: number; generatedSamples: number; completion?: Promise<{ generatedSamples: number }> }) => void;
     const speech = new FakeSpeech();
-    speech.synthesize = input => {
-      speech.synthesized.push({ responseId: input.responseId, text: input.text });
-      return new Promise(resolve => { finish = resolve; });
+    speech.begin = input => {
+      speech.synthesized.push({ responseId: input.responseId, text: "" });
+      const deferred = new Promise<{ playbackId: string; sampleRate: number; generatedSamples: number; completion?: Promise<{ generatedSamples: number }> }>(resolve => { resolveStart = resolve; });
+      const completion = Promise.resolve({ generatedSamples: 6400 });
+      return {
+        started: deferred.then(meta => ({ ...meta, completion })),
+        append(text: string): void { speech.appended.push({ responseId: input.responseId, text }); },
+        finish(): void { speech.finished.push(input.responseId); },
+      };
     };
     const { session } = setup({ speech });
     const handling = session.handleStableFinal(turn(0));
     await new Promise<void>(resolve => setImmediate(resolve));
     const responseId = session.snapshot().activeResponseId!;
     session.beginProvisionalBargeIn(responseId);
-    finish({ playbackId: ids[90]!, sampleRate: 24000, generatedSamples: 6400 });
+    resolveStart({ playbackId: ids[90]!, sampleRate: 24000, generatedSamples: 6400 });
     await handling;
+    await new Promise<void>(resolve => setImmediate(resolve));
     expect(session.snapshot().phase).toBe("echo_provisional");
     expect(speech.paused).toEqual([responseId, responseId]);
     session.playbackPaused({ responseId, playbackId: ids[90]!, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
@@ -350,9 +391,8 @@ describe("safe session orchestrator", () => {
     expect(session.retentionSnapshot()).toEqual({ contextTurns: 0, recentDecisions: 0, seenTurns: 0 });
   });
 
-  it("resumes an explicit rejection or an unanswered timeout for the same playable response", async () => {
-    const scheduler = new FakeScheduler();
-    const { session, speech } = setup({ scheduler });
+  it("resumes an explicit rejection for the same playable response", async () => {
+    const { session, speech } = setup();
     await session.handleStableFinal(turn(0));
     const first = session.snapshot().activeResponseId!;
     const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
@@ -361,15 +401,11 @@ describe("safe session orchestrator", () => {
     session.setEchoRecovered(true);
     expect(session.rejectBargeIn()).toBe(true);
     expect((speech as FakeSpeech).resumed).toEqual([first]);
-    session.beginProvisionalBargeIn(first);
-    session.playbackPaused({ responseId: first, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
-    scheduler.fire();
-    expect((speech as FakeSpeech).resumed).toEqual([first, first]);
     expect((speech as FakeSpeech).cancelled).toEqual([]);
     expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0 });
   });
 
-  it("continues playable output after an unanswered interruption prompt", async () => {
+  it("resumes after a missing interruption final and ignores that final if it arrives late", async () => {
     const scheduler = new FakeScheduler();
     const { session, speech, events } = setup({ scheduler });
     await session.handleStableFinal(turn(0));
@@ -377,18 +413,37 @@ describe("safe session orchestrator", () => {
     const playbackId = Object.keys(deliveredExtent)[0]!;
     session.beginProvisionalBargeIn(activeResponseId!);
     session.playbackPaused({ responseId: activeResponseId!, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
+    session.handleSpeechEnd();
     scheduler.fire();
-    expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0 });
+    expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0, activeResponseId });
     expect((speech as FakeSpeech).cancelled).toEqual([]);
     expect((speech as FakeSpeech).resumed).toEqual([activeResponseId]);
-    expect(events).toContainEqual(expect.objectContaining({ epoch: 0, type: "barge_in.timed_out", payload: expect.objectContaining({ outputEpoch: 0, resumable: true }) }));
-    session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 3200, reason: "cancelled" });
-    expect(session.snapshot()).toMatchObject({ phase: "listening", epoch: 0, deliveredExtent: { [playbackId]: 3200 } });
+    expect(events).toContainEqual(expect.objectContaining({ type: "barge_in.timed_out", payload: expect.objectContaining({ resumable: true }) }));
+    const decisionCount = events.filter(event => event.type === "policy.decision").length;
+    await session.handleStableFinal(turn(1, "Late noise transcript"));
+    expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0, activeResponseId });
+    expect(events.filter(event => event.type === "policy.decision")).toHaveLength(decisionCount);
+  });
+
+  it("waits for the browser pause checkpoint before classifying a fast final", async () => {
+    const { session, speech } = setup();
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(responseId);
+    await session.handleStableFinal(turn(1, ""));
+    expect(session.snapshot()).toMatchObject({ phase: "interruption_deciding", epoch: 0, activeResponseId: responseId });
+    expect((speech as FakeSpeech).cancelled).toEqual([]);
+    expect((speech as FakeSpeech).resumed).toEqual([]);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 120, generatedSamples: 6400 });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0, activeResponseId: responseId });
+    expect((speech as FakeSpeech).resumed).toEqual([responseId]);
   });
 
   it("does not resume recovered provisional input before a playable buffer exists", async () => {
     let release!: (value: string) => void;
-    const pi = new FakePi(() => ({ async *[Symbol.asyncIterator]() { yield { type: "final" as const, text: await new Promise<string>(resolve => { release = resolve; }) }; } }));
+    const pi = new FakePi(() => ({ async *[Symbol.asyncIterator]() { const text = await new Promise<string>(resolve => { release = resolve; }); yield { type: "delta" as const, text }; yield { type: "final" as const, text }; } }));
     const { session, speech } = setup({ pi });
     const handling = session.handleStableFinal(turn(0));
     await Promise.resolve();
@@ -401,13 +456,19 @@ describe("safe session orchestrator", () => {
     expect(session.snapshot().epoch).toBe(1);
     release("late response");
     await handling;
-    expect((speech as FakeSpeech).synthesized).toEqual([]);
+    expect((speech as FakeSpeech).appended).toEqual([]);
 
     let finishSynthesis!: (value: { playbackId: string; sampleRate: number; generatedSamples: number }) => void;
     const pendingSpeech = new FakeSpeech();
-    pendingSpeech.synthesize = input => {
-      pendingSpeech.synthesized.push({ responseId: input.responseId, text: input.text });
-      return new Promise(resolve => { finishSynthesis = resolve; });
+    pendingSpeech.begin = input => {
+      pendingSpeech.synthesized.push({ responseId: input.responseId, text: "" });
+      const deferred = new Promise<{ playbackId: string; sampleRate: number; generatedSamples: number; completion?: Promise<{ generatedSamples: number }> }>(resolve => { finishSynthesis = resolve; });
+      const completion = Promise.resolve({ generatedSamples: 6400 });
+      return {
+        started: deferred.then(meta => ({ ...meta, completion })),
+        append(text: string): void {},
+        finish(): void {},
+      };
     };
     const pending = setup({ speech: pendingSpeech });
     const pendingHandling = pending.session.handleStableFinal(turn(1));
@@ -443,25 +504,37 @@ describe("safe session orchestrator", () => {
 
   it("terminally resolves provisional state on Pi and synthesis failures", async () => {
     for (const mode of ["pi", "synthesis"] as const) {
-      let releasePi!: (event: PiEvent) => void;
+      const piEvents: PiEvent[] = [];
+      let releasePi!: () => void;
       let rejectSynthesis!: (error: Error) => void;
       const scheduler = new FakeScheduler();
-      const pi = new FakePi(() => ({ async *[Symbol.asyncIterator]() { yield await new Promise<PiEvent>(resolve => { releasePi = resolve; }); } }));
+      const pi = new FakePi(() => ({
+        async *[Symbol.asyncIterator]() {
+          while (piEvents.length === 0) await new Promise<void>(resolve => { releasePi = resolve; });
+          while (piEvents.length > 0) yield piEvents.shift()!;
+        },
+      }));
       const speech = new FakeSpeech();
-      if (mode === "synthesis") speech.synthesize = input => {
-        speech.synthesized.push({ responseId: input.responseId, text: input.text });
-        return new Promise((_resolve, reject) => { rejectSynthesis = reject; });
+      if (mode === "synthesis") speech.begin = input => {
+        speech.synthesized.push({ responseId: input.responseId, text: "" });
+        return {
+          started: new Promise((_resolve, reject) => { rejectSynthesis = reject; }),
+          append(text: string): void {},
+          finish(): void {},
+        };
       };
       const { session, events } = setup({ pi, speech, scheduler });
       const handling = session.handleStableFinal(turn(0));
       await Promise.resolve();
       if (mode === "synthesis") {
-        releasePi({ type: "final", text: "A valid response for synthesis." });
+        piEvents.push({ type: "delta", text: "A valid response for synthesis." });
+        piEvents.push({ type: "final", text: "A valid response for synthesis." });
+        releasePi!();
         await new Promise<void>(resolve => setImmediate(resolve));
       }
       const responseId = session.snapshot().activeResponseId!;
       session.beginProvisionalBargeIn(responseId);
-      if (mode === "pi") releasePi({ type: "error", state: "unavailable", detail: "unavailable", correctiveAction: "retry" });
+      if (mode === "pi") { piEvents.push({ type: "error", state: "unavailable", detail: "unavailable", correctiveAction: "retry" }); releasePi!(); }
       else rejectSynthesis(new Error("failed"));
       await handling;
       expect(session.snapshot()).toMatchObject({ phase: "listening", epoch: 1 });
@@ -472,7 +545,7 @@ describe("safe session orchestrator", () => {
   });
 
   it("adds assistant context only after current full successful playback", async () => {
-    const pi = new FakePi(async function* (input) { yield { type: "final", text: `Reply to: ${input.transcript}` }; });
+    const pi = new FakePi(async function* (input) { yield { type: "delta", text: `Reply to: ${input.transcript}` }; yield { type: "final", text: `Reply to: ${input.transcript}` }; });
     const { session } = setup({ pi });
     await session.handleStableFinal(turn(0, "First user thought for reply"));
     const oldPlayback = Object.keys(session.snapshot().deliveredExtent)[0]!;
@@ -487,16 +560,21 @@ describe("safe session orchestrator", () => {
   });
 
   it("rejects zero-audio synthesis and never commits its assistant text to context", async () => {
-    const pi = new FakePi(async function* (input) { yield { type: "final", text: `Zero audio reply to: ${input.transcript}` }; });
+    const pi = new FakePi(async function* (input) { yield { type: "delta", text: `Zero audio reply to: ${input.transcript}` }; yield { type: "final", text: `Zero audio reply to: ${input.transcript}` }; });
     const speech = new FakeSpeech();
-    speech.synthesize = input => {
-      speech.synthesized.push({ responseId: input.responseId, text: input.text });
-      return Promise.resolve({ playbackId: ids[92]!, sampleRate: 24000, generatedSamples: 0 });
+    speech.begin = input => {
+      speech.synthesized.push({ responseId: input.responseId, text: "" });
+      return {
+        started: Promise.resolve({ playbackId: ids[92]!, sampleRate: 24000, generatedSamples: 0 }),
+        append(text: string): void {},
+        finish(): void {},
+      };
     };
     const { session, events } = setup({ pi, speech });
     await session.handleStableFinal(turn(0, "First thought receives zero audio"));
+    await new Promise<void>(resolve => setImmediate(resolve));
     expect(session.snapshot()).toMatchObject({ phase: "listening", deliveredExtent: {} });
-    expect(events).toContainEqual(expect.objectContaining({ type: "failure", payload: expect.objectContaining({ code: "response_failed" }) }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "response.failed", payload: expect.objectContaining({ reasonCode: "tts_failed" }) }));
     await session.handleStableFinal(turn(1, "Second thought checks bounded context"));
     expect(pi.inputs[1]!.boundedContext).not.toContain("Zero audio reply to: First thought receives zero audio");
   });
@@ -553,7 +631,7 @@ describe("safe session orchestrator", () => {
   });
 
   it("preserves invariants across deterministic provisional race permutations", async () => {
-    const terminals = ["confirm", "reject", "timeout"] as const;
+    const terminals = ["confirm", "reject"] as const;
     const challengers = ["stop", "new-final", "playback-complete"] as const;
     const orders = ["terminal-first", "challenger-first"] as const;
     for (const terminal of terminals) for (const challenger of challengers) for (const order of orders) {
@@ -565,12 +643,12 @@ describe("safe session orchestrator", () => {
       const playbackId = Object.keys(deliveredExtent)[0]!;
       expect(session.beginProvisionalBargeIn(oldResponseId)).toBe(true);
       session.playbackPaused({ responseId: oldResponseId, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
+      session.handleSpeechEnd();
       expect(session.beginProvisionalBargeIn(oldResponseId)).toBe(false);
 
       const runTerminal = () => {
         if (terminal === "confirm") session.confirmBargeIn();
-        else if (terminal === "reject") session.rejectBargeIn();
-        else scheduler.fire();
+        else session.rejectBargeIn();
       };
       const runChallenger = async () => {
         if (challenger === "stop") session.stop();
@@ -585,14 +663,12 @@ describe("safe session orchestrator", () => {
 
       const expectedEpoch = order === "challenger-first"
         ? (challenger === "playback-complete" ? 0 : 1)
-        : terminal === "timeout"
-          ? (challenger === "playback-complete" ? 0 : 1)
-          : (challenger === "stop" ? 2 : 1);
+        : (challenger === "stop" ? 2 : 1);
       expect(session.snapshot().epoch, `${terminal}/${challenger}/${order}`).toBe(expectedEpoch);
-      const playbackFinishedBeforeCancellation = challenger === "playback-complete" && (order === "challenger-first" || terminal === "timeout");
+      const playbackFinishedBeforeCancellation = challenger === "playback-complete" && order === "challenger-first";
       const expectedOldCancellation = playbackFinishedBeforeCancellation ? 0 : 1;
       expect(speech.cancelled.filter(id => id === oldResponseId), `${terminal}/${challenger}/${order}`).toHaveLength(expectedOldCancellation);
-      expect(speech.resumed).toEqual(terminal === "timeout" && order === "terminal-first" ? [oldResponseId] : []);
+      expect(speech.resumed).toEqual([]);
       expect(session.beginProvisionalBargeIn(oldResponseId)).toBe(false);
       expect(events.filter(event => event.type === "barge_in.provisional")).toHaveLength(1);
       expect(events.filter(event => ["barge_in.confirmed", "barge_in.rejected", "barge_in.timed_out"].includes(event.type))).toHaveLength(1);
@@ -605,5 +681,254 @@ describe("safe session orchestrator", () => {
       expect(session.snapshot().activeResponseId).not.toBe(oldResponseId);
       expect(session.snapshot().phase).not.toBe("echo_provisional");
     }
+  });
+
+  it("cancels progressive speech once after first-sentence audio on a Pi failure and keeps the next response usable", async () => {
+    const pi = new FakePi(async function* (input) {
+      if (input.transcript.includes("Second")) {
+        yield { type: "delta", text: "A successful second reply." };
+        yield { type: "final", text: "A successful second reply." };
+        return;
+      }
+      yield { type: "delta", text: "First sentence. Second" };
+      yield { type: "error", state: "unavailable", detail: "provider unavailable", correctiveAction: "retry" };
+    });
+    const { session, events, speech } = setup({ pi });
+    await session.handleStableFinal(turn(0, "A stable user thought"));
+    const firstResponse = events.find(event => event.type === "reasoning.started")!.payload.responseId as string;
+    expect((speech as FakeSpeech).appended).toContainEqual({ responseId: firstResponse, text: "First sentence." });
+    expect((speech as FakeSpeech).cancelled).toEqual([firstResponse]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "response.failed", payload: expect.objectContaining({ responseId: firstResponse, reasonCode: "reasoning_unavailable" }) }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "failure", payload: expect.objectContaining({ code: "reasoning_unavailable" }) }));
+    expect(events.filter(event => event.type === "reasoning.final")).toHaveLength(0);
+    expect(session.snapshot().phase).toBe("listening");
+
+    // The next response opens, appends, finishes, plays, and commits context.
+    await session.handleStableFinal(turn(1, "Second healthy thought"));
+    const secondResponse = events.filter(event => event.type === "reasoning.started").at(-1)!.payload.responseId as string;
+    expect((speech as FakeSpeech).finished).toContain(secondResponse);
+    const secondStarted = events.find(event => event.type === "tts.started" && event.payload.responseId === secondResponse);
+    const secondPlayback = secondStarted!.payload.playbackId as string;
+    session.playbackStopped({ playbackId: secondPlayback, cancelledEpoch: 0, finalPlayedSampleOffset: 6400, reason: "completed" });
+    await session.handleStableFinal(turn(2, "Third thought checks context"));
+    expect(pi.inputs[2]!.boundedContext).toContain("A successful second reply.");
+    expect(pi.inputs[2]!.boundedContext).not.toContain("First sentence.");
+  });
+
+  it("routes completion rejection through response.failed(tts_failed) without committing context", async () => {
+    let rejectCompletion!: (error: Error) => void;
+    let playbackIndex = 0;
+    const speech = new FakeSpeech();
+    speech.begin = input => {
+      speech.synthesized.push({ responseId: input.responseId, text: "" });
+      const meta = {
+        playbackId: ids[95 + playbackIndex++]!,
+        sampleRate: 24_000,
+        generatedSamples: 6400,
+        completion: new Promise<{ generatedSamples: number }>((_resolve, reject) => { rejectCompletion = reject; }),
+      };
+      return {
+        started: Promise.resolve(meta),
+        append(text: string): void { speech.appended.push({ responseId: input.responseId, text }); },
+        finish(): void { speech.finished.push(input.responseId); },
+      };
+    };
+    const pi = new FakePi(async function* (input) { yield { type: "delta", text: `Reply to: ${input.transcript}` }; yield { type: "final", text: `Reply to: ${input.transcript}` }; });
+    const { session, events } = setup({ pi, speech });
+    await session.handleStableFinal(turn(0, "First failed thought"));
+    const firstResponse = events.find(event => event.type === "reasoning.started")!.payload.responseId as string;
+    rejectCompletion(new Error("synthesis failed"));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(speech.cancelled).toEqual([firstResponse]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "response.failed", payload: expect.objectContaining({ responseId: firstResponse, reasonCode: "tts_failed" }) }));
+    expect(events.filter(event => event.type === "tts.ended")).toHaveLength(0);
+    expect(session.snapshot().phase).toBe("listening");
+
+    await session.handleStableFinal(turn(1, "Second healthy thought"));
+    const secondResponse = events.filter(event => event.type === "reasoning.started").at(-1)!.payload.responseId as string;
+    const secondStarted = events.find(event => event.type === "tts.started" && event.payload.responseId === secondResponse);
+    const secondPlayback = secondStarted!.payload.playbackId as string;
+    session.playbackStopped({ playbackId: secondPlayback, cancelledEpoch: 0, finalPlayedSampleOffset: 6400, reason: "completed" });
+    await session.handleStableFinal(turn(2, "Third thought checks context"));
+    expect(pi.inputs[2]!.boundedContext).toContain("Reply to: Second healthy thought");
+    expect(pi.inputs[2]!.boundedContext).not.toContain("Reply to: First failed thought");
+  });
+
+  it("rejects a duplicate Pi final through response.failed(reasoning_invalid)", async () => {
+    const pi = new FakePi(async function* () {
+      yield { type: "delta", text: "A duplicate final reply." };
+      yield { type: "final", text: "A duplicate final reply." };
+      yield { type: "final", text: "A duplicate final reply." };
+    });
+    const { session, events, speech } = setup({ pi });
+    await session.handleStableFinal(turn(0));
+    const firstResponse = events.find(event => event.type === "reasoning.started")!.payload.responseId as string;
+    expect(events).toContainEqual(expect.objectContaining({ type: "response.failed", payload: expect.objectContaining({ responseId: firstResponse, reasonCode: "reasoning_invalid" }) }));
+    expect((speech as FakeSpeech).cancelled).toEqual([firstResponse]);
+    expect(events.filter(event => event.type === "reasoning.final")).toHaveLength(0);
+  });
+
+  it("re-classifies newer speech and never orphans the provisional when speech arrives mid-classification", async () => {
+    let releaseFirst!: () => void;
+    const classified: string[] = [];
+    const classifier = {
+      decide: async (input: { transcript: string }) => {
+        classified.push(input.transcript);
+        if (classified.length === 1) await new Promise<void>(resolve => { releaseFirst = resolve; });
+        return { action: "resume" as const, intent: "continue_previous" as const, confidence: "high" as const, reason: "Carry on." };
+      },
+    };
+    const { session, speech, events } = setup({ interruptionClassifier: classifier });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    session.beginProvisionalBargeIn(responseId);
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    session.handleSpeechEnd();
+    const first = session.handleStableFinal(turn(1, "Hold off for a second"));
+    await Promise.resolve();
+    expect(session.snapshot().phase).toBe("interruption_deciding");
+    // New speech while classifying must not supersede the response or orphan the provisional.
+    expect(session.handleSpeechStart()).toBe(0);
+    expect(session.snapshot()).toMatchObject({ epoch: 0, activeResponseId: responseId });
+    session.handleSpeechEnd();
+    const second = session.handleStableFinal(turn(2, "Okay continue"));
+    await second;
+    // Only the newest speech yields an authoritative decision.
+    const decisions = events.filter(event => event.type === "interruption.decision");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]!.payload).toMatchObject({ turnId: ids[62]!, responseId, pausedSampleOffset: 320 });
+    expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0, activeResponseId: responseId });
+    expect((speech as FakeSpeech).resumed).toEqual([responseId]);
+    // Releasing the stale first classification changes nothing.
+    releaseFirst();
+    await first;
+    expect(events.filter(event => event.type === "interruption.decision")).toHaveLength(1);
+    expect(session.snapshot()).toMatchObject({ phase: "playing", epoch: 0 });
+  });
+
+  it("resolves an orphaned provisional when the response is cancelled while classifying", async () => {
+    const classifier = { decide: async () => new Promise<never>(() => {}) };
+    const { session, speech, events } = setup({ interruptionClassifier: classifier, classifierTimeoutMs: 60 });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    session.beginProvisionalBargeIn(responseId);
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    const handling = session.handleStableFinal(turn(1, "Hold off for a second"));
+    await Promise.resolve();
+    // The user cancels the whole assistant turn while classification is pending.
+    session.cancelCurrentTurn();
+    await new Promise<void>(resolve => setTimeout(resolve, 120));
+    expect(events.some(event => event.type === "barge_in.confirmed" || event.type === "barge_in.rejected" || event.type === "barge_in.timed_out")).toBe(true);
+    expect(session.snapshot()).toMatchObject({ phase: "listening", epoch: 1 });
+    expect((speech as FakeSpeech).cancelled).toEqual([responseId]);
+    await handling;
+  });
+
+  it("keeps a superseding utterance eligible when the previous response never became audible", async () => {
+    const speech = new FakeSpeech();
+    speech.begin = () => ({ started: new Promise(() => {}), append(): void {}, finish(): void {} });
+    const { session, events } = setup({ speech });
+    void session.handleStableFinal(turn(0, "First thought"));
+    await Promise.resolve();
+    await session.handleStableFinal(turn(1, "Second superseding thought"));
+    const decisions = events.filter(event => event.type === 'policy.decision');
+    expect(decisions).toHaveLength(2);
+    expect(decisions[1]!.payload).toMatchObject({ eligible: true, posture: 'question', reasonCodes: ['selected'] });
+  });
+
+  it("responds to a meaningful accepted takeover instead of silencing it", async () => {
+    const scheduler = new FakeScheduler();
+    const { session, pi, events } = setup({ policyDecide: decide, scheduler });
+    await session.handleStableFinal(turn(0, "Let us discuss reliable voice agents"));
+    const firstResponse = session.snapshot().activeResponseId!;
+    const firstPlayback = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(firstResponse);
+    session.playbackPaused({ responseId: firstResponse, playbackId: firstPlayback, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    session.handleSpeechEnd();
+    await session.handleStableFinal(turn(1, "Actually explain how interruption recovery works"));
+    expect(session.snapshot().phase).toBe("acceptance_pending_terminal");
+    session.playbackStopped({ playbackId: firstPlayback, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: "cancelled" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    const secondDecision = events.filter(event => event.type === "policy.decision").at(-1)!;
+    expect(secondDecision.payload).toMatchObject({ eligible: true, reasonCodes: ["selected"] });
+    expect(events.filter(event => event.type === "reasoning.started")).toHaveLength(2);
+    expect(scheduler.callbacks).toEqual([]);
+  });
+
+  it("keeps responding across many turns under the production policy", async () => {
+    const { session, pi, events } = setup({ policyDecide: decide });
+    for (let index = 0; index < 8; index++) {
+      session.handleSpeechEnd();
+      await session.handleStableFinal(turn(index, `This is complete conversation thought number ${index}`));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const playbackId = Object.keys(session.snapshot().deliveredExtent).at(-1)!;
+      session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 6400, reason: "completed" });
+    }
+    expect((pi as FakePi).inputs).toHaveLength(8);
+    expect(events.filter(event => event.type === "reasoning.started")).toHaveLength(8);
+    expect(events.filter(event => event.type === "policy.decision" && event.payload.posture === "silence")).toHaveLength(0);
+    expect(session.snapshot().phase).toBe("listening");
+  });
+
+  it("processes an accepted takeover when its terminal receipt is lost", async () => {
+    const scheduler = new FakeScheduler();
+    const { session, pi, events } = setup({ scheduler });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    await session.handleStableFinal(turn(1, "Please explain the new request now"));
+    expect(session.snapshot().phase).toBe("acceptance_pending_terminal");
+    scheduler.fire();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(session.snapshot()).toMatchObject({ epoch: 1, activeResponseId: expect.any(String) });
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    expect(events.filter(event => event.type === "barge_in.confirmed")).toHaveLength(1);
+  });
+
+  it("supersedes an accepted takeover when newer speech starts before its receipt", async () => {
+    const scheduler = new FakeScheduler();
+    const { session, pi } = setup({ scheduler });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 320, generatedSamples: 6400 });
+    await session.handleStableFinal(turn(1, "Please answer this first takeover"));
+    expect(session.handleSpeechStart()).toBe(1);
+    await session.handleStableFinal(turn(2, "Please answer this newer request instead", 1));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(scheduler.callbacks).toEqual([]);
+    expect((pi as FakePi).inputs).toHaveLength(2);
+    expect((pi as FakePi).inputs[1]!.transcript).toBe("Please answer this newer request instead");
+  });
+
+  it("ignores a stale late speech-start resolution after cancellation", async () => {
+    let resolveStart!: (value: { playbackId: string; sampleRate: number; generatedSamples: number; completion?: Promise<{ generatedSamples: number }> }) => void;
+    const speech = new FakeSpeech();
+    speech.begin = input => {
+      speech.synthesized.push({ responseId: input.responseId, text: "" });
+      const deferred = new Promise<{ playbackId: string; sampleRate: number; generatedSamples: number; completion?: Promise<{ generatedSamples: number }> }>(resolve => { resolveStart = resolve; });
+      return {
+        started: deferred,
+        append(text: string): void { speech.appended.push({ responseId: input.responseId, text }); },
+        finish(): void { speech.finished.push(input.responseId); },
+      };
+    };
+    const { session, events } = setup({ speech });
+    const handling = session.handleStableFinal(turn(0));
+    await Promise.resolve();
+    const firstResponse = events.find(event => event.type === "reasoning.started")!.payload.responseId as string;
+    session.cancelCurrentTurn();
+    expect((speech as FakeSpeech).cancelled).toEqual([firstResponse]);
+    resolveStart({ playbackId: ids[90]!, sampleRate: 24000, generatedSamples: 6400 });
+    await handling;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(events.filter(event => event.type === "tts.started")).toHaveLength(0);
+    expect(session.snapshot()).toMatchObject({ phase: "listening", epoch: 1 });
   });
 });

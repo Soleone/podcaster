@@ -13,6 +13,7 @@ from services.audio.src.binary_framing import BinaryAudioFrame, decode_frame
 from services.audio.src.runtime import SelectedAudioRuntime
 from services.audio.src.stt.base import TranscriptUpdate, TranscriptionResult
 from services.audio.src.tts.base import AudioChunk, SynthesisResult
+from services.audio.src.vad.endpointer import EndpointerConfig
 
 
 @dataclass
@@ -81,7 +82,8 @@ def test_vad_pre_roll_binding_partial_and_final_order() -> None:
     utterance = start["payload"]["utteranceId"]
     assert start["payload"]["captureStartSequence"] == 0
     runtime.bind_epoch(stream, utterance, 4)
-    for sequence in range(4, 24):
+    endpoint_sequence = 4 + EndpointerConfig().speech_end_frames
+    for sequence in range(4, endpoint_sequence):
         runtime.accept_audio(stream, frame(sequence, 0))
     wait_for(events, "stt.final")
     kinds = [event["type"] for event in events]
@@ -118,12 +120,14 @@ def test_stt_streams_exact_chunks_after_binding_before_endpoint_and_tracks_unpad
     assert first_chunk.wait(1)
     assert any(event["type"] == "stt.partial" for event in events)
     assert not any(event["type"] == "vad.speech_end" for event in events)
-    for sequence in range(16, 36):
+    endpoint_sequence = 16 + EndpointerConfig().speech_end_frames
+    for sequence in range(16, endpoint_sequence):
         runtime.accept_audio(stream, frame(sequence, 0))
     wait_for(events, "stt.final")
     assert observed and all(len(chunk) == 10_240 for chunk in observed)
-    assert runtime.last_stt_audio_samples == 36 * 320
-    assert len(observed) == 3
+    assert runtime.last_stt_audio_samples == endpoint_sequence * 320
+    expected_chunks = (runtime.last_stt_audio_samples + 5_119) // 5_120
+    assert len(observed) == expected_chunks
     runtime.close_stream(stream)
 
 
@@ -412,22 +416,25 @@ def test_noise_start_while_prior_utterance_finalizes_does_not_close_stream() -> 
         runtime.accept_audio(stream, frame(sequence, 500))
     utterance = next(event for event in events if event["type"] == "vad.speech_start")["payload"]["utteranceId"]
     runtime.bind_epoch(stream, utterance, 0)
-    for sequence in range(3, 23):
+    endpoint_sequence = 3 + EndpointerConfig().speech_end_frames
+    for sequence in range(3, endpoint_sequence):
         runtime.accept_audio(stream, frame(sequence, 0))
     assert any(event["type"] == "vad.speech_end" for event in events)
 
     # A background-noise start before finalization is ignored rather than
     # classified as an invalid stream that disconnects capture.
-    for sequence in range(23, 26):
+    noise_end_sequence = endpoint_sequence + EndpointerConfig().speech_start_frames
+    for sequence in range(endpoint_sequence, noise_end_sequence):
         runtime.accept_audio(stream, frame(sequence, 500))
     assert runtime.status == "ready"
     assert len([event for event in events if event["type"] == "vad.speech_start"]) == 1
 
     release.set()
     wait_for(events, "stt.final")
-    for sequence in range(26, 46):
+    second_start_sequence = noise_end_sequence + 20
+    for sequence in range(noise_end_sequence, second_start_sequence):
         runtime.accept_audio(stream, frame(sequence, 0))
-    for sequence in range(46, 49):
+    for sequence in range(second_start_sequence, second_start_sequence + EndpointerConfig().speech_start_frames):
         runtime.accept_audio(stream, frame(sequence, 500))
     assert len([event for event in events if event["type"] == "vad.speech_start"]) == 2
     assert runtime.status == "ready"
@@ -496,7 +503,8 @@ def test_tts_cancel_does_not_reset_active_stt_utterance() -> None:
     runtime.request_tts(stream, response, 0, "response")
     runtime.cancel_tts(stream, response)
     runtime.bind_epoch(stream, utterance, 1)
-    for sequence in range(3, 23):
+    endpoint_sequence = 3 + EndpointerConfig().speech_end_frames
+    for sequence in range(3, endpoint_sequence):
         runtime.accept_audio(stream, frame(sequence, 0))
     wait_for(events, "stt.final")
     assert next(event for event in events if event["type"] == "stt.final")["payload"]["utteranceId"] == utterance
