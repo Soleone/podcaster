@@ -37,7 +37,7 @@ Evaluate TTS in sequence: Kokoro ONNX as fast baseline, then Qwen3-TTS 0.6B Cust
 ## Success metrics (primary + guardrail)
 **Primary:** In a blinded prototype study, at least 70% of participants judge the calibrated posture policy more helpful to their active thought than an always-respond control, with fewer than 20% of responses rated premature/disruptive.
 
-**Guardrails:** Median barge-in cancel-to-silence is ≤300 ms; no severe unrecoverable audio failure in the defined test set; and selected local ASR/TTS sustains the interactive prototype on the RTX 4090 without dropped audio in a 30-minute continuous run. Record turn timing, partial/final transcription behavior, audio cancellation, posture, and failures.
+**Guardrails:** Median barge-in cancel-to-silence is ≤300 ms; no severe unrecoverable audio failure in the defined test set; and selected local ASR/TTS sustains the interactive prototype on the RTX 4090 without dropped audio in a bounded 5-minute continuous run (user override 2026-08-09: the original 30-minute guardrail is excessive; telemetry unchanged: drops, underruns, resets, worker leaks, lateness). Record turn timing, partial/final transcription behavior, audio cancellation, posture, and failures.
 
 **Kill/pivot:** Do not advance if the policy is not preferred, disruptive responses reach 35%, reliable barge-in misses the guardrail, local speech cannot sustain the 4090 prototype, or the privacy/auth disclosure below cannot be truthfully made. Select speech models only when they meet the measurements and blinded listening threshold defined for the milestone; otherwise stop or test the next explicitly named candidate.
 
