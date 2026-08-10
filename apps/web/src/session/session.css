@@ -51,5 +51,5 @@
 .log-entry-source{color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .log-entry-message{min-width:0}
 @media(max-width:36rem){.activity-log-actions{width:100%;justify-content:flex-end}}
-.assistant-part{margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--border)}
+.conversation-bubble .assistant-part{margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--border)}
 .assistant-part-tentative{opacity:.6;filter:saturate(.5)}
