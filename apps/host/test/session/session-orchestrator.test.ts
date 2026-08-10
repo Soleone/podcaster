@@ -70,6 +70,7 @@ const schemaForType: Record<string, keyof typeof CONTRACT_VALIDATORS> = {
   "session.state": "SessionStateEvent",
   "policy.decision": "PolicyDecisionEvent",
   "reasoning.started": "ReasoningStartedEvent",
+  "reasoning.delta": "ReasoningDeltaEvent",
   "reasoning.final": "ReasoningFinalEvent",
   "response.failed": "ResponseFailedEvent",
   "tts.started": "TtsStartedEvent",
@@ -221,7 +222,70 @@ describe("safe session orchestrator", () => {
     await session.handleStableFinal(turn(0));
     expect((speech as FakeSpeech).synthesized).toEqual([]);
     expect(events).toContainEqual(expect.objectContaining({ type: "failure", payload: expect.objectContaining({ code: "reasoning_invalid" }) }));
-    expect(events.some(event => event.type === "reasoning.delta")).toBe(false);
+    // reasoning.delta previews are presentational and may stream before the final is
+    // known to be invalid, but an invalid final must never materialize: no
+    // reasoning.final, no synthesized speech, and a response.failed for the client.
+    expect(events.some(event => event.type === "reasoning.final")).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({ type: "response.failed", payload: expect.objectContaining({ reasonCode: "reasoning_invalid" }) }));
+    for (const delta of events.filter(event => event.type === "reasoning.delta")) expect(delta.payload.responseId).toBe(events.find(event => event.type === "reasoning.started")!.payload.responseId);
+  });
+
+  it("streams coalesced reasoning.delta previews and flushes the full text before final", async () => {
+    const finalText = "A short answer that flows naturally across the whole stream.";
+    const pi = new FakePi(async function* () {
+      for (const character of finalText) yield { type: "delta", text: character };
+      yield { type: "final", text: finalText };
+    });
+    const { session, events } = setup({ pi, reasoningDeltaCoalesceChars: 10 });
+    await session.handleStableFinal(turn(0));
+    const deltas = events.filter(event => event.type === "reasoning.delta");
+    // Coalescing emits the first preview immediately but batches the rest.
+    expect(deltas.length).toBeGreaterThan(1);
+    expect(deltas.length).toBeLessThan(finalText.length);
+    let previous = "";
+    for (const delta of deltas) {
+      const text = delta.payload.text as string;
+      expect(finalText.startsWith(text)).toBe(true);
+      expect(text.length).toBeGreaterThan(previous.length);
+      previous = text;
+    }
+    // The last preview is flushed to the authoritative text before it materializes.
+    expect(previous).toBe(finalText);
+    const types = events.map(event => event.type);
+    expect(types.lastIndexOf("reasoning.delta")).toBeLessThan(types.indexOf("reasoning.final"));
+  });
+
+  it("stops streaming reasoning.delta for a response once a newer turn supersedes it", async () => {
+    const gates: Array<(value: string) => void> = [];
+    const pi = new FakePi(input => ({
+      async *[Symbol.asyncIterator]() {
+        if (input.transcript.includes("first")) {
+          yield { type: "delta" as const, text: "A first preview that starts to stream." };
+          const rest = await new Promise<string>(resolve => gates.push(resolve));
+          yield { type: "delta" as const, text: rest };
+          yield { type: "final" as const, text: "A first preview that starts to stream." + rest };
+        } else {
+          yield { type: "delta" as const, text: "A second complete answer." };
+          yield { type: "final" as const, text: "A second complete answer." };
+        }
+      },
+    }));
+    const { session, events } = setup({ pi });
+    const first = session.handleStableFinal(turn(0, "the first words spoken"));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const firstResponseId = events.find(event => event.type === "reasoning.started")!.payload.responseId as string;
+    expect(events.filter(event => event.type === "reasoning.delta" && event.payload.responseId === firstResponseId)).toHaveLength(1);
+    // A newer turn supersedes the first response and bumps the epoch.
+    const second = session.handleStableFinal(turn(1, "the second words spoken"));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Release the first generator; its continuation must be dropped by the cutoff.
+    for (const release of gates.splice(0)) release(" and a trailing continuation.");
+    await Promise.all([first, second]);
+    // The first response kept exactly its single pre-cancel preview.
+    expect(events.filter(event => event.type === "reasoning.delta" && event.payload.responseId === firstResponseId)).toHaveLength(1);
+    expect(events.some(event => event.type === "reasoning.delta" && String(event.payload.text).includes("trailing continuation"))).toBe(false);
+    // Only the second, current response materialized.
+    expect(events.filter(event => event.type === "reasoning.final")).toHaveLength(1);
   });
 
   it("passes bounded prior context and the literal 45-word limit", async () => {

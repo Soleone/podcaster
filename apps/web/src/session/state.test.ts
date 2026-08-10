@@ -56,6 +56,44 @@ describe('session presentation state', () => {
     expect(partial.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', text: 'Heard part of this', playback: 'interrupted' }));
   });
 
+  it('accumulates reasoning.delta into a tentative row and materializes it on final', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A short' }));
+    let item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    expect(item).toMatchObject({ text: 'A short', tentative: true });
+    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A short reply grows' }));
+    item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    expect(item).toMatchObject({ text: 'A short reply grows', tentative: true });
+    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'A short reply grows complete.' }));
+    item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    expect(item).toMatchObject({ text: 'A short reply grows complete.', tentative: false });
+    expect(state.assistantText).toBe('A short reply grows complete.');
+  });
+
+  it('drops a tentative-only assistant row when the response fails', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A preview that never lands' }));
+    expect(state.conversationItems.filter(item => item.kind === 'assistant')).toHaveLength(1);
+    state = reduceSessionState(state, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'reasoning_invalid' }));
+    expect(state.conversationItems.filter(item => item.kind === 'assistant')).toEqual([]);
+  });
+
+  it('clears the tentative assistant row when the epoch advances', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A preview mid-flight' }));
+    expect(state.conversationItems.filter(item => item.kind === 'assistant' && item.tentative)).toHaveLength(1);
+    state = reduceSessionState(state, event('session.state', { phase: 'listening' }, 1));
+    expect(state.epoch).toBe(1);
+    expect(state.conversationItems.filter(item => item.kind === 'assistant' && item.tentative)).toEqual([]);
+  });
+
+  it('keeps a finalized assistant row across an epoch advance', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'A complete answer' }));
+    state = reduceSessionState(state, event('session.state', { phase: 'listening' }, 1));
+    expect(state.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', text: 'A complete answer', tentative: false }));
+  });
+
   it('resumes the same assistant item in place without transcript notices', () => {
     let state = reduceSessionState(initialSessionState, event('transcript.final', { turnId: 'original', text: 'Tell me more' }));
     state = reduceSessionState(state, event('reasoning.started', { turnId: 'original', responseId: 'r' }));

@@ -151,6 +151,7 @@ const FINAL = (responseId: string, text = 'First sentence. Second sentence.') =>
 const TTS_STARTED = (responseId: string, playbackId: string) => hostEvent('tts.started', { responseId, playbackId, sampleRate: 24_000 });
 const TTS_ENDED = (responseId: string, playbackId: string, generatedSamples: number) => hostEvent('tts.ended', { responseId, playbackId, generatedSamples });
 const FAILED = (responseId: string, reasonCode: 'reasoning_unavailable' | 'reasoning_invalid' | 'tts_failed' = 'tts_failed') => hostEvent('response.failed', { turnId: '018f1f32-7abe-7def-8abc-0123456789ab', responseId, reasonCode });
+const DELTA = (responseId: string, text: string) => hostEvent('reasoning.delta', { turnId: '018f1f32-7abe-7def-8abc-0123456789ab', responseId, text });
 
 const turnUuid = '018f1f32-7abe-7def-8abc-0123456789ab';
 const responseA = '018f1f32-7ac1-7def-8abc-0123456789ab';
@@ -229,6 +230,33 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     emitText(socket, TTS_ENDED(responseA, playbackA, 720));
     expectNoProtocolFailure(socket);
     expect(chunks).toEqual([{ sequence: 0, sampleOffset: 0, samples: 480 }, { sequence: 1, sampleOffset: 480, samples: 240 }]);
+  });
+
+  it('forwards reasoning.delta for the established response and fails closed on a mismatch', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const seen: Array<{ type: string; text?: unknown }> = [];
+    transport.onEvent(event => { seen.push({ type: event.type, text: event.payload.text }); });
+    emitText(socket, REASONING(responseA));
+    emitText(socket, DELTA(responseA, 'A first preview'));
+    emitText(socket, DELTA(responseA, 'A first preview that grows'));
+    expectNoProtocolFailure(socket);
+    expect(seen).toEqual([
+      { type: 'reasoning.started', text: undefined },
+      { type: 'reasoning.delta', text: 'A first preview' },
+      { type: 'reasoning.delta', text: 'A first preview that grows' },
+    ]);
+    // A preview for an unestablished response is a protocol anomaly.
+    emitText(socket, DELTA(responseB, 'orphan preview'));
+    expect(socket.closed).toBe(4000);
+  });
+
+  it('fails closed on a reasoning.delta with empty text', async () => {
+    const socket = new EventSocket();
+    await wiredTransport(socket);
+    emitText(socket, REASONING(responseA));
+    emitText(socket, hostEvent('reasoning.delta', { turnId: turnUuid, responseId: responseA, text: '' }));
+    expect(socket.closed).toBe(4000);
   });
 
   it('accepts tts.started after reasoning.final as well', async () => {

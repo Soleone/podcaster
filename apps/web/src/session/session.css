@@ -17,9 +17,10 @@
 .conversation-bubble{max-width:min(78%,38rem)}
 .conversation-bubble p{margin:0}
 .user-bubble{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
-.assistant-bubble{background:var(--muted);border-color:var(--border)}
+.assistant-bubble{background:var(--muted);border-color:var(--border);transition:opacity .45s ease,filter .45s ease}
 .assistant-activity{margin:.15rem 0}
 .tentative{border-style:dashed;opacity:.75}
+.assistant-bubble.tentative{opacity:.55;filter:saturate(.35)}
 .continuation-marker,.conversation-notice{margin:.1rem 0}
 .conversation-notice.warning{color:var(--destructive)}
 .interruption-controls{margin-top:1rem;padding:1rem;border-color:var(--ring)}

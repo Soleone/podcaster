@@ -212,6 +212,31 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('streams reasoning.delta previews into view state and materializes them on final', async () => {
+    const { controller, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'riff' }));
+    await transport.emit(event('session', 0, 'reasoning.delta', { turnId: 'turn', responseId: 'response', text: 'A preview' }));
+    let item = controller.snapshot().conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'response');
+    expect(item).toMatchObject({ text: 'A preview', tentative: true });
+    await transport.emit(event('session', 0, 'reasoning.delta', { turnId: 'turn', responseId: 'response', text: 'A preview that keeps growing' }));
+    item = controller.snapshot().conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'response');
+    expect(item).toMatchObject({ text: 'A preview that keeps growing', tentative: true });
+    await transport.emit(event('session', 0, 'reasoning.final', { turnId: 'turn', responseId: 'response', posture: 'riff', text: 'A preview that keeps growing, now final' }));
+    item = controller.snapshot().conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'response');
+    expect(item).toMatchObject({ text: 'A preview that keeps growing, now final', tentative: false });
+    writer.close();
+  });
+
+  it('clears a streaming preview when the response is cancelled via an epoch bump', async () => {
+    const { controller, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'riff' }));
+    await transport.emit(event('session', 0, 'reasoning.delta', { turnId: 'turn', responseId: 'response', text: 'A preview that gets cut off' }));
+    expect(controller.snapshot().conversationItems.some(candidate => candidate.kind === 'assistant' && candidate.tentative)).toBe(true);
+    await transport.emit(event('session', 1, 'session.state', { phase: 'listening', personaDigest: 'a'.repeat(64) }));
+    expect(controller.snapshot().conversationItems.some(candidate => candidate.kind === 'assistant' && candidate.tentative)).toBe(false);
+    writer.close();
+  });
+
   it('never stops a newer or mismatched playback on response.failed', async () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));

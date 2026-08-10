@@ -1,4 +1,5 @@
 import type { ConversationItem } from '../../session/conversation';
+import { cn } from '../../lib/utils';
 import { Badge } from '../ui/badge';
 import { Bubble, BubbleContent } from '../ui/bubble';
 import { Marker, MarkerContent } from '../ui/marker';
@@ -21,7 +22,7 @@ export function ConversationRow({ item }: { item: ConversationItem }) {
   return <Message className="conversation-message assistant-row">
     <MessageContent>
       <MessageHeader>Oliver</MessageHeader>
-      <Bubble variant="secondary"><BubbleContent className="conversation-bubble assistant-bubble"><p>{item.text}</p></BubbleContent></Bubble>
+      <Bubble variant="secondary"><BubbleContent className={cn('conversation-bubble assistant-bubble', item.tentative && 'tentative')}><p>{item.text}</p></BubbleContent></Bubble>
     </MessageContent>
   </Message>;
 }

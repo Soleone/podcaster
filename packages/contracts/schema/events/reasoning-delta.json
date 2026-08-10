@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/reasoning-delta.json",
+  "title": "ReasoningDeltaEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    { "type": "object", "required": ["type", "payload"], "properties": {
+      "type": { "const": "reasoning.delta" },
+      "payload": { "type": "object", "required": ["turnId", "responseId", "text"], "properties": {
+        "turnId": { "type": "string", "format": "uuid" },
+        "responseId": { "type": "string", "format": "uuid" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }, "additionalProperties": false }
+    } }
+  ]
+}

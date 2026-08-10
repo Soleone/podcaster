@@ -40,6 +40,7 @@ CASES = [
     ("events/policy-decision.json", "policy-decision", "policy-decision"),
     ("events/reasoning-started.json", "reasoning-started", "reasoning-started"),
     ("events/reasoning-final.json", "reasoning-final", "reasoning-final"),
+    ("events/reasoning-delta.json", "reasoning-delta", "reasoning-delta"),
     ("events/response-failed.json", "response-failed", "response-failed"),
     ("events/session-state.json", "session-state", "session-state"),
     ("events/sidecar-message.json", "sidecar-message", "sidecar-message"),

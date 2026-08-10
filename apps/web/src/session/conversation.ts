@@ -2,7 +2,7 @@ import type { StoredTurn } from '../storage/schema';
 
 export type ConversationItem =
   | { kind: 'user'; id: string; text: string; status: 'tentative' | 'stable' | 'control'; sequence: number }
-  | { kind: 'assistant'; id: string; responseId: string; playbackId?: string; text: string; playback: 'preparing' | 'playing' | 'paused' | 'completed' | 'interrupted'; sequence: number }
+  | { kind: 'assistant'; id: string; responseId: string; playbackId?: string; text: string; tentative?: boolean; playback: 'preparing' | 'playing' | 'paused' | 'completed' | 'interrupted'; sequence: number }
   | { kind: 'continuation'; id: string; responseId: string; label: string; sequence: number }
   | { kind: 'notice'; id: string; tone: 'quiet' | 'warning'; text: string; sequence: number };
 

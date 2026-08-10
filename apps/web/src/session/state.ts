@@ -24,9 +24,19 @@ function dominant(state: SessionViewState, next: DominantState): SessionViewStat
   return next === state.dominant ? state : { ...state, dominant: next, announcement: label[next] };
 }
 
+// An assistant row that only ever held a tentative preview (never a final) must
+// disappear wholesale when the response is abandoned; a finalized row is kept.
+function dropTentativeAssistant(items: ConversationItem[]): ConversationItem[] {
+  return items.some(item => item.kind === 'assistant' && item.tentative)
+    ? items.filter(item => !(item.kind === 'assistant' && item.tentative))
+    : items;
+}
+
 export function reduceSessionState(state: SessionViewState, event: StableEvent): SessionViewState {
   if (event.epoch < state.epoch && event.type !== 'playback.progress' && event.type !== 'playback.stopped') return state;
-  let next = event.epoch > state.epoch ? { ...state, epoch: event.epoch } : state;
+  // An epoch advance means the in-flight response was cancelled or superseded, so
+  // any still-tentative assistant preview must not linger.
+  let next = event.epoch > state.epoch ? { ...state, epoch: event.epoch, conversationItems: dropTentativeAssistant(state.conversationItems) } : state;
   if (event.type === 'transcript.partial') return { ...next, tentativeText: typeof event.payload.text === 'string' ? event.payload.text : '' };
   if (event.type === 'capture.endpoint') return dominant(next, 'transcribing');
   if (event.type === 'transcript.final') {
@@ -63,13 +73,26 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     const item: ConversationItem = { kind: 'assistant', id: `assistant:${responseId}`, responseId, text: '', playback: 'preparing', sequence: event.monotonicMs };
     return { ...next, conversationItems: [...next.conversationItems.filter(existing => existing.id !== item.id), item] };
   }
+  if (event.type === 'reasoning.delta') {
+    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+    const text = typeof event.payload.text === 'string' ? event.payload.text : '';
+    if (!responseId || !text) return next;
+    // Presentational preview: accumulate the cumulative text into the assistant row
+    // and mark it tentative so the UI can render it dimmed until it materializes.
+    const exists = next.conversationItems.some(item => item.kind === 'assistant' && item.responseId === responseId);
+    const conversationItems = exists
+      ? next.conversationItems.map(item => item.kind === 'assistant' && item.responseId === responseId ? { ...item, text, tentative: true } : item)
+      : [...next.conversationItems, { kind: 'assistant' as const, id: `assistant:${responseId}`, responseId, text, tentative: true, playback: 'preparing' as const, sequence: event.monotonicMs }];
+    return { ...next, conversationItems };
+  }
   if (event.type === 'reasoning.final') {
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
     const existing = next.conversationItems.find((item): item is Extract<ConversationItem, { kind: 'assistant' }> => item.kind === 'assistant' && item.responseId === responseId);
     // Upsert the placeholder without resetting an already-playing item to preparing.
+    // Materialization clears the tentative flag so the row solidifies.
     const item: ConversationItem = existing
-      ? { ...existing, text }
+      ? { ...existing, text, tentative: false }
       : { kind: 'assistant', id: `assistant:${responseId}`, responseId, text, playback: 'preparing', sequence: event.monotonicMs };
     // Never regress an already-speaking response back to the forming state.
     const phase: DominantState = next.dominant === 'speaking' ? 'speaking' : 'reasoning';
@@ -77,8 +100,11 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   }
   if (event.type === 'response.failed') {
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
-    // Remove an empty placeholder and mark any visible partial response interrupted.
-    return { ...next, conversationItems: next.conversationItems.map(item => item.kind === 'assistant' && item.responseId === responseId && item.text ? { ...item, playback: 'interrupted' as const } : item).filter(item => !(item.kind === 'assistant' && item.responseId === responseId && !item.text)) };
+    // Keep authoritative (finalized) text as interrupted, but drop an empty
+    // placeholder or a still-tentative preview that never materialized.
+    return { ...next, conversationItems: next.conversationItems
+      .map(item => item.kind === 'assistant' && item.responseId === responseId && item.text && item.tentative !== true ? { ...item, playback: 'interrupted' as const } : item)
+      .filter(item => !(item.kind === 'assistant' && item.responseId === responseId && (!item.text || item.tentative === true))) };
   }
   if (event.type === 'tts.started') {
     const responseId = String(event.payload.responseId ?? '');

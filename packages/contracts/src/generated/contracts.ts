@@ -17,6 +17,7 @@ export type PlaybackPausedEvent = { "protocolVersion": 1; "sessionId": string; "
 export type PlaybackProgressEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.progress"; "monotonicMs": number; "payload": { "playbackId": string; "outputEpoch": number; "playedSampleOffset": number; "generatedSamples": number; }; };
 export type PlaybackStoppedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.stopped"; "monotonicMs": number; "payload": { "playbackId": string; "cancelledEpoch": number; "finalPlayedSampleOffset": number; "reason": "completed" | "cancelled" | "stopped" | "failed"; }; };
 export type PolicyDecisionEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "policy.decision"; "monotonicMs": number; "payload": { "turnId": string; "policyVersion": "v1.experimental"; "eligible": boolean; "posture": "riff" | "question" | "challenge" | "silence"; "reasonCodes": Array<string>; "inputDigest": string; }; };
+export type ReasoningDeltaEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "reasoning.delta"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "text": string; }; };
 export type ReasoningFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "reasoning.final"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "posture": "riff" | "question" | "challenge"; "text": string; }; };
 export type ReasoningStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "reasoning.started"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "posture": "riff" | "question" | "challenge"; }; };
 export type ResponseFailedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "response.failed"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "reasonCode": "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"; }; };
@@ -2177,6 +2178,52 @@ export const CONTRACT_SCHEMAS = {
       }
     ]
   },
+  "events/reasoning-delta.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/reasoning-delta.json",
+    "title": "ReasoningDeltaEvent",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "const": "reasoning.delta"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "turnId",
+              "responseId",
+              "text"
+            ],
+            "properties": {
+              "turnId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "responseId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
   "events/reasoning-final.json": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://podcaster.local/schema/events/reasoning-final.json",
@@ -3479,4 +3526,4 @@ export const CONTRACT_SCHEMAS = {
   }
 } as const;
 export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;
-export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningFinalEvent" | "ReasoningStartedEvent" | "ResponseFailedEvent" | "SessionStateEvent" | "SidecarMessage" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope";
+export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningDeltaEvent" | "ReasoningFinalEvent" | "ReasoningStartedEvent" | "ResponseFailedEvent" | "SessionStateEvent" | "SidecarMessage" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope";

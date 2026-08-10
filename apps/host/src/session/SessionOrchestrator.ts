@@ -44,6 +44,7 @@ export interface SessionOrchestratorOptions {
   maxContextTurns?: number;
   policyDecide?: (input: PolicyInput) => PolicyDecision;
   transcriptOnly?: boolean;
+  reasoningDeltaCoalesceChars?: number;
 }
 export interface SessionSnapshot {
   phase: SessionPhase;
@@ -168,6 +169,7 @@ export class SessionOrchestrator {
   private readonly maxContextBytes: number;
   private readonly maxContextTurns: number;
   private readonly policyDecide: (input: PolicyInput) => PolicyDecision;
+  private readonly reasoningDeltaCoalesceChars: number;
 
   constructor(private readonly options: SessionOrchestratorOptions) {
     const parsed = parsePersona(options.personaSource ?? DEFAULT_PERSONA_MARKDOWN);
@@ -187,6 +189,7 @@ export class SessionOrchestrator {
     this.maxContextBytes = options.maxContextBytes ?? 4096;
     this.maxContextTurns = options.maxContextTurns ?? 6;
     this.policyDecide = options.policyDecide ?? decide;
+    this.reasoningDeltaCoalesceChars = Math.max(1, options.reasoningDeltaCoalesceChars ?? 16);
   }
 
   start(): void {
@@ -298,6 +301,14 @@ export class SessionOrchestrator {
 
       let finalText: string | undefined;
       let duplicateFinal = false;
+      let emittedDeltaPrefix = "";
+      const emitReasoningDelta = (text: string): void => {
+        // Presentational preview only: never emit once cancelled/superseded, and
+        // never after reasoning.final (which is authoritative).
+        if (!text || text === emittedDeltaPrefix || !this.isCurrent(active)) return;
+        emittedDeltaPrefix = text;
+        this.emit("reasoning.delta", { turnId: active.turnId, responseId: active.responseId, text });
+      };
       for await (const event of this.options.pi.request({ posture: policy.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, personaInterpretation: this.personaForPi, maxWords: 45 }, controller.signal)) {
         if (!this.isCurrent(active)) return;
         if (event.type === "final") {
@@ -307,6 +318,8 @@ export class SessionOrchestrator {
           const chunks = assembler.append(event.text);
           active.reasoningPrefix = assembler.canonicalPrefix;
           for (const chunk of chunks) speechStream.append(chunk.text);
+          const preview = assembler.canonicalPrefix;
+          if (preview && (emittedDeltaPrefix === "" || preview.length - emittedDeltaPrefix.length >= this.reasoningDeltaCoalesceChars)) emitReasoningDelta(preview);
         } else if (event.type === "error") {
           this.failResponse(active, "reasoning_unavailable");
           return;
@@ -334,6 +347,9 @@ export class SessionOrchestrator {
         this.failResponse(active, "reasoning_invalid");
         return;
       }
+      // Flush the preview to the full validated text so the tentative row matches
+      // exactly before it materializes, then hand off to the authoritative final.
+      emitReasoningDelta(validated);
       this.emit("reasoning.final", { turnId: active.turnId, responseId: active.responseId, posture: active.posture, text: validated });
       active.assistantText = validated;
       speechStream.finish();

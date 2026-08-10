@@ -68,6 +68,8 @@ export class WebSocketSessionTransport implements SessionTransport {
             if (this.output && !this.output.terminal) this.output.terminal = true;
           }
           this.latestResponseId = responseId;
+        } else if (hostEvent.type === 'reasoning.delta') {
+          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.delta did not match the established response.'); return; }
         } else if (hostEvent.type === 'reasoning.final') {
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.final did not match the established response.'); return; }
         } else if (hostEvent.type === 'tts.started') {
@@ -207,6 +209,7 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
     case 'vad.speech_end': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence', 'captureEndSequence']) && anyUuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence) && integer(payload.captureEndSequence);
     case 'policy.decision': return exact(payload, ['turnId', 'policyVersion', 'eligible', 'posture', 'reasonCodes', 'inputDigest']) && uuid('turnId') && payload.policyVersion === 'v1.experimental' && typeof payload.eligible === 'boolean' && ['riff', 'question', 'challenge', 'silence'].includes(String(payload.posture)) && Array.isArray(payload.reasonCodes) && payload.reasonCodes.length > 0 && payload.reasonCodes.every(code => typeof code === 'string' && code.length > 0) && typeof payload.inputDigest === 'string' && /^[a-f0-9]{64}$/.test(payload.inputDigest);
     case 'reasoning.started': return exact(payload, ['turnId', 'responseId', 'posture']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture));
+    case 'reasoning.delta': return exact(payload, ['turnId', 'responseId', 'text']) && uuid('turnId') && uuid('responseId') && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096;
     case 'response.failed': return exact(payload, ['turnId', 'responseId', 'reasonCode']) && uuid('turnId') && uuid('responseId') && ['reasoning_unavailable', 'reasoning_invalid', 'tts_failed'].includes(String(payload.reasonCode));
     case 'reasoning.final': return exact(payload, ['turnId', 'responseId', 'posture', 'text']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture)) && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096;
     case 'tts.started': return exact(payload, ['responseId', 'playbackId', 'sampleRate']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0;
