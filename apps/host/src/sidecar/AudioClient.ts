@@ -201,7 +201,8 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   release(responseId: string, partIndex?: number): void {
-    const pending = this.pending.get(pendingKey(responseId, partIndex));
+    const wantKey = pendingKey(responseId, partIndex);
+    const pending = this.pending.get(wantKey);
     if (!pending || pending.cutoff || pending.released || !pending.playbackId) return;
     pending.released = true;
     for (const chunk of pending.chunks) this.binarySink(chunk);
@@ -323,7 +324,7 @@ export class AudioClient implements SpeechOutputPort {
     if (!pending.cutoff) {
       pending.startSettled = true;
       const completion = (pending as PendingTts & { completion: Promise<{ generatedSamples: number }> }).completion;
-      pending.resolveStart({ playbackId: pending.playbackId, sampleRate: pending.sampleRate, completion, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+      pending.resolveStart({ playbackId: pending.playbackId, sampleRate: pending.sampleRate, completion, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}), ...(pending.outputStreamId !== undefined ? { outputStreamId: pending.outputStreamId } : {}) });
     }
   }
 
@@ -354,6 +355,14 @@ export class AudioClient implements SpeechOutputPort {
       pending.chunks.length = 0;
       this.rejectPending(pending, new Error('TTS cancelled'));
     } else if (!pending.completionSettled) {
+      // The part is remotely complete. If the browser-facing release has not
+      // happened yet (a multi-part body part commits synchronously right after
+      // begin), flush the buffered PCM now so it is never dropped with the
+      // pending entry. release() later is a no-op because the pending is gone.
+      if (!pending.released) {
+        for (const chunk of pending.chunks) this.binarySink(chunk);
+        pending.chunks.length = 0;
+      }
       pending.completionSettled = true;
       pending.resolveCompletion({ generatedSamples });
     }

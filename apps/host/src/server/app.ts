@@ -7,6 +7,8 @@ import type { WebSocket } from 'ws';
 import type { SidecarProcess } from '../sidecar/process.js';
 import { sidecarHealth } from '../sidecar/process.js';
 import type { PiClient, PiReadiness } from '../pi/PiClient.js';
+import type { PiResearchClient } from '../pi/PiResearchClient.js';
+import { createPiResearchClient } from '../pi/PiResearchClient.js';
 import { BrowserSession } from './BrowserSession.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -17,12 +19,13 @@ const unavailablePi: PiClient = {
   async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
   async shutdown() {},
 };
-export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; webRoot?: string; now?: () => number; sessionTtlMs?: number; }
+export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 
 export async function buildApp(options: BuildOptions): Promise<FastifyInstance> {
   const app = Fastify({ bodyLimit: 16 * 1024, logger: false, forceCloseConnections: true });
+  const researchPi = options.researchPi ?? createPiResearchClient();
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
   const sessionTtlMs = options.sessionTtlMs ?? SESSION_TTL_MS;
@@ -75,7 +78,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       });
     },
   });
-  app.addHook('onClose', async () => { await Promise.allSettled([...shutdowns]); });
+  app.addHook('onClose', async () => { await Promise.allSettled([...shutdowns]); await researchPi.shutdown(); });
   const authenticate = (request: FastifyRequest): Session | undefined => {
     const id = cookieValue(request.headers.cookie); const capability = request.headers['x-podcaster-capability'];
     if (!id || typeof capability !== 'string') return;
@@ -139,7 +142,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       const cap = typeof value === 'object' && value !== null ? (value as { capability?: unknown }).capability : undefined;
       if (!session || session.expiresAt <= now() || session.wsAuthenticated || typeof cap !== 'string' || !sameSecret(cap, session.capability)) { socket.close(1008, 'invalid authentication'); return; }
       session.wsAuthenticated = true; session.sockets.add(socket);
-      session.conversation = new BrowserSession(socket, options.sidecar, options.pi ?? unavailablePi);
+      session.conversation = new BrowserSession(socket, options.sidecar, options.pi ?? unavailablePi, researchPi, options.multiPartEnabled !== false);
       expiryTimer = setTimeout(() => socket.close(1008, 'session expired'), Math.max(0, session.expiresAt - now()));
       socket.send(JSON.stringify({ type: 'authenticated' }));
     });

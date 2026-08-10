@@ -15,6 +15,7 @@ export interface SpeechSynthesisStart {
   generatedSamples?: number;
   partIndex?: number;
   partId?: string;
+  outputStreamId?: number;
   completion?: Promise<{ generatedSamples: number }>;
 }
 export interface SpeechOutputStream {
@@ -518,7 +519,7 @@ export class SessionOrchestrator {
     part.started = true;
     state.partByPlayback.set(meta.playbackId, part);
     this.playback.set(meta.playbackId, { outputEpoch: state.epoch, generatedSamples: Math.max(part.generatedSamples, meta.generatedSamples ?? 0), delivered: 0, terminal: false });
-    this.emit("tts.started", { responseId: state.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, partIndex: part.partIndex });
+    this.emit("tts.started", { responseId: state.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, partIndex: part.partIndex, ...(meta.outputStreamId !== undefined ? { outputStreamId: meta.outputStreamId } : {}) });
     const parent = this.active;
     if (parent && parent.responseId === state.responseId && !parent.playbackId) parent.playbackId = meta.playbackId;
     this.options.speech.release?.(state.responseId, part.partIndex);

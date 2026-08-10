@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
 import type { PiClient, PiRequestInput } from '../../src/pi/PiClient.js';
+import type { PiResearchClient } from '../../src/pi/PiResearchClient.js';
 import { buildApp } from '../../src/server/app.js';
 import type { SidecarProcess } from '../../src/sidecar/process.js';
 
@@ -24,7 +25,7 @@ const pi: PiClient = {
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
-async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; multiUtterance?: boolean; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
+async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; multiUtterance?: boolean; multipart?: boolean; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
   const server = createServer();
   const wss = new WebSocketServer({ server });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -56,6 +57,19 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
         socket.send(JSON.stringify({ type: 'stt.final', payload: { streamId: opened, utteranceId: boundUtterance, epoch: message.payload.epoch, text: 'Could you share what you think about this complete idea?', endpointComplete: true } }));
       } else if (message.type === 'stream.close') {
         options.onStreamClose?.();
+      } else if (message.type === 'tts.open' && options.multipart) {
+        // Multi-part: assign per-part playback/output stream ids by partIndex.
+        const partIndex = Number(message.payload.partIndex ?? 0);
+        const partPlaybackId = partIndex === 0 ? playbackId : '018f1f32-7ac4-7def-8abc-0123456789ab';
+        const outputStreamId = 55 + partIndex;
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId: partPlaybackId, outputStreamId, sampleRate: 24000, partIndex } }));
+        socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
+      } else if (message.type === 'tts.append' && options.multipart) {
+        const partIndex = Number(message.payload.partIndex ?? 0);
+        socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55 + partIndex, sequence: 1, monotonicUs: 3n, pcm16: new Int16Array(480) }, 64 * 1024));
+      } else if (message.type === 'tts.commit' && options.multipart) {
+        const partIndex = Number(message.payload.partIndex ?? 0);
+        socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId: partIndex === 0 ? playbackId : '018f1f32-7ac4-7def-8abc-0123456789ab', generatedSamples: 960, partIndex } }));
       } else if (message.type === 'tts.open' || message.type === 'tts.append') {
         if (options.progressiveTts && message.type === 'tts.append' && !progressiveStarted) {
           // Progressive synthesis: first append starts playback immediately, before commit/final.
@@ -112,7 +126,7 @@ function waitForWhere(messages: Array<Record<string, unknown>>, predicate: (mess
 describe('browser conversation routing', () => {
   it('completes fake Pi through streaming TTS and authoritative browser terminal accounting', async () => {
     const sidecar = await fakeAudio({ tts: true });
-    const app = await buildApp({ sidecar, pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -147,7 +161,7 @@ describe('browser conversation routing', () => {
 
   it('degrades on persistence failure, permits bounded retry, and rejects acknowledgement after Stop', async () => {
     const sidecar = await fakeAudio();
-    const app = await buildApp({ sidecar, pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -174,7 +188,7 @@ describe('browser conversation routing', () => {
 
   it('rejects a persistence acknowledgement made stale by an interrupting utterance', async () => {
     const sidecar = await fakeAudio({ multiUtterance: true });
-    const app = await buildApp({ sidecar, pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -205,7 +219,7 @@ describe('browser conversation routing', () => {
     let resolveClosed!: () => void;
     const sidecarClosed = new Promise<void>(resolve => { resolveClosed = resolve; });
     const sidecar = await fakeAudio({ onStreamClose: resolveClosed });
-    const app = await buildApp({ sidecar, pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -233,7 +247,7 @@ describe('browser conversation routing', () => {
       async shutdown() {},
     };
     const sidecar = await fakeAudio({ progressiveTts: true, multiUtterance: true });
-    const app = await buildApp({ sidecar, pi: controlledPi });
+    const app = await buildApp({ sidecar, pi: controlledPi, multiPartEnabled: false });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -288,7 +302,7 @@ describe('browser conversation routing', () => {
 
   it('holds a stable final until the exact durable acknowledgement', async () => {
     const sidecar = await fakeAudio();
-    const app = await buildApp({ sidecar, pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -323,5 +337,54 @@ describe('browser conversation routing', () => {
     const closed = new Promise<number>(resolve => socket.once('close', code => resolve(code)));
     socket.send(JSON.stringify(command('turn.persisted', { ...acknowledgement, turnId: seed }, 0)));
     await expect(closed).resolves.toBe(1008);
+  });
+
+  it('runs a multi-part question turn: stall part 0 then body parts with per-part TTS on the wire', async () => {
+    const sidecar = await fakeAudio({ multipart: true });
+    const researchPi: PiResearchClient = {
+      async *requestBody(_input, _signal) {
+        yield { type: 'delta' as const, text: 'The top Metroidvania is Metroid Prime. It scores 97. Symphony of the Night follows at 93. Ori and the Will of the Wisps also scores 93. Metroid Prime 2 reaches 92. Metroid Fusion rounds out the list at 92. ' };
+        yield { type: 'final' as const, text: 'The top Metroidvania is Metroid Prime. It scores 97. Symphony of the Night follows at 93. Ori and the Will of the Wisps also scores 93. Metroid Prime 2 reaches 92. Metroid Fusion rounds out the list at 92. ' };
+      },
+      async shutdown() {},
+    };
+    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    const binary: Buffer[] = [];
+    socket.on('message', (raw, isBinary) => { if (isBinary) binary.push(Buffer.from(raw as Buffer)); else messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    const final = await waitFor(messages, 'transcript.final');
+    const finalPayload = final.payload as Record<string, unknown>;
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));
+    // Stall part 0 first, then body parts with part indices on the wire.
+    await waitForWhere(messages, message => message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 0);
+    const part0Tts = await waitForWhere(messages, message => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 0);
+    expect((part0Tts.payload as Record<string, unknown>).outputStreamId).toBe(55);
+    await waitForWhere(messages, message => message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 1);
+    const part1Tts = await waitForWhere(messages, message => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 1);
+    expect((part1Tts.payload as Record<string, unknown>).outputStreamId).toBe(56);
+    // The six-sentence body splits into two parts (indices 1 and 2).
+    await waitForWhere(messages, message => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 2);
+    await waitFor(messages, 'response.part_final');
+    const started = messages.filter(message => message.type === 'tts.started');
+    expect(started).toHaveLength(3);
+    expect(started.map(message => (message.payload as Record<string, unknown>).partIndex)).toEqual([0, 1, 2]);
+    expect(binary.length).toBeGreaterThanOrEqual(3);
+    // Terminal receipts for every part return to listening.
+    for (const startedEvent of started) {
+      const playbackId = (startedEvent.payload as Record<string, unknown>).playbackId as string;
+      socket.send(JSON.stringify(command('playback.stopped', { playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 960, reason: 'completed' })));
+    }
+    const listening = await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening');
+    expect(listening.epoch).toBe(0);
+    expect(messages.filter(message => message.type === 'reasoning.final')).toHaveLength(3);
+    socket.close();
   });
 });

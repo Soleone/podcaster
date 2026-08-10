@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { CONTRACT_VALIDATORS, decodeBinaryAudioFrame } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
+import type { PiResearchClient } from '../pi/PiResearchClient.js';
 import { SessionOrchestrator, type SessionEvent } from '../session/SessionOrchestrator.js';
 import { AudioClient, type SttFinal, type SttPartial, type VadEndEvent, type VadStartEvent } from '../sidecar/AudioClient.js';
 import type { SidecarProcess } from '../sidecar/process.js';
@@ -39,7 +40,7 @@ export class BrowserSession {
   private completedPersistenceAcks = new Map<string, CompletedPersistenceAck>();
   private stopped = false;
 
-  constructor(private readonly socket: WebSocket, sidecar: SidecarProcess, private readonly pi: PiClient) {
+  constructor(private readonly socket: WebSocket, sidecar: SidecarProcess, private readonly pi: PiClient, private readonly researchPi: PiResearchClient, private readonly multiPartEnabled = true) {
     this.audio = new AudioClient(sidecar, {
       speechStart: value => this.speechStart(value),
       speechEnd: value => this.speechEnd(value),
@@ -105,6 +106,8 @@ export class BrowserSession {
       sessionSeed: String(command.payload.sessionSeed),
       pi: this.pi,
       speech: this.audio,
+      researchPi: this.researchPi,
+      multiPartEnabled: this.multiPartEnabled,
       transcriptOnly: reasoningMode === 'transcript_only',
       emit: value => this.send(value),
     });
