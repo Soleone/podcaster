@@ -95,6 +95,8 @@ class TtsTextStream:
     output_sequence: int = 0
     generated_samples: int = 0
     done: threading.Event = field(default_factory=threading.Event)
+    part_index: int | None = None
+    part_id: str | None = None
 
 
 @dataclass
@@ -292,7 +294,14 @@ class SelectedAudioRuntime:
                 return
             raise
 
-    def open_tts(self, stream_id: str, response_id: str, epoch: int) -> None:
+    def open_tts(
+        self,
+        stream_id: str,
+        response_id: str,
+        epoch: int,
+        part_index: int | None = None,
+        part_id: str | None = None,
+    ) -> None:
         state = self._state(stream_id)
         with self._lock:
             if self.status != "ready":
@@ -325,6 +334,8 @@ class SelectedAudioRuntime:
                 playback_id=playback_id,
                 output_stream_id=output_stream_id,
                 done=done,
+                part_index=part_index,
+                part_id=part_id,
             )
             state.tts_stream = text_stream
 
@@ -348,19 +359,19 @@ class SelectedAudioRuntime:
                 if not text_stream.started and text_stream.chunks:
                     # Emit tts.started only when first nonempty chunk is ready
                     text_stream.started = True
-                    state.emit_json(
-                        {
-                            "type": "tts.started",
-                            "payload": {
-                                "streamId": stream_id,
-                                "responseId": response_id,
-                                "epoch": epoch,
-                                "playbackId": text_stream.playback_id,
-                                "outputStreamId": text_stream.output_stream_id,
-                                "sampleRate": 24_000,
-                            },
-                        }
-                    )
+                    started_payload: dict[str, object] = {
+                        "streamId": stream_id,
+                        "responseId": response_id,
+                        "epoch": epoch,
+                        "playbackId": text_stream.playback_id,
+                        "outputStreamId": text_stream.output_stream_id,
+                        "sampleRate": 24_000,
+                    }
+                    if text_stream.part_index is not None:
+                        started_payload["partIndex"] = text_stream.part_index
+                    if text_stream.part_id is not None:
+                        started_payload["partId"] = text_stream.part_id
+                    state.emit_json({"type": "tts.started", "payload": started_payload})
 
                 # Synthesize chunks sequentially
                 while True:
@@ -400,26 +411,30 @@ class SelectedAudioRuntime:
 
                 # All chunks synthesized, emit tts.ended
                 text_stream.token.raise_if_cancelled()
-                state.emit_json(
-                    {
-                        "type": "tts.ended",
-                        "payload": {
-                            "streamId": stream_id,
-                            "responseId": response_id,
-                            "epoch": epoch,
-                            "playbackId": text_stream.playback_id,
-                            "generatedSamples": text_stream.generated_samples,
-                        },
-                    }
-                )
+                ended_payload: dict[str, object] = {
+                    "streamId": stream_id,
+                    "responseId": response_id,
+                    "epoch": epoch,
+                    "playbackId": text_stream.playback_id,
+                    "generatedSamples": text_stream.generated_samples,
+                }
+                if text_stream.part_index is not None:
+                    ended_payload["partIndex"] = text_stream.part_index
+                if text_stream.part_id is not None:
+                    ended_payload["partId"] = text_stream.part_id
+                state.emit_json({"type": "tts.ended", "payload": ended_payload})
             except BaseException:
                 if text_stream.token.cancelled:
-                    state.emit_json(
-                        {
-                            "type": "tts.cancelled",
-                            "payload": {"streamId": stream_id, "responseId": response_id, "epoch": epoch},
-                        }
-                    )
+                    cancelled_payload: dict[str, object] = {
+                        "streamId": stream_id,
+                        "responseId": response_id,
+                        "epoch": epoch,
+                    }
+                    if text_stream.part_index is not None:
+                        cancelled_payload["partIndex"] = text_stream.part_index
+                    if text_stream.part_id is not None:
+                        cancelled_payload["partId"] = text_stream.part_id
+                    state.emit_json({"type": "tts.cancelled", "payload": cancelled_payload})
                 else:
                     self._poison()
             finally:

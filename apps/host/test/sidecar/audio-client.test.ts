@@ -98,6 +98,45 @@ async function fakeVadSidecar() {
   return { sidecar: { child: {} as SidecarProcess['child'], origin: `http://127.0.0.1:${address.port}`, secret: 'secret', stop: closer.close } satisfies SidecarProcess, send: (message: unknown) => sidecarSocket!.send(JSON.stringify(message)) };
 }
 
+async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPartId?: boolean } = {}) {
+  const http = createServer();
+  const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
+  await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+  const address = http.address();
+  if (!address || typeof address === 'string') throw new Error('missing address');
+  let ttsCount = 0;
+  wss.on('connection', (socket, request) => {
+    expect(request.headers.authorization).toBe('Bearer secret');
+    expect(request.headers.origin).toBeUndefined();
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.on('message', raw => {
+      if (Buffer.isBuffer(raw) && raw[0] === 1) return;
+      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      if (message.type === 'stream.open') {
+        socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
+      }
+      if (message.type === 'tts.commit') {
+        // Multi-part progressive stream: commit triggers synthesis. Echo the
+        // part fields only when the fake is configured to honor decision 007.
+        const requestIndex = ttsCount++;
+        const outputStreamId = 55 + requestIndex;
+        const responseId = message.payload.responseId as string;
+        const epoch = message.payload.epoch as number;
+        const partIndex = message.payload.partIndex as number | undefined;
+        const partId = message.payload.partId as string | undefined;
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId, outputStreamId, sampleRate: 24000, ...(options.echoPartIndex && partIndex !== undefined ? { partIndex } : {}), ...(options.echoPartId && partId !== undefined ? { partId } : {}) } }));
+        if (!options.echoPartIndex) return;
+        socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
+        socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
+        socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId, generatedSamples: 960, ...(partIndex !== undefined ? { partIndex } : {}) } }));
+      }
+    });
+  });
+  const closer = { close: async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => http.close(() => resolve())); } };
+  servers.push(closer);
+  return { child: {} as SidecarProcess['child'], origin: `http://127.0.0.1:${address.port}`, secret: 'secret', stop: closer.close } satisfies SidecarProcess;
+}
+
 describe('AudioClient', () => {
   it('validates captureEndSequence on speech_end and relays VAD ownership events', async () => {
     const { sidecar, send } = await fakeVadSidecar();
@@ -235,6 +274,39 @@ describe('AudioClient', () => {
     client.release(responseId);
     await expect(started.completion).rejects.toThrow(/protocol/);
     expect(failures).toContain('invalid_message');
+    await client.close();
+  });
+
+  it('resolves a multipart begin({partIndex}) when the sidecar echoes partIndex (decision 007 contract)', async () => {
+    const sidecar = await fakeMultipartSidecar({ echoPartIndex: true, echoPartId: true });
+    const client = new AudioClient(sidecar);
+    await client.connect();
+    await client.open(7);
+    const stream = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 0, partId: playbackId, signal: new AbortController().signal });
+    stream.append('Paris is the capital of France. It sits on the Seine. ');
+    stream.finish();
+    const started = await stream.started;
+    expect(started.partIndex).toBe(0);
+    expect(started.partId).toBe(playbackId);
+    expect(started.playbackId).toBe(playbackId);
+    expect(started.outputStreamId).toBe(55);
+    await expect(started.completion).resolves.toEqual({ generatedSamples: 960 });
+    expect(client.readiness()).toBe('ready');
+    await client.close();
+  });
+
+  it('fails closed when the sidecar omits partIndex from a multipart tts.started (documenting decision 007)', async () => {
+    const sidecar = await fakeMultipartSidecar();
+    const failures: string[] = [];
+    const client = new AudioClient(sidecar, { failure: code => failures.push(code) });
+    await client.connect();
+    await client.open(7);
+    const stream = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 0, signal: new AbortController().signal });
+    stream.append('Paris is the capital of France. ');
+    stream.finish();
+    await expect(stream.started).rejects.toThrow(/protocol/);
+    expect(failures).toContain('invalid_message');
+    expect(client.readiness()).toBe('failed');
     await client.close();
   });
 });

@@ -25,7 +25,7 @@ const pi: PiClient = {
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
-async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; multiUtterance?: boolean; multipart?: boolean; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
+async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; multiUtterance?: boolean; multipart?: boolean; failMidTurn?: boolean; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
   const server = createServer();
   const wss = new WebSocketServer({ server });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -50,6 +50,9 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
       if (message.type === 'stream.open') {
         opened = String(message.payload.streamId);
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: opened } }));
+        if (options.failMidTurn) setTimeout(() => {
+          socket.send(JSON.stringify({ type: 'sidecar.failure', payload: { code: 'runtime_unavailable', recoverable: true } }));
+        }, 10);
       } else if (message.type === 'stt.bind_epoch') {
         const boundUtterance = String(message.payload.utteranceId);
         socket.send(JSON.stringify({ type: 'vad.speech_end', payload: { streamId: opened, utteranceId: boundUtterance, captureStartSequence: utteranceSequence - 1, captureEndSequence: utteranceSequence - 1 } }));
@@ -337,6 +340,30 @@ describe('browser conversation routing', () => {
     const closed = new Promise<number>(resolve => socket.once('close', code => resolve(code)));
     socket.send(JSON.stringify(command('turn.persisted', { ...acknowledgement, turnId: seed }, 0)));
     await expect(closed).resolves.toBe(1008);
+  });
+
+  it('keeps the browser socket open when the sidecar fails mid-turn (capture frames dropped after failure)', async () => {
+    const sidecar = await fakeAudio({ failMidTurn: true });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    // The sidecar fails shortly after stream open; AudioClient must drop
+    // subsequent capture frames instead of throwing (which used to surface as
+    // invalid_capture_frame and close the browser socket).
+    await waitForWhere(messages, message => message.type === 'failure' && (message.payload as Record<string, unknown>).code === 'runtime_unavailable');
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(320) }, 64 * 1024));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    expect(messages.some(message => message.type === 'failure' && (message.payload as Record<string, unknown>).code === 'invalid_capture_frame')).toBe(false);
+    socket.close();
   });
 
   it('runs a multi-part question turn: stall part 0 then body parts with per-part TTS on the wire', async () => {

@@ -122,6 +122,10 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   input(frame: Uint8Array): void {
+    // After a sidecar failure the stream is terminal; drop capture frames so the
+    // session degrades gracefully instead of throwing (which would surface as a
+    // browser protocol error and close the browser socket).
+    if (this.failed) return;
     if (!this.streamId || !this.streamOpened) throw new Error('audio stream is not open');
     const decoded = decodeBinaryAudioFrame(frame, MAX_PAYLOAD - 20);
     if (decoded.channel !== 1 || decoded.streamId !== this.captureStreamId || decoded.pcm16.length !== 320) throw new Error('invalid capture frame');

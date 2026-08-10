@@ -16,7 +16,7 @@ export async function startSidecar(python = process.env.PYTHON ?? `${repositoryR
   });
   let stderr = '';
   child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-2000); });
+  child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-2000); process.stderr.write(`[sidecar] ${chunk}`); });
   let line: string;
   try {
     line = await new Promise<string>((resolve, reject) => {

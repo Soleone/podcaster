@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import socket
+import sys
 import threading
 from collections import deque
 from http import HTTPStatus
@@ -184,7 +185,13 @@ class SidecarServer:
                 elif message_type == "stt.bind_epoch":
                     self.runtime.bind_epoch(opened_stream, str(payload["utteranceId"]), int(payload["epoch"]))
                 elif message_type == "tts.open":
-                    self.runtime.open_tts(opened_stream, str(payload["responseId"]), int(payload["epoch"]))
+                    self.runtime.open_tts(
+                        opened_stream,
+                        str(payload["responseId"]),
+                        int(payload["epoch"]),
+                        payload.get("partIndex"),
+                        payload.get("partId"),
+                    )
                 elif message_type == "tts.append":
                     self.runtime.append_tts(
                         opened_stream,
@@ -212,7 +219,8 @@ class SidecarServer:
                     opened_stream = None
                 else:
                     raise ValueError("unsupported sidecar command")
-        except (ValueError, RuntimeError):
+        except (ValueError, RuntimeError) as error:
+            print(f"sidecar failure: {error!r}", file=sys.stderr)
             failed = True
             with sync_lock:
                 sync_lock.notify_all()
