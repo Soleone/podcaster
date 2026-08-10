@@ -139,7 +139,7 @@ export class SessionController {
       // 'failed' and send its exact terminal receipt. Clear any provisional
       // interruption state first so an in-flight pause checkpoint cannot be
       // persisted after the cutoff. If playback never started, no-op.
-      activityLog.append({ level: 'warn', source: 'controller', message: 'response failed', detail: String(event.payload.responseId) });
+      activityLog.append({ level: 'warn', source: 'controller', message: 'response failed', detail: `${String(event.payload.responseId)}${typeof event.payload.reasonCode === 'string' ? ` reason=${event.payload.reasonCode}` : ''}` });
       this.clearProvisional();
       this.setState({ ...this.state, playbackNotice: '' });
       const active = this.active;

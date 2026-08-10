@@ -30,6 +30,8 @@ export class ReasoningSpeechAssembler {
   private raw = "";
   private emitted = 0;
   private chunks: SentenceChunk[] = [];
+  /** Chunks released by append() only — exactly what callers streamed to TTS. */
+  private appendEmitted: SentenceChunk[] = [];
   private segmenter: Intl.Segmenter;
   private _canonicalPrefix = "";
 
@@ -72,6 +74,7 @@ export class ReasoningSpeechAssembler {
         return newChunks;
       }
       this.chunks.push({ text, index: this.emitted });
+      this.appendEmitted.push({ text, index: this.emitted });
       newChunks.push({ text, index: this.emitted });
       this.emitted++;
     }
@@ -122,6 +125,17 @@ export class ReasoningSpeechAssembler {
 
     const result: AssemblerResult = { raw: this.raw, canonical, chunks: [...this.chunks] };
     return tail ? { tail, result } : { result };
+  }
+
+  /**
+   * Exact text of the chunks released by append() — i.e. precisely what a caller
+   * appended to the TTS stream as they were released. Excludes any tail chunk
+   * pushed by final() (the caller appends that separately on the success path),
+   * so on a fail-soft path where final() never runs this is exactly the text
+   * the TTS stream received.
+   */
+  emittedText(): string {
+    return this.appendEmitted.map(chunk => chunk.text).join(" ");
   }
 
   /**

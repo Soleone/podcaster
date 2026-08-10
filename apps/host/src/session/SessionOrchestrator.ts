@@ -433,6 +433,7 @@ export class SessionOrchestrator {
       );
       const stallAssembler = new ReasoningSpeechAssembler(state.posture);
       let stallFinalText: string | undefined;
+      let stallRequestFailed = false;
       let emittedStallPreview = "";
       const emitStallPreview = (text: string): void => {
         if (!text || text === emittedStallPreview || !this.isCurrentMultiPart(state)) return;
@@ -447,21 +448,30 @@ export class SessionOrchestrator {
           const preview = stallAssembler.canonicalPrefix;
           if (preview) emitStallPreview(preview);
         }
-        else if (event.type === "error") { this.failMultiPart(state, 0, "reasoning_unavailable"); return; }
+        else if (event.type === "error") { stallRequestFailed = true; break; }
       }
       if (!this.isCurrentMultiPart(state)) return;
       let stallText: string | undefined;
-      try {
-        const finalized = stallAssembler.final(stallFinalText ?? "");
-        stallText = finalized.result.canonical;
-        if (finalized.tail) stallStream.append(finalized.tail.text);
-        if (!stallText || stallText.split(/\s+/u).filter(Boolean).length > 45) stallText = undefined;
-        if (state.posture === "question" && (stallText?.match(/\?/gu) ?? []).length > 1) stallText = undefined;
-        if (stallText && /^(?:```|\{|\[|assistant\s*:|system\s*:|<\/?(?:script|iframe)\b)/iu.test(stallText)) stallText = undefined;
-      } catch {
-        stallText = undefined;
+      if (!stallRequestFailed) {
+        try {
+          const finalized = stallAssembler.final(stallFinalText ?? "");
+          stallText = finalized.result.canonical;
+          if (finalized.tail) stallStream.append(finalized.tail.text);
+          if (!stallText || stallText.split(/\s+/u).filter(Boolean).length > 45) stallText = undefined;
+          if (state.posture === "question" && (stallText?.match(/\?/gu) ?? []).length > 1) stallText = undefined;
+          if (stallText && /^(?:```|\{|\[|assistant\s*:|system\s*:|<\/?(?:script|iframe)\b)/iu.test(stallText)) stallText = undefined;
+        } catch {
+          stallText = undefined;
+        }
       }
-      if (!stallText) { this.failMultiPart(state, 0, "reasoning_invalid"); return; }
+      if (!stallText) {
+        // Fail-soft: chunks released by append() were already streamed to the
+        // stall TTS and are valid by construction (each passed isValidChunk), so
+        // keep that streamed prefix as the stall instead of failing the turn.
+        const streamedText = stallAssembler.emittedText();
+        if (streamedText) stallText = streamedText;
+      }
+      if (!stallText) { this.failMultiPart(state, 0, stallRequestFailed ? "reasoning_unavailable" : "reasoning_invalid"); return; }
       stall.assistantText = stallText;
       parent.reasoningPrefix = stallText;
       this.emit("reasoning.final", { turnId: state.turnId, responseId: state.responseId, posture: state.posture, partIndex: 0, text: stallText });
@@ -587,6 +597,7 @@ export class SessionOrchestrator {
   }
 
   private failMultiPart(state: MultiPartState, partIndex: number, reasonCode: "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"): void {
+    log("session", `multipart fail reason=${reasonCode} partIndex=${partIndex} responseId=${state.responseId}`);
     this.emit("response.failed", { turnId: state.turnId, responseId: state.responseId, reasonCode, partIndex });
     this.fail(reasonCode, "The response could not be completed successfully.", "Continue listening.");
     this.cancelMultiPart(state);
@@ -971,6 +982,7 @@ export class SessionOrchestrator {
   }
   private fail(code: string, detail: string, correctiveAction: string): void { this.emit("failure", { code, detail, correctiveAction, recoverable: true }); }
   private failResponse(active: ActiveResponse, reasonCode: "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"): void {
+    log("session", `response fail reason=${reasonCode} responseId=${active.responseId}`);
     this.emit("response.failed", { turnId: active.turnId, responseId: active.responseId, reasonCode });
     this.fail(reasonCode, "The response could not be completed successfully.", "Continue listening.");
     // Establish the local TTS forwarding cutoff before clearing state so a failed

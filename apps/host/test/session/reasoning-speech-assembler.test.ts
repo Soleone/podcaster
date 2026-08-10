@@ -312,6 +312,29 @@ describe("ReasoningSpeechAssembler", () => {
     });
   });
 
+  describe("emittedText", () => {
+    it("returns the joined text of append-emitted chunks only", () => {
+      const a = new ReasoningSpeechAssembler("riff");
+      expect(a.emittedText()).toBe("");
+      const released = a.append("First sentence. Second sentence. Third.");
+      expect(released.map(chunk => chunk.text)).toEqual(["First sentence.", "Second sentence."]);
+      expect(a.emittedText()).toBe("First sentence. Second sentence.");
+      const { tail } = a.final("First sentence. Second sentence. Third.");
+      expect(tail!.text).toBe("Third.");
+      // final()'s tail is appended to the TTS stream separately by the caller, so
+      // emittedText() excludes it: it tracks only what append() released.
+      expect(a.emittedText()).toBe("First sentence. Second sentence.");
+    });
+
+    it("still returns the streamed prefix after a throwing final", () => {
+      const a = new ReasoningSpeechAssembler("riff");
+      a.append("I will check that. One moment please.");
+      expect(a.emittedText()).toBe("I will check that.");
+      expect(() => a.final("Completely different text.")).toThrow();
+      expect(a.emittedText()).toBe("I will check that.");
+    });
+  });
+
   describe("final validation", () => {
     it("detects mismatched final text", () => {
       const a = new ReasoningSpeechAssembler("riff");

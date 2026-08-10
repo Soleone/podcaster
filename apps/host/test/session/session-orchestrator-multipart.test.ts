@@ -131,6 +131,71 @@ describe("safe session orchestrator multi-part", () => {
     expect(snapshot.contextTurns).toBe(2);
   });
 
+  it("keeps the streamed stall prefix when the stall request errors after emitting sentence chunks", async () => {
+    const stallThenError = async function* (): AsyncIterable<PiEvent> {
+      yield { type: "delta", text: "I will check that. One moment please." };
+      yield { type: "error", state: "unavailable", detail: "stall failed", correctiveAction: "Retry" };
+    };
+    const body = async function* (): AsyncIterable<PiEvent> {
+      yield { type: "delta", text: "Paris is the capital of France. It sits on the Seine. The city is a cultural hub. Millions of people visit it. The metro is very extensive. The food is world famous. " };
+      yield { type: "final", text: "Paris is the capital of France. It sits on the Seine. The city is a cultural hub. Millions of people visit it. The metro is very extensive. The food is world famous. " };
+    };
+    const { session, events, speech, researchPi } = setup({ pi: new FakePi(stallThenError), researchPi: new FakeResearchPi(body) });
+    const handling = session.handleStableFinal(turn(0));
+    await handling;
+    expect(byType(events, "response.failed")).toHaveLength(0);
+    const stallFinal = byType(events, "reasoning.final").find(event => event.payload.partIndex === 0);
+    expect(stallFinal?.payload.text).toBe("I will check that.");
+    expect(byType(events, "response.part_final").some(event => event.payload.partIndex === 0)).toBe(true);
+    // The emitted prefix was streamed to the stall TTS and the stall stream finished.
+    expect(speech.appended.some(item => item.partIndex === 0 && item.text === "I will check that.")).toBe(true);
+    expect(speech.finished.some(item => item.partIndex === 0)).toBe(true);
+    // The research body still starts and receives exactly the streamed stall text.
+    expect(researchPi.inputs[0]!.stallText).toBe("I will check that.");
+    const started = byType(events, "response.part_started").map(event => event.payload.partIndex as number);
+    expect(started).toEqual([0, 1, 2]);
+    // The session returns to listening once every part has played out.
+    for (const begin of speech.begins) {
+      session.playbackStopped({ playbackId: ids[81 + speech.begins.indexOf(begin)]!, cancelledEpoch: 0, finalPlayedSampleOffset: 6400, reason: "completed" });
+    }
+    await handling;
+    expect(session.snapshot().activeResponseId).toBeUndefined();
+    expect(session.snapshot().phase).toBe("listening");
+    expect(session.retentionSnapshot().contextTurns).toBe(2);
+  });
+
+  it("fails with reasoning_unavailable when the stall request errors before emitting any chunk", async () => {
+    const stallErrors = async function* (): AsyncIterable<PiEvent> {
+      yield { type: "error", state: "unavailable", detail: "stall failed", correctiveAction: "Retry" };
+    };
+    const { session, events, researchPi } = setup({ pi: new FakePi(stallErrors) });
+    const handling = session.handleStableFinal(turn(0));
+    await handling;
+    const failed = byType(events, "response.failed")[0];
+    expect(failed?.payload.reasonCode).toBe("reasoning_unavailable");
+    expect(failed?.payload.partIndex).toBe(0);
+    expect(byType(events, "reasoning.final")).toHaveLength(0);
+    expect(byType(events, "response.part_final")).toHaveLength(0);
+    expect(researchPi.inputs).toHaveLength(0);
+    expect(session.snapshot().activeResponseId).toBeUndefined();
+    expect(session.snapshot().phase).toBe("listening");
+  });
+
+  it("keeps the streamed stall prefix when stall final validation fails after emitting sentence chunks", async () => {
+    const stallMismatchFinal = async function* (): AsyncIterable<PiEvent> {
+      yield { type: "delta", text: "I will check that. One moment please." };
+      yield { type: "final", text: "Completely different text." };
+    };
+    const { session, events, researchPi } = setup({ pi: new FakePi(stallMismatchFinal) });
+    const handling = session.handleStableFinal(turn(0));
+    await handling;
+    expect(byType(events, "response.failed")).toHaveLength(0);
+    const stallFinal = byType(events, "reasoning.final").find(event => event.payload.partIndex === 0);
+    expect(stallFinal?.payload.text).toBe("I will check that.");
+    expect(byType(events, "response.part_final").some(event => event.payload.partIndex === 0)).toBe(true);
+    expect(researchPi.inputs[0]!.stallText).toBe("I will check that.");
+  });
+
   it("emits response.failed with the failed body part index and preserves the stall", async () => {
     const body = async function* (): AsyncIterable<PiEvent> {
       yield { type: "error", state: "unavailable", detail: "research failed", correctiveAction: "Retry" };
