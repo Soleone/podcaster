@@ -22,7 +22,6 @@ export function ConversationRow({ item }: { item: ConversationItem }) {
     <MessageContent>
       <MessageHeader>Oliver</MessageHeader>
       <Bubble variant="secondary"><BubbleContent className="conversation-bubble assistant-bubble"><p>{item.text}</p></BubbleContent></Bubble>
-      <MessageFooter><Badge>{item.playback}</Badge></MessageFooter>
     </MessageContent>
   </Message>;
 }
