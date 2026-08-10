@@ -6,6 +6,11 @@ import type { SpeechOutputPort, SpeechOutputStream, SpeechSynthesisStart } from 
 
 const MAX_PAYLOAD = 64 * 1024;
 const MAX_BUFFERED_OUTPUT_CHUNKS = 64;
+// Decision 007 two-stream prefetch: never open more than two nonterminal TTS
+// streams on the sidecar; a third begin() waits (FIFO) for the oldest to
+// terminalize before its tts.open is sent. The sidecar keeps a defensive
+// len(state.tts) >= 2 bound for uncoordinated clients.
+const MAX_ADMITTED_TTS = 2;
 // AudioClient is a WebSocket *client* to the sidecar, so its closes must use
 // client-valid application codes (3000-4999); 1008/1011 are server-only.
 // node ws accepts any code, so these are symmetry/hygiene only.
@@ -51,6 +56,9 @@ interface PendingTts {
   onGeneratedSamples: ((total: number) => void) | undefined;
   released: boolean;
   chunks: Uint8Array[];
+  queued: boolean;
+  bufferedAppends: string[];
+  bufferedCommit: { nextSequence: number; textSha256: string } | undefined;
   detachAbort(): void;
 }
 interface ActiveUtterance {
@@ -74,6 +82,8 @@ export class AudioClient implements SpeechOutputPort {
   private openWaiter: OpenWaiter | undefined;
   private utterance: ActiveUtterance | undefined;
   private pending = new Map<string, PendingTts>();
+  private admitted: PendingTts[] = [];
+  private queued: PendingTts[] = [];
   private usedOutputStreams = new Set<number>();
   private readyStatus: 'starting' | 'ready' | 'failed' = 'starting';
   private readinessSeen = false;
@@ -168,7 +178,7 @@ export class AudioClient implements SpeechOutputPort {
       key, responseId: input.responseId, epoch: input.epoch, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}),
       resolveStart, rejectStart, resolveCompletion, rejectCompletion,
       startSettled: false, sidecarStarted: false, completionSettled: false, remoteTerminal: false, expectedSequence: 0, receivedSamples: 0,
-      cutoff: false, onGeneratedSamples: input.onGeneratedSamples, released: false, chunks: [], detachAbort: () => input.signal.removeEventListener('abort', abort),
+      cutoff: false, onGeneratedSamples: input.onGeneratedSamples, released: false, chunks: [], queued: false, bufferedAppends: [], bufferedCommit: undefined, detachAbort: () => input.signal.removeEventListener('abort', abort),
     };
     this.pending.set(key, pending);
     input.signal.addEventListener('abort', abort, { once: true });
@@ -176,8 +186,17 @@ export class AudioClient implements SpeechOutputPort {
       pending.cutoff = true;
       this.rejectPending(pending, new Error('TTS cancelled'));
       this.pending.delete(key);
+    } else if (this.admitted.length < MAX_ADMITTED_TTS) {
+      // A slot is free: admit immediately and open on the sidecar. The stall
+      // (part 0) is always the first begin() so it always gets the first slot.
+      this.admitted.push(pending);
+      this.sendForStream('tts.open', this.ttsFields(input));
     } else {
-      this.sendForStream('tts.open', { responseId: input.responseId, epoch: input.epoch, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
+      // Both slots are held by nonterminal streams. Queue FIFO and buffer the
+      // stream locally; append()/finish() will be flushed when the oldest
+      // admitted stream reports terminal (tts.ended / tts.cancelled).
+      pending.queued = true;
+      this.queued.push(pending);
     }
     (pending as PendingTts & { completion?: Promise<{ generatedSamples: number }> }).completion = completion;
 
@@ -191,17 +210,50 @@ export class AudioClient implements SpeechOutputPort {
         if (pending.cutoff || pending.remoteTerminal) throw new Error('TTS stream is terminated');
         if (!text.trim()) throw new Error('empty append');
         hasher.update(text, 'utf8');
+        if (pending.queued) {
+          // No wire commands while queued; the flush replays these in order.
+          pending.bufferedAppends.push(text);
+          return;
+        }
         client.sendForStream('tts.append', { responseId: input.responseId, epoch: input.epoch, sequence: appendSequence, text, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
         appendSequence++;
       },
       finish(): void {
         if (pending.cutoff || pending.remoteTerminal) throw new Error('TTS stream is terminated');
         const sha256 = hasher.digest('hex');
+        if (pending.queued) {
+          pending.bufferedCommit = { nextSequence: pending.bufferedAppends.length, textSha256: sha256 };
+          return;
+        }
         client.sendForStream('tts.commit', { responseId: input.responseId, epoch: input.epoch, nextSequence: appendSequence, textSha256: sha256, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
       },
     };
 
     return stream;
+  }
+
+  private ttsFields(input: { responseId: string; epoch: number; partIndex?: number; partId?: string }): Record<string, unknown> {
+    return { responseId: input.responseId, epoch: input.epoch, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
+  }
+
+  private removeAdmitted(pending: PendingTts): void {
+    const index = this.admitted.indexOf(pending);
+    if (index >= 0) this.admitted.splice(index, 1);
+  }
+
+  private flushQueue(): void {
+    while (this.admitted.length < MAX_ADMITTED_TTS && this.queued.length > 0) {
+      const pending = this.queued.shift()!;
+      pending.queued = false;
+      this.admitted.push(pending);
+      this.sendForStream('tts.open', this.ttsFields(pending));
+      for (let index = 0; index < pending.bufferedAppends.length; index++) {
+        this.sendForStream('tts.append', { responseId: pending.responseId, epoch: pending.epoch, sequence: index, text: pending.bufferedAppends[index]!, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+      }
+      if (pending.bufferedCommit) {
+        this.sendForStream('tts.commit', { responseId: pending.responseId, epoch: pending.epoch, nextSequence: pending.bufferedCommit.nextSequence, textSha256: pending.bufferedCommit.textSha256, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+      }
+    }
   }
 
   release(responseId: string, partIndex?: number): void {
@@ -221,6 +273,12 @@ export class AudioClient implements SpeechOutputPort {
       if (!pending || pending.cutoff) return;
       pending.cutoff = true;
       pending.chunks.length = 0;
+      if (pending.queued) {
+        this.removeQueued(pending);
+        this.rejectPending(pending, new Error('TTS cancelled'));
+        this.pending.delete(pending.key);
+        return;
+      }
       if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch, partIndex });
       this.rejectPending(pending, new Error('TTS cancelled'));
       return;
@@ -229,9 +287,20 @@ export class AudioClient implements SpeechOutputPort {
       if (pending.responseId !== responseId || pending.cutoff) continue;
       pending.cutoff = true;
       pending.chunks.length = 0;
+      if (pending.queued) {
+        this.removeQueued(pending);
+        this.rejectPending(pending, new Error('TTS cancelled'));
+        this.pending.delete(pending.key);
+        continue;
+      }
       if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}) });
       this.rejectPending(pending, new Error('TTS cancelled'));
     }
+  }
+
+  private removeQueued(pending: PendingTts): void {
+    const index = this.queued.indexOf(pending);
+    if (index >= 0) this.queued.splice(index, 1);
   }
 
   async close(): Promise<void> {
@@ -371,6 +440,8 @@ export class AudioClient implements SpeechOutputPort {
       pending.resolveCompletion({ generatedSamples });
     }
     this.pending.delete(pending.key);
+    this.removeAdmitted(pending);
+    this.flushQueue();
   }
   private ttsCancelled(payload: JsonObject): void {
     const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
@@ -379,6 +450,8 @@ export class AudioClient implements SpeechOutputPort {
     pending.chunks.length = 0;
     this.rejectPending(pending, new Error('TTS cancelled'));
     this.pending.delete(pending.key);
+    this.removeAdmitted(pending);
+    this.flushQueue();
   }
 
   private sendForStream(type: string, payload: JsonObject): void {
@@ -418,5 +491,7 @@ export class AudioClient implements SpeechOutputPort {
     this.openWaiter = undefined;
     for (const pending of this.pending.values()) { pending.cutoff = true; this.rejectPending(pending, error); }
     this.pending.clear();
+    this.admitted.length = 0;
+    this.queued.length = 0;
   }
 }

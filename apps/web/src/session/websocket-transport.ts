@@ -10,7 +10,7 @@ const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
 // WebSocket *client* to send. 1008/1011 are server-only and a browser client
 // that tries to send them throws InvalidAccessError inside onmessage.
 const CLOSE_PROTOCOL_VIOLATION = 4000;
-interface OutputBinding { playbackId: string; responseId: string; outputEpoch: number; streamId?: number; partIndex?: number; expectedSequence: number; sampleOffset: number; terminal: boolean }
+interface OutputBinding { playbackId: string; responseId: string; outputEpoch: number; streamId?: number; partIndex?: number; expectedSequence: number; sampleOffset: number; terminal: boolean; receivedAt: number }
 
 interface OutputCollection {
   // Multi-part responses key bindings by the sidecar outputStreamId; the legacy
@@ -86,6 +86,7 @@ export class WebSocketSessionTransport implements SessionTransport {
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.final did not match the established response.'); return; }
         } else if (hostEvent.type === 'response.part_started') {
           const responseId = String(hostEvent.payload.responseId);
+          activityLog.append({ level: 'info', source: 'transport', message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} started` });
           // A part_started may be the FIRST event of a new response (the host emits
           // it before reasoning.started). If it belongs to a different response
           // than the one currently established, the previous response was
@@ -98,11 +99,12 @@ export class WebSocketSessionTransport implements SessionTransport {
         } else if (hostEvent.type === 'response.part_final') {
           // A part_final must follow that part's reasoning.started/final, so keep strict matching.
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.part_final did not match the established response.'); return; }
+          activityLog.append({ level: 'info', source: 'transport', message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} final` });
         } else if (hostEvent.type === 'tts.started') {
           if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('tts.started did not match the established response identity.'); return; }
           const outputStreamId = typeof hostEvent.payload.outputStreamId === 'number' ? hostEvent.payload.outputStreamId : undefined;
           const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
-          const binding: OutputBinding = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false, ...(outputStreamId !== undefined ? { streamId: outputStreamId } : {}), ...(partIndex !== undefined ? { partIndex } : {}) };
+          const binding: OutputBinding = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false, receivedAt: Date.now(), ...(outputStreamId !== undefined ? { streamId: outputStreamId } : {}), ...(partIndex !== undefined ? { partIndex } : {}) };
           if (outputStreamId !== undefined) {
             if (this.outputs.byStream.has(outputStreamId) || this.usedOutputStreams.has(outputStreamId)) { this.protocolFailure('tts.started reused an output stream id.'); return; }
             this.outputs.byStream.set(outputStreamId, binding);
@@ -198,6 +200,9 @@ export class WebSocketSessionTransport implements SessionTransport {
       this.usedOutputStreams.add(frame.streamId);
     }
     if (frame.streamId !== output.streamId || frame.sequence !== output.expectedSequence) { this.protocolFailure('a binary audio frame had an unexpected stream id or sequence.'); return; }
+    if (frame.sequence === 0 && output.partIndex !== undefined) {
+      activityLog.append({ level: 'info', source: 'transport', message: `part ${output.partIndex} first audio`, detail: `${Date.now() - output.receivedAt}ms` });
+    }
     const chunk: OutputAudioChunk = { playbackId: output.playbackId, sequence: frame.sequence, sampleOffset: output.sampleOffset, pcm16: frame.pcm16 };
     output.expectedSequence++;
     output.sampleOffset += frame.pcm16.length;

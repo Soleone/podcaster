@@ -3,6 +3,7 @@ import { access, lstat, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
 
 import { PI_EXECUTABLE, PI_VERSION, PI_MODEL, type PiEvent, type PiPosture } from "./PiClient.js";
+import { log } from "../logger.js";
 
 const MAX_RECORD_BYTES = 256 * 1024;
 const MAX_BUFFER_BYTES = 1024 * 1024;
@@ -88,6 +89,7 @@ export class StdioPiResearchClient implements PiResearchClient {
   private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number; private readonly maxWords: number;
   private child: ChildProcessWithoutNullStreams | undefined; private buffer = Buffer.alloc(0); private stderrBytes = 0;
   private pending = new Map<string, Pending>(); private sequence = 0; private active: ActiveRequest | undefined;
+  private readonly activeToolStarts = new Map<string, number>();
   private starting: Promise<void> | undefined; private ownership: Promise<void> = Promise.resolve(); private closed = false;
   constructor(options: PiResearchClientOptions = {}) {
     this.executable = options.executable ?? PI_EXECUTABLE; this.version = options.version ?? PI_VERSION; this.model = options.model ?? PI_MODEL;
@@ -194,6 +196,24 @@ export class StdioPiResearchClient implements PiResearchClient {
     }
     const active = this.active;
     if (!active) return;
+    if (value.type === "tool_execution_start") {
+      const toolCallId = String(value.toolCallId ?? "");
+      const toolName = String(value.toolName ?? "?");
+      // Sanitized host diagnostics only: never log arguments, tool output, or
+      // results. Tool events stay out of the PiEvent stream sent downstream.
+      if (toolCallId) this.activeToolStarts.set(toolCallId, Date.now());
+      log("research", `tool start ${toolName} ${toolCallId}`);
+      return;
+    }
+    if (value.type === "tool_execution_end") {
+      const toolCallId = String(value.toolCallId ?? "");
+      const toolName = String(value.toolName ?? "?");
+      const started = toolCallId ? this.activeToolStarts.get(toolCallId) : undefined;
+      if (toolCallId) this.activeToolStarts.delete(toolCallId);
+      const ok = value.error === undefined || value.error === null ? "ok" : "failed";
+      log("research", `tool end ${toolName} ${toolCallId}${started !== undefined ? ` ${Date.now() - started}ms` : ""} ${ok}`);
+      return;
+    }
     if (value.type === "message_update") {
       const update = value.assistantMessageEvent as ObjectValue | undefined;
       if (update?.type === "text_delta" && typeof update.delta === "string" && !active.messageEnded) {
@@ -214,7 +234,7 @@ export class StdioPiResearchClient implements PiResearchClient {
       else { active.queue.push({ type: "final", text: active.assistantText }); active.queue.end(); this.finishActive(active); }
     }
   }
-  private finishActive(active: ActiveRequest, release = true): void { if (active.completed) return; active.completed = true; clearTimeout(active.timer); active.signal.removeEventListener("abort", active.abortListener); if (this.active === active) this.active = undefined; if (release) active.release(); }
+  private finishActive(active: ActiveRequest, release = true): void { if (active.completed) return; active.completed = true; clearTimeout(active.timer); active.signal.removeEventListener("abort", active.abortListener); if (this.active === active) this.active = undefined; this.activeToolStarts.clear(); if (release) active.release(); }
   private failActive(error: Error): void {
     const active = this.active; if (!active) return;
     active.cutoff = true; active.queue.push(errorEvent(error)); active.queue.end(); this.finishActive(active, false);

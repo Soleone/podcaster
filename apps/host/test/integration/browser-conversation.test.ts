@@ -126,6 +126,70 @@ function waitForWhere(messages: Array<Record<string, unknown>>, predicate: (mess
   });
 }
 
+
+async function fakeBoundedAudio(): Promise<SidecarProcess> {
+  // Enforces the real sidecar bound: at most two nonterminal progressive TTS
+  // streams. A third tts.open is a protocol violation (sidecar.failure), which
+  // the client-side admission gate must never trigger. tts.ended arrives ~30ms
+  // after commit (synthesis duration), so streams hold their slot briefly.
+  const server = createServer();
+  const wss = new WebSocketServer({ server });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('missing address');
+  wss.on('connection', socket => {
+    let opened = '';
+    const nonterminal = new Map<number, { responseId: string; epoch: number }>();
+    const sentSeq1 = new Set<number>();
+    let utteranceSequence = 0;
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.on('message', (raw, binary) => {
+      if (binary) {
+        socket.send(JSON.stringify({ type: 'vad.speech_start', payload: { streamId: opened, utteranceId, captureStartSequence: utteranceSequence } }));
+        utteranceSequence++;
+        return;
+      }
+      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      if (message.type === 'stream.open') {
+        opened = String(message.payload.streamId);
+        socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: opened } }));
+      } else if (message.type === 'stt.bind_epoch') {
+        socket.send(JSON.stringify({ type: 'vad.speech_end', payload: { streamId: opened, utteranceId, captureStartSequence: utteranceSequence - 1, captureEndSequence: utteranceSequence - 1 } }));
+        socket.send(JSON.stringify({ type: 'stt.partial', payload: { streamId: opened, utteranceId, epoch: message.payload.epoch, sequence: 0, text: 'Could you share', replacedCharacters: 0 } }));
+        socket.send(JSON.stringify({ type: 'stt.final', payload: { streamId: opened, utteranceId, epoch: message.payload.epoch, text: 'Could you share what you think about this complete idea?', endpointComplete: true } }));
+      } else if (message.type === 'tts.open') {
+        const partIndex = Number(message.payload.partIndex ?? 0);
+        if (nonterminal.size >= 2) {
+          socket.send(JSON.stringify({ type: 'sidecar.failure', payload: { code: 'runtime_poisoned', recoverable: false } }));
+          return;
+        }
+        const responseId = String(message.payload.responseId);
+        const epoch = Number(message.payload.epoch);
+        nonterminal.set(partIndex, { responseId, epoch });
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId, epoch, playbackId, outputStreamId: 55 + partIndex, sampleRate: 24000, partIndex } }));
+        socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55 + partIndex, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
+      } else if (message.type === 'tts.append') {
+        const partIndex = Number(message.payload.partIndex ?? 0);
+        if (!sentSeq1.has(partIndex)) {
+          sentSeq1.add(partIndex);
+          socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55 + partIndex, sequence: 1, monotonicUs: 3n, pcm16: new Int16Array(480) }, 64 * 1024));
+        }
+      } else if (message.type === 'tts.commit') {
+        const partIndex = Number(message.payload.partIndex ?? 0);
+        const entry = nonterminal.get(partIndex);
+        if (!entry) return;
+        setTimeout(() => {
+          nonterminal.delete(partIndex);
+          socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: opened, responseId: entry.responseId, epoch: entry.epoch, playbackId, generatedSamples: 960, partIndex } }));
+        }, 30);
+      }
+    });
+  });
+  const close = async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => server.close(() => resolve())); };
+  cleanup.push(close);
+  return { child: {} as SidecarProcess['child'], origin: `http://127.0.0.1:${address.port}`, secret: 'sidecar-secret', stop: close };
+}
+
 describe('browser conversation routing', () => {
   it('completes fake Pi through streaming TTS and authoritative browser terminal accounting', async () => {
     const sidecar = await fakeAudio({ tts: true });
@@ -412,6 +476,48 @@ describe('browser conversation routing', () => {
     const listening = await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening');
     expect(listening.epoch).toBe(0);
     expect(messages.filter(message => message.type === 'reasoning.final')).toHaveLength(3);
+    socket.close();
+  });
+
+  it('never opens a third nonterminal TTS stream against a bound-enforcing sidecar (decision 007 gate)', async () => {
+    const sidecar = await fakeBoundedAudio();
+    const researchPi: PiResearchClient = {
+      async *requestBody(_input, _signal) {
+        const text = 'The top Metroidvania is Metroid Prime. It scores 97. Symphony of the Night follows at 93. Ori and the Will of the Wisps also scores 93. Metroid Prime 2 reaches 92. Metroid Fusion rounds out the list at 92. Metroid Dread completes the set at 94. Hollow Knight earned 90. Axiom Verge closes at 88. ';
+        yield { type: 'delta' as const, text };
+        yield { type: 'final' as const, text };
+      },
+      async shutdown() {},
+    };
+    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (raw, isBinary) => { if (!isBinary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    const final = await waitFor(messages, 'transcript.final');
+    const finalPayload = final.payload as Record<string, unknown>;
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));
+    // Stall + three body parts. The gate holds parts 2 and 3 until their
+    // predecessor terminalizes, so all four must still reach tts.started.
+    for (const partIndex of [0, 1, 2, 3]) {
+      await waitForWhere(messages, message => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === partIndex);
+    }
+    expect(messages.filter(message => message.type === 'failure' || message.type === 'response.failed')).toHaveLength(0);
+    const started = messages.filter(message => message.type === 'tts.started');
+    expect(started).toHaveLength(4);
+    expect(started.map(message => (message.payload as Record<string, unknown>).partIndex)).toEqual([0, 1, 2, 3]);
+    for (const startedEvent of started) {
+      const playbackId = (startedEvent.payload as Record<string, unknown>).playbackId as string;
+      socket.send(JSON.stringify(command('playback.stopped', { playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 960, reason: 'completed' })));
+    }
+    const listening = await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening');
+    expect(listening.epoch).toBe(0);
     socket.close();
   });
 });

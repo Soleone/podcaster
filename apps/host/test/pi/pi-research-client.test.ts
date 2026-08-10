@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PI_MODEL, type PiEvent } from "../../src/pi/PiClient.js";
 import { StdioPiResearchClient, type PiResearchRequestInput } from "../../src/pi/PiResearchClient.js";
 import { makeFakePi, type FakePiScenario } from "../fixtures/fake-pi.js";
@@ -41,6 +41,24 @@ describe("production Pi research RPC boundary", () => {
     const result = await events(value);
     expect(result).toEqual([{ type: "delta", text: "Hello" }, { type: "delta", text: " world" }, { type: "final", text: "Hello world" }]);
     expect(JSON.stringify(result)).not.toContain("PRIVATE");
+    await value.shutdown();
+  });
+
+  it("logs sanitized research tool lifecycle without leaking args or results", async () => {
+    const { value } = await client("tools");
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => { writes.push(String(chunk)); return true; });
+    try {
+      const result = await events(value);
+      expect(result).toEqual([{ type: "delta", text: "Hello" }, { type: "delta", text: " world" }, { type: "final", text: "Hello world" }]);
+    } finally { spy.mockRestore(); }
+    const logs = writes.filter(line => line.startsWith("[research]"));
+    expect(logs.some(line => line.includes("tool start grep tool-1"))).toBe(true);
+    expect(logs.some(line => line.includes("tool end grep tool-1") && line.includes("ok"))).toBe(true);
+    const joined = writes.join("\n");
+    expect(joined).not.toContain("Metroidvania");
+    expect(joined).not.toContain("PRIVATE_CONTENT");
+    expect(joined).not.toContain("PRIVATE");
     await value.shutdown();
   });
 

@@ -6,6 +6,7 @@ import type { PiResearchClient } from "../pi/PiResearchClient.js";
 import { fallbackInterruptionDecision, hasCorrectionIntent, hasLexicalContent, isBareRedirection, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
 import { ReasoningSpeechAssembler } from "./ReasoningSpeechAssembler.js";
 import { ResearchPartAssembler } from "./ResearchPartAssembler.js";
+import { log } from "../logger.js";
 
 export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
 export interface SessionEvent { protocolVersion: 1; sessionId: string; epoch: number; eventId: string; type: string; monotonicMs: number; payload: Record<string, unknown> }
@@ -419,6 +420,8 @@ export class SessionOrchestrator {
       // ---- Part 0: stall (existing 45-word no-tool path) ----
       const stall: MultiPartPart = { partIndex: 0, kind: "stall", generatedSamples: 0, terminal: false, started: false };
       state.parts.push(stall);
+      const stallStartedAt = Date.now();
+      log("session", `part started stall 0 ${state.responseId}`);
       this.emit("response.part_started", { turnId: state.turnId, responseId: state.responseId, partIndex: 0, kind: "stall" });
       this.emit("reasoning.started", { turnId: state.turnId, responseId: state.responseId, posture: state.posture, partIndex: 0 });
       const stallStream = this.options.speech.begin({ sessionId: this.options.sessionId, epoch: operationEpoch, responseId, partIndex: 0, signal: controller.signal, onGeneratedSamples: total => this.recordPartSamples(state, stall, total) });
@@ -463,6 +466,7 @@ export class SessionOrchestrator {
       parent.reasoningPrefix = stallText;
       this.emit("reasoning.final", { turnId: state.turnId, responseId: state.responseId, posture: state.posture, partIndex: 0, text: stallText });
       stallStream.finish();
+      log("session", `part final stall 0 ${state.responseId} ${stallText.length}chars ${Date.now() - stallStartedAt}ms`);
       this.emit("response.part_final", { turnId: state.turnId, responseId: state.responseId, partIndex: 0, kind: "stall" });
       if (!this.isCurrentMultiPart(state)) return;
 
@@ -546,6 +550,8 @@ export class SessionOrchestrator {
     if (chunk.partIndex > 7) { this.failMultiPart(state, chunk.partIndex, "reasoning_invalid"); return; }
     const part: MultiPartPart = { partIndex: chunk.partIndex, kind: "body", generatedSamples: 0, terminal: false, started: false };
     state.parts.push(part);
+    const partStartedAt = Date.now();
+    log("session", `part started body ${chunk.partIndex} ${state.responseId}`);
     this.emit("response.part_started", { turnId: state.turnId, responseId: state.responseId, partIndex: chunk.partIndex, kind: "body" });
     this.emit("reasoning.started", { turnId: state.turnId, responseId: state.responseId, posture: state.posture, partIndex: chunk.partIndex });
     const stream = this.options.speech.begin({ sessionId: this.options.sessionId, epoch: state.epoch, responseId: state.responseId, partIndex: chunk.partIndex, signal: state.controller.signal, onGeneratedSamples: total => this.recordPartSamples(state, part, total) });
@@ -560,6 +566,7 @@ export class SessionOrchestrator {
     this.emit("reasoning.delta", { turnId: state.turnId, responseId: state.responseId, partIndex: chunk.partIndex, text: chunk.text });
     this.emit("reasoning.final", { turnId: state.turnId, responseId: state.responseId, posture: state.posture, partIndex: chunk.partIndex, text: chunk.text });
     stream.finish();
+    log("session", `part final body ${chunk.partIndex} ${state.responseId} ${chunk.text.length}chars ${Date.now() - partStartedAt}ms`);
     this.emit("response.part_final", { turnId: state.turnId, responseId: state.responseId, partIndex: chunk.partIndex, kind: "body" });
   }
 

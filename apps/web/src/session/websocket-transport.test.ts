@@ -1,6 +1,7 @@
 import { encodeBinaryAudioFrame } from '@app/contracts/binary';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketSessionTransport } from './websocket-transport';
+import { activityLog } from './activity-log';
 import type { StableEvent } from '../storage/stable-turn-writer';
 
 const originalWebSocket = globalThis.WebSocket;
@@ -431,6 +432,28 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0 }));
     expectNoProtocolFailure(socket);
     expect(seen).toEqual(['response.part_started', 'reasoning.started']);
+  });
+
+
+  it('records part lifecycle and first-audio latency in the activity log', async () => {
+    const socket = new EventSocket();
+    await wiredTransport(socket);
+    const append = vi.spyOn(activityLog, 'append');
+    // Real wire order: part_started precedes reasoning.started for each part.
+    emitText(socket, hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }));
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0 }));
+    emitText(socket, hostEvent('tts.started', { responseId: responseA, playbackId: playbackA, sampleRate: 24_000, outputStreamId: 77, partIndex: 0 }));
+    emitBinary(socket, 77, 0, 480);
+    emitText(socket, hostEvent('reasoning.final', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0, text: 'Stall.' }));
+    emitText(socket, hostEvent('response.part_final', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }));
+    emitText(socket, hostEvent('tts.ended', { responseId: responseA, playbackId: playbackA, generatedSamples: 480, partIndex: 0 }));
+    const entries = append.mock.calls.map(call => call[0]);
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'transport', message: 'part stall 0 started' }),
+      expect.objectContaining({ source: 'transport', message: 'part 0 first audio' }),
+      expect.objectContaining({ source: 'transport', message: 'part stall 0 final' }),
+    ]));
+    expectNoProtocolFailure(socket);
   });
 
   it('rejects a multipart tts.started that reuses an output stream id', async () => {

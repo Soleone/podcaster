@@ -503,6 +503,14 @@ class SelectedAudioRuntime:
             if text_sha256 != expected_hash:
                 raise ValueError("commit text SHA-256 mismatch")
             text_stream.committed = True
+            # Detach the committed stream from the singleton progressive slot so a
+            # prefetched successor can open while this worker finishes synthesis.
+            # The committed stream stays in state.tts/tts_done until the worker
+            # terminalizes; the successor's worker waits on its fence. This is the
+            # decision-007 two-nonterminal-stream design; len(state.tts) >= 2 in
+            # open_tts remains the defensive bound for uncoordinated clients.
+            if state.tts_stream is text_stream:
+                state.tts_stream = None
             with text_stream.condition:
                 text_stream.condition.notify_all()
 

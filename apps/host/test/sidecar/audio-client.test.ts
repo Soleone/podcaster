@@ -310,3 +310,122 @@ describe('AudioClient', () => {
     await client.close();
   });
 });
+
+async function fakeRecordedSidecar() {
+  const http = createServer();
+  const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
+  await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+  const address = http.address();
+  if (!address || typeof address === 'string') throw new Error('missing address');
+  const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  let sidecarSocket: WebSocket | undefined;
+  wss.on('connection', (socket, request) => {
+    expect(request.headers.authorization).toBe('Bearer secret');
+    sidecarSocket = socket;
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.on('message', raw => {
+      if (Buffer.isBuffer(raw) && raw[0] === 1) return;
+      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      if (message.type === 'stream.open') socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
+      else if (message.type.startsWith('tts.')) commands.push(message);
+    });
+  });
+  const closer = { close: async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => http.close(() => resolve())); } };
+  servers.push(closer);
+  return {
+    sidecar: { child: {} as SidecarProcess['child'], origin: `http://127.0.0.1:${address.port}`, secret: 'secret', stop: closer.close } satisfies SidecarProcess,
+    commands,
+    push: (message: unknown) => sidecarSocket!.send(message instanceof Uint8Array ? message : JSON.stringify(message)),
+  };
+}
+
+describe('AudioClient TTS admission gate (decision 007 two-stream prefetch)', () => {
+  it('opens at most two streams; a third flushes only after the oldest terminalizes', async () => {
+    const { sidecar, commands, push } = await fakeRecordedSidecar();
+    const client = new AudioClient(sidecar);
+    await client.connect();
+    const opened = await client.open(7);
+    const stall = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 0, signal: new AbortController().signal });
+    const body1 = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 1, signal: new AbortController().signal });
+    const body2 = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 2, signal: new AbortController().signal });
+    stall.append('stall text');
+    body1.append('body one');
+    body2.append('body two');
+    stall.finish();
+    body1.finish();
+    body2.finish();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const opens = commands.filter(c => c.type === 'tts.open');
+    expect(opens).toHaveLength(2);
+    expect(opens.map(c => c.payload.partIndex)).toEqual([0, 1]);
+    // The queued body2 must not have sent wire commands yet.
+    expect(commands.some(c => c.type === 'tts.append' && c.payload.partIndex === 2)).toBe(false);
+    expect(commands.some(c => c.type === 'tts.commit' && c.payload.partIndex === 2)).toBe(false);
+    // Oldest (stall) terminalizes -> body2 flushes open/append/commit in order.
+    push({ type: 'tts.started', payload: { streamId: opened, responseId, epoch: 0, playbackId, outputStreamId: 55, sampleRate: 24000, partIndex: 0 } });
+    push(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
+    push(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
+    push({ type: 'tts.ended', payload: { streamId: opened, responseId, epoch: 0, playbackId, generatedSamples: 960, partIndex: 0 } });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(commands.filter(c => c.type === 'tts.open')).toHaveLength(3);
+    expect(commands.filter(c => c.type === 'tts.open').at(-1)!.payload.partIndex).toBe(2);
+    const appends = commands.filter(c => c.type === 'tts.append' && c.payload.partIndex === 2);
+    expect(appends.map(c => c.payload.text)).toEqual(['body two']);
+    expect(appends.map(c => c.payload.sequence)).toEqual([0]);
+    expect(commands.filter(c => c.type === 'tts.commit' && c.payload.partIndex === 2)).toHaveLength(1);
+    await client.close();
+  });
+
+  it('queued stream abort sends no sidecar command', async () => {
+    const { sidecar, commands } = await fakeRecordedSidecar();
+    const client = new AudioClient(sidecar);
+    await client.connect();
+    await client.open(7);
+    client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 0, signal: new AbortController().signal });
+    client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 1, signal: new AbortController().signal });
+    const controller = new AbortController();
+    const queued = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 2, signal: controller.signal });
+    queued.append('queued text');
+    queued.finish();
+    controller.abort();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(commands.filter(c => c.type === 'tts.open')).toHaveLength(2);
+    expect(commands.filter(c => c.type === 'tts.cancel')).toHaveLength(0);
+    await expect(queued.started).rejects.toThrow('TTS cancelled');
+    await client.close();
+  });
+
+  it('parent cancel cancels admitted streams and rejects queued streams', async () => {
+    const { sidecar, commands } = await fakeRecordedSidecar();
+    const client = new AudioClient(sidecar);
+    await client.connect();
+    await client.open(7);
+    const stall = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 0, signal: new AbortController().signal });
+    const body1 = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 1, signal: new AbortController().signal });
+    const queued = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 2, signal: new AbortController().signal });
+    client.cancel(responseId);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(commands.filter(c => c.type === 'tts.cancel')).toHaveLength(2);
+    await expect(stall.started).rejects.toThrow('TTS cancelled');
+    await expect(body1.started).rejects.toThrow('TTS cancelled');
+    await expect(queued.started).rejects.toThrow('TTS cancelled');
+    await client.close();
+  });
+
+  it('sidecar failure rejects both admitted and queued streams', async () => {
+    const { sidecar, push } = await fakeRecordedSidecar();
+    const failures: string[] = [];
+    const client = new AudioClient(sidecar, { failure: code => failures.push(code) });
+    await client.connect();
+    await client.open(7);
+    const stall = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 0, signal: new AbortController().signal });
+    const body1 = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 1, signal: new AbortController().signal });
+    const queued = client.begin({ sessionId: streamId, epoch: 0, responseId, partIndex: 2, signal: new AbortController().signal });
+    push({ type: 'sidecar.failure', payload: { code: 'runtime_unavailable', recoverable: false } });
+    await expect(stall.started).rejects.toThrow(/failed/);
+    await expect(body1.started).rejects.toThrow(/failed/);
+    await expect(queued.started).rejects.toThrow(/failed/);
+    expect(failures).toEqual(['runtime_unavailable']);
+    await client.close();
+  });
+});

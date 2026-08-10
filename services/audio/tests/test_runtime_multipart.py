@@ -128,3 +128,89 @@ def test_multipart_cancel_echoes_part_index_and_part_id() -> None:
     assert cancelled["payload"]["partIndex"] == 0
     assert cancelled["payload"]["partId"] == part_id
     runtime.close_stream(stream)
+
+
+def test_committed_stream_allows_one_prefetched_successor() -> None:
+    """Decision 007: a committed (still synthesizing) stream must not block a
+    prefetched successor from opening; the successor waits on the oldest fence."""
+    import threading
+
+    first_release = threading.Event()
+
+    class BlockingTts:
+        closed: bool = False
+
+        def synthesize_stream(self, text, cancel, on_audio=None):
+            first_release.wait(timeout=2)
+            cancel.raise_if_cancelled()
+            if on_audio:
+                on_audio(AudioChunk(0, bytes(960), 24_000, 0))
+            return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 1)
+
+        def close(self):
+            self.closed = True
+
+    runtime = SelectedAudioRuntime(FakeStt(), BlockingTts())
+    runtime.mark_ready_for_test()
+    events = []
+    stream = "018f1f32-7abc-7def-8abc-0123456789ab"
+    runtime.open_stream(stream, 12, events.append, lambda _: None)
+    first = "018f1f32-7abd-7def-8abc-0123456789ab"
+    second = "018f1f32-7abe-7def-8abc-0123456789ab"
+    runtime.open_tts(stream, first, 0)
+    runtime.append_tts(stream, first, 0, 0, "first")
+    runtime.commit_tts(stream, first, 0, 1, hashlib.sha256(b"first").hexdigest())
+    # The first worker is blocked in synthesis; a prefetched successor must be
+    # able to open (this raised "a progressive TTS stream is already open"
+    # before the commit-detach fix).
+    runtime.open_tts(stream, second, 0)
+    runtime.append_tts(stream, second, 0, 0, "second")
+    runtime.commit_tts(stream, second, 0, 1, hashlib.sha256(b"second").hexdigest())
+    # The successor waits on the first worker's fence: its audio must not start.
+    time.sleep(0.25)
+    second_started = [e for e in events if e["type"] == "tts.started" and e["payload"]["responseId"] == second]
+    assert not second_started
+    first_release.set()
+    wait_for(events, "tts.ended")
+    ended = [event for event in events if event["type"] == "tts.ended"]
+    assert len(ended) == 2
+    second_started = [e for e in events if e["type"] == "tts.started" and e["payload"]["responseId"] == second]
+    assert len(second_started) == 1
+    ended_first = next(e for e in events if e["type"] == "tts.ended" and e["payload"]["responseId"] == first)
+    assert events.index(second_started[0]) > events.index(ended_first)
+    runtime.close_stream(stream)
+
+
+def test_third_open_raises_defensive_queue_bound() -> None:
+    """len(state.tts) >= 2 remains the defensive bound for uncoordinated clients."""
+    import threading
+
+    release = threading.Event()
+
+    class BlockingTts:
+        closed: bool = False
+
+        def synthesize_stream(self, text, cancel, on_audio=None):
+            release.wait(timeout=2)
+            return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 1)
+
+        def close(self):
+            self.closed = True
+
+    runtime = SelectedAudioRuntime(FakeStt(), BlockingTts())
+    runtime.mark_ready_for_test()
+    events = []
+    stream = "018f1f32-7abc-7def-8abc-0123456789ab"
+    runtime.open_stream(stream, 12, events.append, lambda _: None)
+    first = "018f1f32-7abd-7def-8abc-0123456789ab"
+    second = "018f1f32-7abe-7def-8abc-0123456789ab"
+    third = "018f1f32-7abf-7def-8abc-0123456789ab"
+    for response in (first, second):
+        runtime.open_tts(stream, response, 0)
+        runtime.append_tts(stream, response, 0, 0, "response")
+        runtime.commit_tts(stream, response, 0, 1, hashlib.sha256(b"response").hexdigest())
+    import pytest
+    with pytest.raises(RuntimeError, match="TTS request queue exceeded bound"):
+        runtime.open_tts(stream, third, 0)
+    release.set()
+    runtime.close_stream(stream)

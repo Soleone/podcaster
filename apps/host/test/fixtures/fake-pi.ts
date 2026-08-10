@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export type FakePiScenario = "normal" | "slow" | "malformed" | "oversized" | "invalid-utf8" | "unicode-separator" | "crlf" | "crash" | "login" | "rate-limit" | "async-login" | "async-rate-limit" | "too-many-words" | "stubborn-descendant" | "incompatible-model" | "unrelated-probe";
+export type FakePiScenario = "normal" | "slow" | "malformed" | "oversized" | "invalid-utf8" | "unicode-separator" | "crlf" | "crash" | "login" | "rate-limit" | "async-login" | "async-rate-limit" | "too-many-words" | "stubborn-descendant" | "incompatible-model" | "unrelated-probe" | "tools";
 
 export interface FakePi { executable: string; log: string; cleanup(): Promise<void> }
 
@@ -40,9 +40,11 @@ function command(c) {
   const probe = c.message === "Reply with exactly RPC_READY and no other text.";
   const delay = scenario === "slow" ? 40 : 2;
   send({type:"agent_start"});
+  if (scenario === "tools") send({type:"tool_execution_start", toolCallId:"tool-1", toolName:"grep", args:{pattern:"Metroidvania"}});
   later(() => send({type:"message_update", assistantMessageEvent:{type:"thinking_delta", delta:"PRIVATE"}}), delay);
   later(() => send({type:"message_update", assistantMessageEvent:{type:"text_delta", delta: scenario === "too-many-words" ? Array(46).fill("word").join(" ") : (probe ? (scenario === "unrelated-probe" ? "NOT_THE_MARKER" : "RPC_READY") : "Hello")}}), delay + 2);
   if (!probe) later(() => send({type:"message_update", assistantMessageEvent:{type:"text_delta", delta: scenario === "unicode-separator" ? "\\u2028world" : " world"}}), delay + 5);
+  if (scenario === "tools") later(() => send({type:"tool_execution_end", toolCallId:"tool-1", toolName:"grep", result:{hits:1, secret:"PRIVATE_CONTENT"}}), delay + 4);
   later(() => { if (!aborted) { send({type:"message_end", message:{role:"assistant", stopReason:"stop"}}); send({type:"agent_settled"}); } }, delay + 8);
 }
 process.on("SIGTERM", () => process.exit(0));
