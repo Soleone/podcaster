@@ -42,7 +42,6 @@ export class SessionController {
   private active: ActivePlayback | undefined;
   private provisional: Provisional | undefined;
   private stopped = false;
-  private echoRecoveryKey: string | undefined;
   private cancelSilence: (() => void) | undefined;
   private readonly schedule: (delay: number, callback: () => void) => () => void;
 
@@ -56,9 +55,6 @@ export class SessionController {
 
   snapshot(): SessionViewState { return this.state; }
   subscribe(listener: (state: SessionViewState) => void): () => void { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
-  setEchoRecovered(recovered: boolean): void {
-    this.echoRecoveryKey = recovered && this.provisional ? this.provisionalKey(this.provisional) : undefined;
-  }
 
   async handleEvent(event: StableEvent): Promise<void> {
     if (event.sessionId !== this.options.sessionId || this.seenEvents.has(event.eventId)) return;
@@ -143,7 +139,7 @@ export class SessionController {
       // persisted after the cutoff. If playback never started, no-op.
       activityLog.append({ level: 'warn', source: 'controller', message: 'response failed', detail: String(event.payload.responseId) });
       this.clearProvisional();
-      this.setState({ ...this.state, echoConfirmation: false, playbackNotice: '' });
+      this.setState({ ...this.state, playbackNotice: '' });
       const active = this.active;
       if (active && active.responseId === event.payload.responseId) {
         await this.terminalize('failed');
@@ -159,7 +155,6 @@ export class SessionController {
         checkpointReady: new Promise(resolve => { completeCheckpoint = resolve; }),
       };
       this.provisional = provisional;
-      this.echoRecoveryKey = undefined;
       try {
         const progress = await active.player.pause();
         if (this.provisional !== provisional || this.active !== active || active.terminal) { completeCheckpoint(false); return; }
@@ -195,7 +190,6 @@ export class SessionController {
       this.clearProvisional();
     } else if (event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') {
       const provisional = this.provisional;
-      if (provisional && event.payload.resumable === true) this.echoRecoveryKey = this.provisionalKey(provisional);
       const active = this.active;
       if (!provisional || !active || event.payload.responseId !== provisional.responseId || event.payload.outputEpoch !== provisional.outputEpoch || active.responseId !== provisional.responseId || active.playbackId !== provisional.playbackId || active.outputEpoch !== provisional.outputEpoch) return;
       const safe = canSafelyResume({
@@ -242,24 +236,11 @@ export class SessionController {
     return report;
   }
 
-  async confirmBargeIn(): Promise<void> {
-    if (!this.provisional) return;
-    this.provisional.confirmed = true;
-    await this.options.transport.confirmBargeIn();
-    await this.terminalize('cancelled');
-    this.clearProvisional();
-    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false, playbackNotice: '' });
-  }
-  async rejectBargeIn(): Promise<void> {
-    if (!this.provisional) return;
-    this.echoRecoveryKey = this.provisionalKey(this.provisional);
-    await this.options.transport.rejectBargeIn();
-  }
   async cancelAssistant(): Promise<void> {
     await this.options.transport.cancelAssistant();
     await this.terminalize('cancelled');
     this.clearProvisional();
-    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', echoConfirmation: false, playbackNotice: '' });
+    this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', playbackNotice: '' });
   }
 
   async stop(): Promise<void> {
@@ -267,7 +248,7 @@ export class SessionController {
     this.stopped = true;
     activityLog.append({ level: 'info', source: 'controller', message: 'session stop requested' });
     this.cancelSilence?.();
-    this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', echoConfirmation: false, playbackNotice: '' });
+    this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', playbackNotice: '' });
     await this.terminalize('stopped');
     this.clearProvisional();
     await this.options.transport.stopSession('user');
@@ -278,7 +259,7 @@ export class SessionController {
       this.degrade(ended.degradedReason ?? 'The session stopped, but its final local state could not be saved.');
       return;
     }
-    this.setState({ ...this.state, dominant: 'idle', announcement: 'Session stopped', echoConfirmation: false, playbackNotice: '' });
+    this.setState({ ...this.state, dominant: 'idle', announcement: 'Session stopped', playbackNotice: '' });
   }
 
   degrade(message: string): void {
@@ -326,7 +307,6 @@ export class SessionController {
     activityLog.append({ level: 'info', source: 'controller', message: 'playback stopped', detail: reason });
     const receipt = await active.player.stop(reason);
     await this.reportPlaybackTerminal(receipt);
-    this.echoRecoveryKey = undefined;
   }
   private advanceGroup(completedPlaybackId: string): void {
     const part = this.playbackByPart.get(completedPlaybackId);
@@ -349,8 +329,7 @@ export class SessionController {
     void next.player.resume().catch(() => undefined);
   }
   private playbackKey(outputEpoch: number, playbackId: string): string { return `${outputEpoch}:${playbackId}`; }
-  private provisionalKey(provisional: Provisional): string { return `${provisional.outputEpoch}:${provisional.playbackId}:${provisional.responseId}`; }
-  private clearProvisional(): void { this.provisional = undefined; this.echoRecoveryKey = undefined; }
+  private clearProvisional(): void { this.provisional = undefined; }
   private setState(state: SessionViewState): void {
     const previous = this.state;
     this.state = state;

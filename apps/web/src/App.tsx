@@ -45,7 +45,6 @@ interface TestApi {
   partial(text: string): Promise<void>;
   audio(playbackId: string, sampleOffset: number, samples: number): Promise<void>;
   capture(): void;
-  echoRecovered(recovered: boolean): void;
   degrade(message: string): void;
   stats(): FakeRuntimeStats & { captureFrames: number; progressReports: number; terminalReceipts: number; commands: string[] };
 }
@@ -215,7 +214,6 @@ export function App() {
         await new Promise(resolve => setTimeout(resolve, 0));
       },
       capture: () => { (window as unknown as { __podcasterFakeWorkletNode?: { port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } } }).__podcasterFakeWorkletNode?.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>); },
-      echoRecovered: recovered => controller.setEchoRecovered(recovered),
       degrade: message => controller.degrade(message),
       stats: () => ({ ...statsRef.current, playbackStops: [...statsRef.current.playbackStops], captureFrames: transport.captureFrames.length, progressReports: transport.progressReports.length, terminalReceipts: transport.terminalReceipts.size, commands: [...transport.commands] }),
     };
@@ -276,8 +274,6 @@ export function App() {
       elapsedSeconds={elapsed}
       onStop={() => void stop()}
       onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
-      onConfirmEcho={() => void controllerRef.current?.confirmBargeIn()}
-      onRejectEcho={() => void controllerRef.current?.rejectBargeIn()}
     />
     {sessionId && recordingStoreRef.current ? <RecordingControls sessionId={sessionId} store={recordingStoreRef.current} buildExport={buildExport} onToggleRecording={toggleRecording} /> : null}
   </div>;

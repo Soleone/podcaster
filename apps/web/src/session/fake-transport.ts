@@ -34,8 +34,6 @@ export class FakeSessionTransport implements SessionTransport {
     }
   }
   cancelAssistant(): void { this.commands.push('cancel'); }
-  confirmBargeIn(): void { this.commands.push('confirm'); }
-  rejectBargeIn(): void { this.commands.push('reject'); }
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void { this.eventListeners.add(listener); return () => this.eventListeners.delete(listener); }
   onAudio(listener: (chunk: OutputAudioChunk) => void): () => void { this.audioListeners.add(listener); return () => this.audioListeners.delete(listener); }
   onFailure(listener: (message: string) => void): () => void { this.failureListeners.add(listener); return () => this.failureListeners.delete(listener); }

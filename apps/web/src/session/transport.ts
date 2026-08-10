@@ -16,8 +16,6 @@ export interface SessionTransport {
   sendPaused(checkpoint: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void | Promise<void>;
   sendTerminal(receipt: PlaybackTerminal, event?: StableEvent): void | Promise<void>;
   cancelAssistant(): void | Promise<void>;
-  confirmBargeIn(): void | Promise<void>;
-  rejectBargeIn(): void | Promise<void>;
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void;
   onAudio(listener: (chunk: OutputAudioChunk) => void): () => void;
   onFailure(listener: (message: string) => void): () => void;

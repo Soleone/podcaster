@@ -40,15 +40,17 @@ test('runs stable session states and recovers stable work after refresh', async 
   await expect(page.getByRole('heading', { name: 'Speaking' })).toBeVisible();
   await emit(page, 'barge_in.provisional', { responseId: 'response-1', outputEpoch: 0, resumable: true });
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().playbackPauses)).toBe(1);
-  await expect(page.getByRole('button', { name: 'Respond to me instead' })).toBeVisible();
+  // Interruption is automatic: no pause dialog, the host's decision drives it.
+  await expect(page.getByText('The previous response is paused while your intent is considered.')).toHaveCount(0);
   const timelineText = await page.locator('.conversation-list').innerText();
   expect(timelineText.indexOf('Please respond to this thought')).toBeLessThan(timelineText.indexOf('What matters most?'));
-  await page.getByRole('button', { name: 'Respond to me instead' }).click();
+  await emit(page, 'interruption.decision', { turnId: 'turn-2', responseId: 'response-1', playbackId: 'playback-1', outputEpoch: 0, action: 'accept', intent: 'new_request', confidence: 'high', disposition: 'accept_takeover', pausedSampleOffset: 0 });
+  await emit(page, 'barge_in.confirmed', { responseId: 'response-1', outputEpoch: 0, resumable: false });
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().terminalReceipts)).toBe(1);
   const stats = await page.evaluate(() => window.__podcasterTest!.stats());
   expect(stats).toMatchObject({ playbackStops: ['cancelled'] });
-  expect(stats.commands.at(-1)).toBe('confirm');
+  expect(stats.commands).not.toContain('confirm');
   await page.getByRole('button', { name: 'Stop session' }).click();
   await expect(page.getByRole('heading', { name: 'Session stopped' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureStops)).toBe(1);

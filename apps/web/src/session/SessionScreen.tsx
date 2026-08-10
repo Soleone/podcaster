@@ -23,16 +23,16 @@ const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> =
   idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; onConfirmEcho: () => void; onRejectEcho: () => void }) {
+export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void }) {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && (props.state.dominant === 'reasoning' || props.state.dominant === 'speaking' || props.state.echoConfirmation)) { event.preventDefault(); props.onCancelAssistant(); }
+      if (event.key === 'Escape' && (props.state.dominant === 'reasoning' || props.state.dominant === 'speaking')) { event.preventDefault(); props.onCancelAssistant(); }
     };
     document.addEventListener('keydown', keydown);
     return () => document.removeEventListener('keydown', keydown);
-  }, [props.onCancelAssistant, props.state.dominant, props.state.echoConfirmation]);
+  }, [props.onCancelAssistant, props.state.dominant]);
 
-  const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking' || props.state.echoConfirmation;
+  const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking';
   // Keep the "typing" shimmer only until the first reasoning preview arrives; the
   // dimmed tentative row then takes over as the visible progress signal.
   const hasAssistantText = props.state.conversationItems.some(item => item.kind === 'assistant' && item.text.trim() !== '');
@@ -64,7 +64,6 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
         </MessageScrollerProvider>
       </div>
     </section>
-    {props.state.echoConfirmation ? <Card className="interruption-controls" role="group" aria-label="Paused response choices"><p>The previous response is paused while your intent is considered.</p><div className="button-row"><Button variant="secondary" onClick={props.onRejectEcho}>Continue previous response</Button><Button onClick={props.onConfirmEcho}>Respond to me instead</Button></div></Card> : null}
     <ActivityLogPanel />
   </main>;
 }

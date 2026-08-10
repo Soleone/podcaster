@@ -71,7 +71,6 @@ describe('SessionController', () => {
     await transport.emit(event('session', 1, 'barge_in.rejected', { responseId: 'current', outputEpoch: 2, resumable: true }));
     expect(players[0]!.pause).not.toHaveBeenCalled();
     expect(players[0]!.resume).not.toHaveBeenCalled();
-    expect(controller.snapshot().echoConfirmation).toBe(false);
     writer.close();
   });
 
@@ -80,9 +79,6 @@ describe('SessionController', () => {
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
     expect(players[0]!.pause).toHaveBeenCalledOnce();
-    controller.setEchoRecovered(true);
-    await controller.rejectBargeIn();
-    expect(transport.commands).toContain('reject');
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
     expect(players[0]!.resume).toHaveBeenCalledOnce();
     expect(players[0]!.stops).toEqual([]);
@@ -98,7 +94,6 @@ describe('SessionController', () => {
     expect(players[0]!.stops).toEqual([]);
     expect(controller.snapshot()).toMatchObject({
       dominant: 'speaking',
-      echoConfirmation: false,
       playbackNotice: '',
     });
     writer.close();
@@ -108,12 +103,11 @@ describe('SessionController', () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
-    controller.setEchoRecovered(true);
     await transport.emit(event('session', 1, 'barge_in.confirmed', { responseId: 'unrelated', outputEpoch: 0, resumable: false }));
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 9, resumable: true }));
     expect(players[0]!.stops).toEqual([]);
     expect(players[0]!.resume).not.toHaveBeenCalled();
-    expect(controller.snapshot().echoConfirmation).toBe(true);
+    expect(controller.snapshot().dominant).toBe('listening');
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
     expect(players[0]!.resume).toHaveBeenCalledOnce();
     expect(players[0]!.stops).toEqual([]);
@@ -124,7 +118,6 @@ describe('SessionController', () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
     await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
-    controller.setEchoRecovered(true);
     await transport.emit(event('session', 0, 'transcript.final', { turnId: 'new-turn', text: 'new meaningful speech', endpointComplete: true }));
     await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
     expect(players[0]!.resume).toHaveBeenCalledOnce();
@@ -299,7 +292,7 @@ describe('SessionController', () => {
     await transport.emit(event('session', 0, 'response.failed', { turnId: 'turn', responseId: 'response', reasonCode: 'tts_failed' }));
     expect(players[0]!.stops).toEqual(['failed']);
     expect(players[0]!.resume).not.toHaveBeenCalled();
-    expect(controller.snapshot().echoConfirmation).toBe(false);
+    expect(controller.snapshot().conversationItems).toEqual([]);
     writer.close();
   });
 

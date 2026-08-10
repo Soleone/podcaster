@@ -167,18 +167,6 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.readySocket().send(JSON.stringify(envelope));
   }
   cancelAssistant(): void { this.sendCommand('turn.cancel', { reason: 'user' }); }
-  confirmBargeIn(): void {
-    const binding = this.outputs.single ?? this.currentBinding();
-    const responseId = this.latestResponseId;
-    if (!binding || !responseId) return;
-    this.sendCommand('barge_in.confirm', { responseId, outputEpoch: binding.outputEpoch });
-  }
-  rejectBargeIn(): void {
-    const binding = this.outputs.single ?? this.currentBinding();
-    const responseId = this.latestResponseId;
-    if (!binding || !responseId) return;
-    this.sendCommand('barge_in.reject', { responseId, outputEpoch: binding.outputEpoch });
-  }
   private latestResponseId: string | undefined;
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void {
     this.eventListeners.add(listener);

@@ -216,7 +216,7 @@ export class SessionOrchestrator {
     this.now = options.now ?? (() => performance.now());
     this.idFactory = options.idFactory ?? (() => defaultUuidV7(Date.now()));
     this.scheduler = options.scheduler ?? { schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return () => clearTimeout(timer); } };
-    this.provisionalTimeoutMs = options.provisionalTimeoutMs ?? 3_000;
+    this.provisionalTimeoutMs = options.provisionalTimeoutMs ?? 5_000;
     this.classifierTimeoutMs = options.classifierTimeoutMs ?? 2_500;
     this.interruptionClassifier = options.interruptionClassifier ?? new PiInterruptionIntentClassifier(options.pi);
     this.maxContextBytes = options.maxContextBytes ?? 4096;
