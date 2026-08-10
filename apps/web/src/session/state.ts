@@ -1,5 +1,5 @@
 import type { StableEvent } from '../storage/stable-turn-writer';
-import type { ConversationItem } from './conversation';
+import { joinAssistantParts, type AssistantPart, type ConversationItem } from './conversation';
 
 export type DominantState = 'idle' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
 export interface SessionViewState {
@@ -68,32 +68,63 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   if (event.type === 'reasoning.started') {
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
     if (!responseId) return next;
-    // Hidden placeholder: carries response identity so an early tts.started can
-    // attach playback before final text exists. Rendered only once text exists.
-    const item: ConversationItem = { kind: 'assistant', id: `assistant:${responseId}`, responseId, text: '', playback: 'preparing', sequence: event.monotonicMs };
+    // Preserve an existing row when a new part of the same multi-part response
+    // starts; create the hidden placeholder only for the first part.
+    const existing = next.conversationItems.find((item): item is Extract<ConversationItem, { kind: 'assistant' }> => item.kind === 'assistant' && item.responseId === responseId);
+    const item: ConversationItem = existing ?? { kind: 'assistant', id: `assistant:${responseId}`, responseId, text: '', playback: 'preparing', sequence: event.monotonicMs };
     return { ...next, conversationItems: [...next.conversationItems.filter(existing => existing.id !== item.id), item] };
   }
   if (event.type === 'reasoning.delta') {
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     if (!responseId || !text) return next;
+    const partIndex = typeof event.payload.partIndex === 'number' ? event.payload.partIndex : undefined;
     // Presentational preview: accumulate the cumulative text into the assistant row
     // and mark it tentative so the UI can render it dimmed until it materializes.
     const exists = next.conversationItems.some(item => item.kind === 'assistant' && item.responseId === responseId);
-    const conversationItems = exists
-      ? next.conversationItems.map(item => item.kind === 'assistant' && item.responseId === responseId ? { ...item, text, tentative: true } : item)
-      : [...next.conversationItems, { kind: 'assistant' as const, id: `assistant:${responseId}`, responseId, text, tentative: true, playback: 'preparing' as const, sequence: event.monotonicMs }];
+    let conversationItems: ConversationItem[];
+    if (exists) {
+      conversationItems = next.conversationItems.map(item => {
+        if (item.kind !== 'assistant' || item.responseId !== responseId) return item;
+        if (partIndex === undefined) return { ...item, text, tentative: true };
+        const parts = [...(item.parts ?? [])];
+        const last = parts[parts.length - 1];
+        if (last && last.partIndex === partIndex) parts[parts.length - 1] = { ...last, text, tentative: true };
+        else parts.push({ partIndex, text, tentative: true });
+        return { ...item, parts, text: joinAssistantParts(parts), tentative: true };
+      });
+    } else {
+      const base: ConversationItem = partIndex === undefined
+        ? { kind: 'assistant', id: `assistant:${responseId}`, responseId, text, tentative: true, playback: 'preparing', sequence: event.monotonicMs }
+        : { kind: 'assistant', id: `assistant:${responseId}`, responseId, parts: [{ partIndex, text, tentative: true }], text, tentative: true, playback: 'preparing', sequence: event.monotonicMs };
+      conversationItems = [...next.conversationItems, base];
+    }
     return { ...next, conversationItems };
   }
   if (event.type === 'reasoning.final') {
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+    const partIndex = typeof event.payload.partIndex === 'number' ? event.payload.partIndex : undefined;
     const existing = next.conversationItems.find((item): item is Extract<ConversationItem, { kind: 'assistant' }> => item.kind === 'assistant' && item.responseId === responseId);
     // Upsert the placeholder without resetting an already-playing item to preparing.
     // Materialization clears the tentative flag so the row solidifies.
-    const item: ConversationItem = existing
-      ? { ...existing, text, tentative: false }
-      : { kind: 'assistant', id: `assistant:${responseId}`, responseId, text, playback: 'preparing', sequence: event.monotonicMs };
+    let item: ConversationItem;
+    if (existing) {
+      if (partIndex !== undefined) {
+        const parts = [...(existing.parts ?? [])];
+        const last = parts[parts.length - 1];
+        if (last && last.partIndex === partIndex) parts[parts.length - 1] = { ...last, text, tentative: false };
+        else parts.push({ partIndex, text, tentative: false });
+        const finalized = parts.every(part => !part.tentative);
+        item = { ...existing, parts, text: joinAssistantParts(parts), ...(finalized ? { tentative: false } : {}) };
+      } else {
+        item = { ...existing, text, tentative: false };
+      }
+    } else {
+      item = partIndex !== undefined
+        ? { kind: 'assistant', id: `assistant:${responseId}`, responseId, parts: [{ partIndex, text, tentative: false }], text, playback: 'preparing', sequence: event.monotonicMs }
+        : { kind: 'assistant', id: `assistant:${responseId}`, responseId, text, playback: 'preparing', sequence: event.monotonicMs };
+    }
     // Never regress an already-speaking response back to the forming state.
     const phase: DominantState = next.dominant === 'speaking' ? 'speaking' : 'reasoning';
     return { ...dominant(next, phase), assistantText: text, conversationItems: [...next.conversationItems.filter(existing => existing.id !== item.id), item] };

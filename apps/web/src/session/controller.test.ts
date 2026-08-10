@@ -43,6 +43,23 @@ async function setup(epoch = 0, schedule?: (delay: number, callback: () => void)
 }
 
 describe('SessionController', () => {
+  it('plays multi-part responses sequentially: queues the body until the stall terminalizes, then advances', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'riff', partIndex: 0 }));
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'stall', sampleRate: 24000, partIndex: 0 }));
+    await transport.emit(event('session', 0, 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'riff', partIndex: 1 }));
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'body', sampleRate: 24000, partIndex: 1 }));
+    // Both parts exist; only the stall is active.
+    expect(players).toHaveLength(2);
+    expect(players[1]!.resume).not.toHaveBeenCalled();
+    // Stall terminalizes -> body becomes active and resumes.
+    await controller.reportPlaybackTerminal({ playbackId: 'stall', cancelledEpoch: 0, finalPlayedSampleOffset: 3200, reason: 'completed' });
+    expect(players[1]!.resume).toHaveBeenCalledOnce();
+    // Body terminalizes -> response completes.
+    await controller.reportPlaybackTerminal({ playbackId: 'body', cancelledEpoch: 0, finalPlayedSampleOffset: 6400, reason: 'completed' });
+    writer.close();
+  });
+
   it('rejects wrong-session and stale non-accounting events before side effects', async () => {
     const { controller, players, transport, writer } = await setup(2);
     await transport.emit(event('other', 2, 'tts.started', { responseId: 'wrong', playbackId: 'wrong', sampleRate: 24000 }));

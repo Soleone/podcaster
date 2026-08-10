@@ -9,8 +9,11 @@
       "payload": { "type": "object", "required": ["responseId", "outputEpoch", "resumable"], "properties": {
         "responseId": { "type": "string", "format": "uuid" },
         "outputEpoch": { "type": "integer", "minimum": 0 },
-        "resumable": { "type": "boolean" }
-      }, "additionalProperties": false }
+        "resumable": { "type": "boolean" },
+        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "partId": { "type": "string", "format": "uuid" },
+        "playbackId": { "type": "string", "format": "uuid" }
+      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
     } }
   ]
 }

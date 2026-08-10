@@ -19,6 +19,7 @@ interface AgentBuffer {
   playbackId: string;
   responseId: string;
   turnId: string | null;
+  partIndex: number | null;
   sampleRate: RecordingSampleRate;
   outputEpoch: number;
   frames: Int16Array[];
@@ -149,6 +150,7 @@ export class RecordingRecorder {
           playbackId,
           responseId,
           turnId: this.responseTurns.get(responseId) ?? null,
+          partIndex: typeof payload.partIndex === 'number' ? payload.partIndex : null,
           sampleRate,
           outputEpoch: event.epoch,
           frames: [],
@@ -212,6 +214,7 @@ export class RecordingRecorder {
         role: 'user',
         turnId: entry.turnId,
         responseId: null,
+        partIndex: null,
         playbackId: null,
         outputEpoch: null,
         sampleRate: 16000,
@@ -252,6 +255,7 @@ export class RecordingRecorder {
         role: 'agent',
         turnId: buffer.turnId,
         responseId: buffer.responseId,
+        partIndex: buffer.partIndex,
         playbackId: buffer.playbackId,
         outputEpoch: terminal.cancelledEpoch,
         sampleRate: buffer.sampleRate,

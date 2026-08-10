@@ -21,6 +21,25 @@ describe('session presentation state', () => {
     expect(reduceSessionState(state, event('session.state', { phase: 'reasoning' }, 1))).toBe(state);
   });
 
+  it('accumulates multi-part responses into one assistant row with per-part tentative transitions', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 0 }));
+    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', partIndex: 0, text: 'Let me look that up.' }));
+    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 0, text: 'Let me look that up.' }));
+    state = reduceSessionState(state, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 1 }));
+    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', partIndex: 1, text: 'Paris is the capital. It sits on the Seine.' }));
+    const item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    expect(item).toMatchObject({ kind: 'assistant', text: 'Let me look that up.\n\nParis is the capital. It sits on the Seine.' });
+    if (item?.kind === 'assistant') {
+      expect(item.parts).toEqual([
+        { partIndex: 0, text: 'Let me look that up.', tentative: false },
+        { partIndex: 1, text: 'Paris is the capital. It sits on the Seine.', tentative: true },
+      ]);
+    }
+    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 1, text: 'Paris is the capital. It sits on the Seine.' }));
+    const finalized = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    expect(finalized).toMatchObject({ text: 'Let me look that up.\n\nParis is the capital. It sits on the Seine.', tentative: false });
+  });
+
   it('requires every conservative safe-resume guard', () => {
     const all = { hostResumable: true, responseMatches: true, playbackMatches: true, epochMatches: true, wasSpeaking: true, playbackTerminal: false, echoRecovered: true, newerStableTurn: false, stopped: false, confirmed: false };
     expect(canSafelyResume(all)).toBe(true);

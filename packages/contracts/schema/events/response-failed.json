@@ -9,8 +9,10 @@
       "payload": { "type": "object", "required": ["turnId", "responseId", "reasonCode"], "properties": {
         "turnId": { "type": "string", "format": "uuid" },
         "responseId": { "type": "string", "format": "uuid" },
-        "reasonCode": { "enum": ["reasoning_unavailable", "reasoning_invalid", "tts_failed"] }
-      }, "additionalProperties": false }
+        "reasonCode": { "enum": ["reasoning_unavailable", "reasoning_invalid", "tts_failed"] },
+        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "partId": { "type": "string", "format": "uuid" }
+      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
     } }
   ]
 }

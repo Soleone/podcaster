@@ -10,8 +10,10 @@
         "turnId": { "type": "string", "format": "uuid" },
         "responseId": { "type": "string", "format": "uuid" },
         "posture": { "enum": ["riff", "question", "challenge"] },
-        "text": { "type": "string", "minLength": 1, "maxLength": 4096 }
-      }, "additionalProperties": false }
+        "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "partId": { "type": "string", "format": "uuid" }
+      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
     } }
   ]
 }

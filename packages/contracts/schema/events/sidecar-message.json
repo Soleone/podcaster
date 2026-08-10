@@ -389,6 +389,15 @@
             "epoch": {
               "type": "integer",
               "minimum": 0
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            "partId": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "additionalProperties": false
@@ -433,6 +442,15 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 4000
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            "partId": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "additionalProperties": false
@@ -476,6 +494,15 @@
             "textSha256": {
               "type": "string",
               "pattern": "^[a-f0-9]{64}$"
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            "partId": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "additionalProperties": false
@@ -509,6 +536,15 @@
             "epoch": {
               "type": "integer",
               "minimum": 0
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            "partId": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "additionalProperties": false
@@ -557,6 +593,15 @@
             },
             "sampleRate": {
               "const": 24000
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            "partId": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "additionalProperties": false
@@ -600,6 +645,15 @@
             "generatedSamples": {
               "type": "integer",
               "minimum": 1
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            "partId": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "additionalProperties": false
@@ -633,6 +687,15 @@
             "epoch": {
               "type": "integer",
               "minimum": 0
+            },
+            "partIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
+            },
+            "partId": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "additionalProperties": false

@@ -11,8 +11,10 @@
         "playbackId": { "type": "string", "format": "uuid" },
         "outputEpoch": { "type": "integer", "minimum": 0 },
         "pausedSampleOffset": { "type": "integer", "minimum": 0 },
-        "generatedSamples": { "type": "integer", "minimum": 0 }
-      }, "additionalProperties": false }
+        "generatedSamples": { "type": "integer", "minimum": 0 },
+        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "partId": { "type": "string", "format": "uuid" }
+      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
     } }
   ]
 }

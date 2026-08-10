@@ -20,7 +20,8 @@ export interface SessionControllerOptions {
   playbackFactory?: (input: { playbackId: string; outputEpoch: number; sampleRate: number }) => ControlledPlayback;
   schedule?: (delay: number, callback: () => void) => () => void;
 }
-interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean }
+interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean; partIndex?: number }
+interface ResponsePlaybackGroup { responseId: string; parts: ActivePlayback[]; activeIndex: number; terminal: boolean }
 interface Provisional {
   responseId: string;
   outputEpoch: number;
@@ -36,6 +37,8 @@ export class SessionController {
   private readonly seenEvents = new Set<string>();
   private readonly unsubscribe: Array<() => void> = [];
   private readonly terminalReports = new Map<string, Promise<void>>();
+  private readonly groups = new Map<string, ResponsePlaybackGroup>();
+  private readonly playbackByPart = new Map<string, ActivePlayback>();
   private active: ActivePlayback | undefined;
   private provisional: Provisional | undefined;
   private stopped = false;
@@ -95,11 +98,35 @@ export class SessionController {
       const playbackId = typeof event.payload.playbackId === 'string' ? event.payload.playbackId : undefined;
       const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : undefined;
       const sampleRate = Number(event.payload.sampleRate);
+      const partIndex = typeof event.payload.partIndex === 'number' ? event.payload.partIndex : undefined;
       if (playbackId && responseId && Number.isSafeInteger(sampleRate) && sampleRate > 0 && this.options.playbackFactory) {
-        this.active = { playbackId, responseId, outputEpoch: event.epoch, player: this.options.playbackFactory({ playbackId, outputEpoch: event.epoch, sampleRate }), terminal: false };
+        // A different response superseded the current one before it terminalized.
+        const active = this.active;
+        if (active && active.responseId !== responseId && !active.terminal) await this.terminalize('cancelled');
+        const player = this.options.playbackFactory({ playbackId, outputEpoch: event.epoch, sampleRate });
+        const part: ActivePlayback = { playbackId, responseId, outputEpoch: event.epoch, player, terminal: false, ...(partIndex !== undefined ? { partIndex } : {}) };
+        this.playbackByPart.set(playbackId, part);
+        let group = this.groups.get(responseId);
+        if (group && group.parts.length > 0 && group.parts[0]!.outputEpoch !== event.epoch) {
+          // Same responseId but a fresh epoch: the old group is stale and must
+          // not be advanced by late receipts. Replace the active playback with
+          // legacy supersede semantics (the old player is not stopped).
+          group.terminal = true;
+          this.groups.delete(responseId);
+          group = undefined;
+          if (this.active && !this.active.terminal) this.active.terminal = true;
+          this.active = undefined;
+        }
+        if (!group) { group = { responseId, parts: [], activeIndex: -1, terminal: false }; this.groups.set(responseId, group); }
+        const firstPart = group.parts.length === 0;
+        group.parts.push(part);
+        if (firstPart) { group.activeIndex = 0; this.active = part; }
+        // Non-first parts are queued and become audible when their predecessor
+        // reports a terminal receipt (see advanceGroup).
       }
-    } else if (event.type === 'tts.ended' && this.active && event.payload.playbackId === this.active.playbackId) {
-      this.active.player.setGeneratedSamples(Number(event.payload.generatedSamples));
+    } else if (event.type === 'tts.ended') {
+      const part = typeof event.payload.playbackId === 'string' ? this.playbackByPart.get(event.payload.playbackId) : undefined;
+      if (part && !part.terminal) part.player.setGeneratedSamples(Number(event.payload.generatedSamples));
     } else if (event.type === 'reasoning.started') {
       // A new response superseded the current one before it terminalized (rapid
       // re-engagement). Stop the superseded playback so its audio cannot keep
@@ -201,12 +228,15 @@ export class SessionController {
     const reportKey = this.playbackKey(receipt.cancelledEpoch, receipt.playbackId);
     const existing = this.terminalReports.get(reportKey);
     if (existing) return existing;
+    const part = this.playbackByPart.get(receipt.playbackId);
+    if (part) part.terminal = true;
     if (this.active?.playbackId === receipt.playbackId && this.active.outputEpoch === receipt.cancelledEpoch) this.active.terminal = true;
     const report = (async () => {
       const event = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.stopped', payload: { ...receipt } });
       const stored = await this.options.writer.apply(event);
       if (!stored.ok) { this.degrade(stored.degradedReason ?? 'The terminal playback receipt could not be saved.'); return; }
       await this.options.transport.sendTerminal(receipt, event);
+      this.advanceGroup(receipt.playbackId);
     })();
     this.terminalReports.set(reportKey, report);
     return report;
@@ -269,7 +299,8 @@ export class SessionController {
   }
 
   private handleAudio(chunk: OutputAudioChunk): void {
-    if (this.active?.playbackId === chunk.playbackId && !this.active.terminal) this.active.player.append(chunk.sampleOffset, chunk.pcm16);
+    const part = this.playbackByPart.get(chunk.playbackId);
+    if (part && !part.terminal) part.player.append(chunk.sampleOffset, chunk.pcm16);
   }
   private async handleTransportFailure(message: string): Promise<void> {
     const active = this.active;
@@ -283,10 +314,39 @@ export class SessionController {
   private async terminalize(reason: PlaybackStopReason): Promise<void> {
     const active = this.active;
     if (!active || active.terminal) return;
+    const group = this.groups.get(active.responseId);
+    const queued = group && !group.terminal ? group.parts.filter(part => part.playbackId !== active.playbackId && !part.terminal) : [];
+    for (const part of queued) {
+      part.terminal = true;
+      try {
+        const receipt = await part.player.stop('cancelled');
+        await this.reportPlaybackTerminal(receipt);
+      } catch { /* local cutoff was still attempted */ }
+    }
     activityLog.append({ level: 'info', source: 'controller', message: 'playback stopped', detail: reason });
     const receipt = await active.player.stop(reason);
     await this.reportPlaybackTerminal(receipt);
     this.echoRecoveryKey = undefined;
+  }
+  private advanceGroup(completedPlaybackId: string): void {
+    const part = this.playbackByPart.get(completedPlaybackId);
+    if (!part) return;
+    const group = this.groups.get(part.responseId);
+    if (!group || group.terminal) return;
+    const index = group.parts.findIndex(candidate => candidate.playbackId === completedPlaybackId);
+    if (index < 0 || index !== group.activeIndex) return;
+    this.playbackByPart.delete(completedPlaybackId);
+    const nextIndex = index + 1;
+    const next = group.parts[nextIndex];
+    if (!next) {
+      group.terminal = true;
+      this.groups.delete(part.responseId);
+      if (this.active?.playbackId === completedPlaybackId) this.active = undefined;
+      return;
+    }
+    group.activeIndex = nextIndex;
+    this.active = next;
+    void next.player.resume().catch(() => undefined);
   }
   private playbackKey(outputEpoch: number, playbackId: string): string { return `${outputEpoch}:${playbackId}`; }
   private provisionalKey(provisional: Provisional): string { return `${provisional.outputEpoch}:${provisional.playbackId}:${provisional.responseId}`; }

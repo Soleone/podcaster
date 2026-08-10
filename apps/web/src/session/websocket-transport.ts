@@ -10,7 +10,14 @@ const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
 // WebSocket *client* to send. 1008/1011 are server-only and a browser client
 // that tries to send them throws InvalidAccessError inside onmessage.
 const CLOSE_PROTOCOL_VIOLATION = 4000;
-interface OutputBinding { playbackId: string; responseId: string; outputEpoch: number; streamId?: number; expectedSequence: number; sampleOffset: number; terminal: boolean }
+interface OutputBinding { playbackId: string; responseId: string; outputEpoch: number; streamId?: number; partIndex?: number; expectedSequence: number; sampleOffset: number; terminal: boolean }
+
+interface OutputCollection {
+  // Multi-part responses key bindings by the sidecar outputStreamId; the legacy
+  // single-output path uses the single slot below.
+  byStream: Map<number, OutputBinding>;
+  single: OutputBinding | undefined;
+}
 
 export class WebSocketSessionTransport implements SessionTransport {
   private socket: WebSocket | undefined;
@@ -19,7 +26,7 @@ export class WebSocketSessionTransport implements SessionTransport {
   private readonly failureListeners = new Set<(message: string) => void>();
   private readonly terminalEnvelopes = new Map<string, Envelope>();
   private readonly usedOutputStreams = new Set<number>();
-  private output: OutputBinding | undefined;
+  private readonly outputs: OutputCollection = { byStream: new Map(), single: undefined };
   private intentionalDisconnect = false;
   private failureNotified = false;
 
@@ -59,34 +66,54 @@ export class WebSocketSessionTransport implements SessionTransport {
         if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure('the event sessionId did not match this session.'); return; }
         if (hostEvent.type === 'reasoning.started') {
           const responseId = String(hostEvent.payload.responseId);
+          const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
           if (this.latestResponseId !== undefined) {
-            // A duplicate reasoning.started for the SAME response is a protocol anomaly.
-            if (responseId === this.latestResponseId) { this.protocolFailure('a duplicate reasoning.started was received for the current response.'); return; }
+            // A duplicate reasoning.started for the SAME response is a protocol anomaly
+            // unless it starts a new part of a multi-part response.
+            if (responseId === this.latestResponseId && partIndex === undefined) { this.protocolFailure('a duplicate reasoning.started was received for the current response.'); return; }
             // A different response superseded the previous one before it terminalized
             // (e.g. rapid re-engagement while the old response was still generating).
-            // The previous output binding is dead and its late PCM must be rejected.
-            if (this.output && !this.output.terminal) this.output.terminal = true;
+            // The previous output bindings are dead and their late PCM must be rejected.
+            if (responseId !== this.latestResponseId) {
+              for (const binding of this.outputs.byStream.values()) binding.terminal = true;
+              if (this.outputs.single) this.outputs.single.terminal = true;
+            }
           }
-          this.latestResponseId = responseId;
+          if (responseId !== this.latestResponseId) this.latestResponseId = responseId;
         } else if (hostEvent.type === 'reasoning.delta') {
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.delta did not match the established response.'); return; }
         } else if (hostEvent.type === 'reasoning.final') {
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.final did not match the established response.'); return; }
+        } else if (hostEvent.type === 'response.part_started' || hostEvent.type === 'response.part_final') {
+          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure(`${hostEvent.type} did not match the established response.`); return; }
         } else if (hostEvent.type === 'tts.started') {
-          if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId || (this.output && !this.output.terminal)) { this.protocolFailure('tts.started did not match the established response identity.'); return; }
-          this.output = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false };
+          if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('tts.started did not match the established response identity.'); return; }
+          const outputStreamId = typeof hostEvent.payload.outputStreamId === 'number' ? hostEvent.payload.outputStreamId : undefined;
+          const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
+          const binding: OutputBinding = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false, ...(outputStreamId !== undefined ? { streamId: outputStreamId } : {}), ...(partIndex !== undefined ? { partIndex } : {}) };
+          if (outputStreamId !== undefined) {
+            if (this.outputs.byStream.has(outputStreamId) || this.usedOutputStreams.has(outputStreamId)) { this.protocolFailure('tts.started reused an output stream id.'); return; }
+            this.outputs.byStream.set(outputStreamId, binding);
+            this.usedOutputStreams.add(outputStreamId);
+          } else {
+            if (this.outputs.single && !this.outputs.single.terminal) { this.protocolFailure('tts.started collided with the active output stream.'); return; }
+            this.outputs.single = binding;
+          }
         } else if (hostEvent.type === 'response.failed') {
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.failed did not match the established response.'); return; }
-          if (this.output && this.output.responseId === hostEvent.payload.responseId && !this.output.terminal) this.output.terminal = true;
+          for (const binding of this.outputs.byStream.values()) if (binding.responseId === hostEvent.payload.responseId && !binding.terminal) binding.terminal = true;
+          if (this.outputs.single && this.outputs.single.responseId === hostEvent.payload.responseId && !this.outputs.single.terminal) this.outputs.single.terminal = true;
           this.latestResponseId = undefined;
         } else if (hostEvent.type === 'tts.ended') {
-          if (!this.output || this.output.playbackId !== hostEvent.payload.playbackId || this.output.outputEpoch !== hostEvent.epoch) { this.protocolFailure('tts.ended did not match the active output stream.'); return; }
-          this.output.terminal = true;
+          const binding = this.findOutput(String(hostEvent.payload.playbackId));
+          if (!binding || binding.outputEpoch !== hostEvent.epoch) { this.protocolFailure('tts.ended did not match the active output stream.'); return; }
+          binding.terminal = true;
           const generated = Number(hostEvent.payload.generatedSamples);
-          if (generated !== this.output.sampleOffset) { this.protocolFailure('tts.ended reported a sample count that does not match the streamed audio.'); return; }
-          // Terminal identity cleanup: the response is fully delivered, so a later
-          // reasoning.started for the next response can establish fresh identity.
-          this.latestResponseId = undefined;
+          if (generated !== binding.sampleOffset) { this.protocolFailure('tts.ended reported a sample count that does not match the streamed audio.'); return; }
+          // For a single-part response the response is fully delivered. For a
+          // multi-part response the parent identity persists until the last part.
+          const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
+          if (partIndex === undefined) this.latestResponseId = undefined;
         }
         for (const listener of this.eventListeners) void listener(hostEvent);
       };
@@ -113,8 +140,8 @@ export class WebSocketSessionTransport implements SessionTransport {
   sendProgress(progress: PlaybackProgress): void { this.sendCommand('playback.progress', { ...progress }); }
   sendPaused(checkpoint: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void { this.sendCommand('playback.paused', checkpoint, checkpoint.outputEpoch); }
   sendTerminal(receipt: PlaybackTerminal, persistedEvent?: StableEvent): void {
-    const output = this.output;
-    if (output && output.playbackId === receipt.playbackId && output.outputEpoch === receipt.cancelledEpoch) output.terminal = true;
+    const binding = this.findOutput(receipt.playbackId);
+    if (binding && binding.outputEpoch === receipt.cancelledEpoch) binding.terminal = true;
     const terminalKey = `${receipt.cancelledEpoch}:${receipt.playbackId}`;
     let envelope = this.terminalEnvelopes.get(terminalKey);
     if (!envelope) {
@@ -127,16 +154,16 @@ export class WebSocketSessionTransport implements SessionTransport {
   }
   cancelAssistant(): void { this.sendCommand('turn.cancel', { reason: 'user' }); }
   confirmBargeIn(): void {
-    const output = this.output;
+    const binding = this.outputs.single ?? this.currentBinding();
     const responseId = this.latestResponseId;
-    if (!output || !responseId) return;
-    this.sendCommand('barge_in.confirm', { responseId, outputEpoch: output.outputEpoch });
+    if (!binding || !responseId) return;
+    this.sendCommand('barge_in.confirm', { responseId, outputEpoch: binding.outputEpoch });
   }
   rejectBargeIn(): void {
-    const output = this.output;
+    const binding = this.outputs.single ?? this.currentBinding();
     const responseId = this.latestResponseId;
-    if (!output || !responseId) return;
-    this.sendCommand('barge_in.reject', { responseId, outputEpoch: output.outputEpoch });
+    if (!binding || !responseId) return;
+    this.sendCommand('barge_in.reject', { responseId, outputEpoch: binding.outputEpoch });
   }
   private latestResponseId: string | undefined;
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void {
@@ -150,7 +177,8 @@ export class WebSocketSessionTransport implements SessionTransport {
     if (!(data instanceof ArrayBuffer)) { this.protocolFailure('a binary message was not an ArrayBuffer.'); return; }
     let frame;
     try { frame = decodeBinaryAudioFrame(new Uint8Array(data), MAX_BINARY_PAYLOAD); } catch { this.protocolFailure('a binary audio frame could not be decoded.'); return; }
-    const output = this.output;
+    const output = this.outputs.byStream.get(frame.streamId)
+      ?? (this.outputs.single && (this.outputs.single.streamId === undefined || this.outputs.single.streamId === frame.streamId) ? this.outputs.single : undefined);
     if (!output || output.terminal || frame.channel !== 2) { this.protocolFailure('a binary audio frame did not match the active output stream.'); return; }
     if (output.streamId === undefined) {
       if (this.usedOutputStreams.has(frame.streamId)) { this.protocolFailure('the host reused an output stream id.'); return; }
@@ -162,6 +190,14 @@ export class WebSocketSessionTransport implements SessionTransport {
     output.expectedSequence++;
     output.sampleOffset += frame.pcm16.length;
     for (const listener of this.audioListeners) listener(chunk);
+  }
+  private findOutput(playbackId: string): OutputBinding | undefined {
+    for (const binding of this.outputs.byStream.values()) if (binding.playbackId === playbackId) return binding;
+    return this.outputs.single?.playbackId === playbackId ? this.outputs.single : undefined;
+  }
+  private currentBinding(): OutputBinding | undefined {
+    const first = this.outputs.byStream.values().next().value as OutputBinding | undefined;
+    return first ?? this.outputs.single;
   }
   private sendCommand(type: string, payload: Record<string, unknown>, epoch = this.epoch()): void {
     this.readySocket().send(JSON.stringify(createEnvelope({ sessionId: this.sessionId, epoch, type, payload })));
@@ -189,7 +225,19 @@ const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 // so VAD streamIds accept any RFC 4122 UUID version (v1-v8), not just v7.
 const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function exact(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).sort().join(',') === [...keys].sort().join(','); }
+function hasOnly(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return required.every(key => key in value) && Object.keys(value).every(key => allowed.has(key));
+}
 function integer(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0; }
+function partOk(value: Record<string, unknown>): boolean {
+  const index = value.partIndex;
+  const partId = value.partId;
+  if (index === undefined && partId === undefined) return true;
+  if (index === undefined || !integer(index) || Number(index) > 7) return false;
+  if (partId !== undefined && (typeof partId !== 'string' || !UUID_V7.test(partId))) return false;
+  return true;
+}
 function isStrictHostEvent(value: unknown): value is StableEvent {
   if (typeof value !== 'object' || value === null) return false;
   const event = value as Record<string, unknown>;
@@ -208,14 +256,15 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
     case 'vad.speech_start': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence']) && anyUuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence);
     case 'vad.speech_end': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence', 'captureEndSequence']) && anyUuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence) && integer(payload.captureEndSequence);
     case 'policy.decision': return exact(payload, ['turnId', 'policyVersion', 'eligible', 'posture', 'reasonCodes', 'inputDigest']) && uuid('turnId') && payload.policyVersion === 'v1.experimental' && typeof payload.eligible === 'boolean' && ['riff', 'question', 'challenge', 'silence'].includes(String(payload.posture)) && Array.isArray(payload.reasonCodes) && payload.reasonCodes.length > 0 && payload.reasonCodes.every(code => typeof code === 'string' && code.length > 0) && typeof payload.inputDigest === 'string' && /^[a-f0-9]{64}$/.test(payload.inputDigest);
-    case 'reasoning.started': return exact(payload, ['turnId', 'responseId', 'posture']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture));
-    case 'reasoning.delta': return exact(payload, ['turnId', 'responseId', 'text']) && uuid('turnId') && uuid('responseId') && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096;
-    case 'response.failed': return exact(payload, ['turnId', 'responseId', 'reasonCode']) && uuid('turnId') && uuid('responseId') && ['reasoning_unavailable', 'reasoning_invalid', 'tts_failed'].includes(String(payload.reasonCode));
-    case 'reasoning.final': return exact(payload, ['turnId', 'responseId', 'posture', 'text']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture)) && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096;
-    case 'tts.started': return exact(payload, ['responseId', 'playbackId', 'sampleRate']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0;
-    case 'tts.ended': return exact(payload, ['responseId', 'playbackId', 'generatedSamples']) && uuid('responseId') && uuid('playbackId') && integer(payload.generatedSamples);
-    case 'barge_in.provisional': case 'barge_in.confirmed': case 'barge_in.rejected': case 'barge_in.timed_out': return exact(payload, ['responseId', 'outputEpoch', 'resumable']) && uuid('responseId') && integer(payload.outputEpoch) && typeof payload.resumable === 'boolean';
-    case 'interruption.decision': return exact(payload, ['turnId', 'responseId', 'playbackId', 'outputEpoch', 'action', 'intent', 'confidence', 'disposition', 'pausedSampleOffset']) && uuid('turnId') && uuid('responseId') && uuid('playbackId') && integer(payload.outputEpoch) && ['resume', 'accept'].includes(String(payload.action)) && ['non_substantive', 'continue_previous', 'new_request', 'correction', 'topic_change', 'stop_previous'].includes(String(payload.intent)) && ['low', 'medium', 'high'].includes(String(payload.confidence)) && ['resume_noise', 'resume_fragment', 'resume_requested', 'accept_takeover'].includes(String(payload.disposition)) && integer(payload.pausedSampleOffset);
+    case 'reasoning.started': return hasOnly(payload, ['turnId', 'responseId', 'posture'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture)) && partOk(payload);
+    case 'reasoning.delta': return hasOnly(payload, ['turnId', 'responseId', 'text'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096 && partOk(payload);
+    case 'response.failed': return hasOnly(payload, ['turnId', 'responseId', 'reasonCode'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && ['reasoning_unavailable', 'reasoning_invalid', 'tts_failed'].includes(String(payload.reasonCode)) && partOk(payload);
+    case 'reasoning.final': return hasOnly(payload, ['turnId', 'responseId', 'posture', 'text'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture)) && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096 && partOk(payload);
+    case 'tts.started': return hasOnly(payload, ['responseId', 'playbackId', 'sampleRate'], ['outputStreamId', 'partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0 && (payload.outputStreamId === undefined || (integer(payload.outputStreamId) && Number(payload.outputStreamId) <= 4_294_967_295)) && partOk(payload);
+    case 'tts.ended': return hasOnly(payload, ['responseId', 'playbackId', 'generatedSamples'], ['partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.generatedSamples) && partOk(payload);
+    case 'response.part_started': case 'response.part_final': return hasOnly(payload, ['turnId', 'responseId', 'partIndex', 'kind'], ['partId']) && uuid('turnId') && uuid('responseId') && integer(payload.partIndex) && Number(payload.partIndex) <= 7 && ['stall', 'body'].includes(String(payload.kind)) && (payload.partId === undefined || (typeof payload.partId === 'string' && UUID_V7.test(payload.partId))) && ((payload.kind === 'stall' && payload.partIndex === 0) || (payload.kind === 'body' && Number(payload.partIndex) >= 1));
+    case 'barge_in.provisional': case 'barge_in.confirmed': case 'barge_in.rejected': case 'barge_in.timed_out': return hasOnly(payload, ['responseId', 'outputEpoch', 'resumable'], ['partIndex', 'partId', 'playbackId']) && uuid('responseId') && integer(payload.outputEpoch) && typeof payload.resumable === 'boolean' && partOk(payload) && (payload.playbackId === undefined || uuid('playbackId'));
+    case 'interruption.decision': return hasOnly(payload, ['turnId', 'responseId', 'playbackId', 'outputEpoch', 'action', 'intent', 'confidence', 'disposition', 'pausedSampleOffset'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && uuid('playbackId') && integer(payload.outputEpoch) && ['resume', 'accept'].includes(String(payload.action)) && ['non_substantive', 'continue_previous', 'new_request', 'correction', 'topic_change', 'stop_previous'].includes(String(payload.intent)) && ['low', 'medium', 'high'].includes(String(payload.confidence)) && ['resume_noise', 'resume_fragment', 'resume_requested', 'accept_takeover'].includes(String(payload.disposition)) && integer(payload.pausedSampleOffset) && partOk(payload);
     case 'failure': return exact(payload, ['code', 'detail', 'correctiveAction', 'recoverable']) && typeof payload.code === 'string' && payload.code.length > 0 && typeof payload.detail === 'string' && payload.detail.length > 0 && typeof payload.correctiveAction === 'string' && payload.correctiveAction.length > 0 && typeof payload.recoverable === 'boolean';
     default: return false;
   }

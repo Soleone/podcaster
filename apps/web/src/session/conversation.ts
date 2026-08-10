@@ -1,10 +1,15 @@
 import type { StoredTurn } from '../storage/schema';
 
+export interface AssistantPart { partIndex: number; text: string; tentative: boolean }
 export type ConversationItem =
   | { kind: 'user'; id: string; text: string; status: 'tentative' | 'stable' | 'control'; sequence: number }
-  | { kind: 'assistant'; id: string; responseId: string; playbackId?: string; text: string; tentative?: boolean; playback: 'preparing' | 'playing' | 'paused' | 'completed' | 'interrupted'; sequence: number }
+  | { kind: 'assistant'; id: string; responseId: string; playbackId?: string; text: string; parts?: AssistantPart[]; tentative?: boolean; playback: 'preparing' | 'playing' | 'paused' | 'completed' | 'interrupted'; sequence: number }
   | { kind: 'continuation'; id: string; responseId: string; label: string; sequence: number }
   | { kind: 'notice'; id: string; tone: 'quiet' | 'warning'; text: string; sequence: number };
+
+export function joinAssistantParts(parts: readonly AssistantPart[]): string {
+  return parts.map(part => part.text).filter(Boolean).join('\n\n');
+}
 
 export function conversationFromStoredTurns(turns: readonly StoredTurn[]): ConversationItem[] {
   const items: ConversationItem[] = [];

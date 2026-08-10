@@ -9,8 +9,13 @@
       "payload": { "type": "object", "required": ["responseId", "playbackId", "sampleRate"], "properties": {
         "responseId": { "type": "string", "format": "uuid" },
         "playbackId": { "type": "string", "format": "uuid" },
-        "sampleRate": { "type": "integer", "minimum": 1 }
-      }, "additionalProperties": false }
+        "sampleRate": { "type": "integer", "minimum": 1 },
+        "outputStreamId": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "partId": { "type": "string", "format": "uuid" }
+      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false,
+      "if": { "properties": { "partIndex": { "type": "integer", "minimum": 0 } }, "required": ["partIndex"] },
+      "then": { "required": ["outputStreamId"] } }
     } }
   ]
 }

@@ -29,7 +29,10 @@ export interface AudioClientEvents {
   failure?(code: string): void;
 }
 interface PendingTts {
+  key: string;
   responseId: string;
+  partIndex?: number;
+  partId?: string;
   epoch: number;
   resolveStart(value: SpeechSynthesisStart): void;
   rejectStart(error: Error): void;
@@ -58,6 +61,10 @@ interface ActiveUtterance {
   speechEnded: boolean;
 }
 interface OpenWaiter { resolve(): void; reject(error: Error): void }
+
+function pendingKey(responseId: string, partIndex?: number): string {
+  return partIndex === undefined ? responseId : `${responseId}:${partIndex}`;
+}
 
 export class AudioClient implements SpeechOutputPort {
   private socket: WebSocket | undefined;
@@ -133,17 +140,18 @@ export class AudioClient implements SpeechOutputPort {
     this.sendForStream('stream.reset', {});
   }
 
-  synthesize(input: { sessionId: string; epoch: number; responseId: string; text: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): Promise<SpeechSynthesisStart> {
-    const stream = this.begin({ sessionId: input.sessionId, epoch: input.epoch, responseId: input.responseId, signal: input.signal, ...(input.onGeneratedSamples ? { onGeneratedSamples: input.onGeneratedSamples } : {}) });
+  synthesize(input: { sessionId: string; epoch: number; responseId: string; partIndex?: number; partId?: string; text: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): Promise<SpeechSynthesisStart> {
+    const stream = this.begin({ sessionId: input.sessionId, epoch: input.epoch, responseId: input.responseId, signal: input.signal, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}), ...(input.onGeneratedSamples ? { onGeneratedSamples: input.onGeneratedSamples } : {}) });
     stream.append(input.text);
     stream.finish();
     return stream.started;
   }
 
-  begin(input: { sessionId: string; epoch: number; responseId: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): SpeechOutputStream {
+  begin(input: { sessionId: string; epoch: number; responseId: string; partIndex?: number; partId?: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): SpeechOutputStream {
     void input.sessionId;
     this.requireOpened();
-    if (this.pending.has(input.responseId)) throw new Error('duplicate TTS response');
+    const key = pendingKey(input.responseId, input.partIndex);
+    if (this.pending.has(key)) throw new Error('duplicate TTS response');
     let resolveStart!: (value: SpeechSynthesisStart) => void;
     let rejectStart!: (error: Error) => void;
     let resolveCompletion!: (value: { generatedSamples: number }) => void;
@@ -151,20 +159,21 @@ export class AudioClient implements SpeechOutputPort {
     const started = new Promise<SpeechSynthesisStart>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; });
     const completion = new Promise<{ generatedSamples: number }>((resolve, reject) => { resolveCompletion = resolve; rejectCompletion = reject; });
     void completion.catch(() => undefined);
-    const abort = () => this.cancel(input.responseId);
+    const abort = () => this.cancel(input.responseId, input.partIndex);
     const pending: PendingTts = {
-      responseId: input.responseId, epoch: input.epoch, resolveStart, rejectStart, resolveCompletion, rejectCompletion,
+      key, responseId: input.responseId, epoch: input.epoch, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}),
+      resolveStart, rejectStart, resolveCompletion, rejectCompletion,
       startSettled: false, sidecarStarted: false, completionSettled: false, remoteTerminal: false, expectedSequence: 0, receivedSamples: 0,
       cutoff: false, onGeneratedSamples: input.onGeneratedSamples, released: false, chunks: [], detachAbort: () => input.signal.removeEventListener('abort', abort),
     };
-    this.pending.set(input.responseId, pending);
+    this.pending.set(key, pending);
     input.signal.addEventListener('abort', abort, { once: true });
     if (input.signal.aborted) {
       pending.cutoff = true;
       this.rejectPending(pending, new Error('TTS cancelled'));
-      this.pending.delete(input.responseId);
+      this.pending.delete(key);
     } else {
-      this.sendForStream('tts.open', { responseId: input.responseId, epoch: input.epoch });
+      this.sendForStream('tts.open', { responseId: input.responseId, epoch: input.epoch, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
     }
     (pending as PendingTts & { completion?: Promise<{ generatedSamples: number }> }).completion = completion;
 
@@ -178,21 +187,21 @@ export class AudioClient implements SpeechOutputPort {
         if (pending.cutoff || pending.remoteTerminal) throw new Error('TTS stream is terminated');
         if (!text.trim()) throw new Error('empty append');
         hasher.update(text, 'utf8');
-        client.sendForStream('tts.append', { responseId: input.responseId, epoch: input.epoch, sequence: appendSequence, text });
+        client.sendForStream('tts.append', { responseId: input.responseId, epoch: input.epoch, sequence: appendSequence, text, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
         appendSequence++;
       },
       finish(): void {
         if (pending.cutoff || pending.remoteTerminal) throw new Error('TTS stream is terminated');
         const sha256 = hasher.digest('hex');
-        client.sendForStream('tts.commit', { responseId: input.responseId, epoch: input.epoch, nextSequence: appendSequence, textSha256: sha256 });
+        client.sendForStream('tts.commit', { responseId: input.responseId, epoch: input.epoch, nextSequence: appendSequence, textSha256: sha256, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
       },
     };
 
     return stream;
   }
 
-  release(responseId: string): void {
-    const pending = this.pending.get(responseId);
+  release(responseId: string, partIndex?: number): void {
+    const pending = this.pending.get(pendingKey(responseId, partIndex));
     if (!pending || pending.cutoff || pending.released || !pending.playbackId) return;
     pending.released = true;
     for (const chunk of pending.chunks) this.binarySink(chunk);
@@ -201,14 +210,23 @@ export class AudioClient implements SpeechOutputPort {
 
   pause(_responseId: string): void { /* browser is the audible pause authority */ }
   resume(_responseId: string): void { /* browser is the audible resume authority */ }
-  cancel(responseId: string): void {
-    const pending = this.pending.get(responseId);
-    if (!pending || pending.cutoff) return;
-    pending.cutoff = true;
-    pending.chunks.length = 0;
-    // Establish the local output cutoff before requesting remote cancellation.
-    if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch });
-    this.rejectPending(pending, new Error('TTS cancelled'));
+  cancel(responseId: string, partIndex?: number): void {
+    if (partIndex !== undefined) {
+      const pending = this.pending.get(pendingKey(responseId, partIndex));
+      if (!pending || pending.cutoff) return;
+      pending.cutoff = true;
+      pending.chunks.length = 0;
+      if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch, partIndex });
+      this.rejectPending(pending, new Error('TTS cancelled'));
+      return;
+    }
+    for (const pending of this.pending.values()) {
+      if (pending.responseId !== responseId || pending.cutoff) continue;
+      pending.cutoff = true;
+      pending.chunks.length = 0;
+      if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}) });
+      this.rejectPending(pending, new Error('TTS cancelled'));
+    }
   }
 
   async close(): Promise<void> {
@@ -294,7 +312,7 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   private ttsStarted(payload: JsonObject): void {
-    const pending = this.pending.get(String(payload.responseId));
+    const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
     const outputStreamId = Number(payload.outputStreamId);
     if (!pending || pending.sidecarStarted || pending.epoch !== payload.epoch || this.usedOutputStreams.has(outputStreamId)) return this.protocolFailure();
     pending.playbackId = String(payload.playbackId);
@@ -305,7 +323,7 @@ export class AudioClient implements SpeechOutputPort {
     if (!pending.cutoff) {
       pending.startSettled = true;
       const completion = (pending as PendingTts & { completion: Promise<{ generatedSamples: number }> }).completion;
-      pending.resolveStart({ playbackId: pending.playbackId, sampleRate: pending.sampleRate, completion });
+      pending.resolveStart({ playbackId: pending.playbackId, sampleRate: pending.sampleRate, completion, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
     }
   }
 
@@ -326,7 +344,7 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   private ttsEnded(payload: JsonObject): void {
-    const pending = this.pending.get(String(payload.responseId));
+    const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
     if (!pending || pending.remoteTerminal || !pending.playbackId || pending.playbackId !== payload.playbackId || pending.epoch !== payload.epoch || !pending.sampleRate) return this.protocolFailure();
     const generatedSamples = Number(payload.generatedSamples);
     if (!Number.isSafeInteger(generatedSamples) || generatedSamples <= 0 || generatedSamples !== pending.receivedSamples) return this.protocolFailure();
@@ -339,15 +357,15 @@ export class AudioClient implements SpeechOutputPort {
       pending.completionSettled = true;
       pending.resolveCompletion({ generatedSamples });
     }
-    this.pending.delete(pending.responseId);
+    this.pending.delete(pending.key);
   }
   private ttsCancelled(payload: JsonObject): void {
-    const pending = this.pending.get(String(payload.responseId));
+    const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
     if (!pending || !pending.cutoff || pending.remoteTerminal || payload.epoch !== pending.epoch) return this.protocolFailure();
     pending.remoteTerminal = true;
     pending.chunks.length = 0;
     this.rejectPending(pending, new Error('TTS cancelled'));
-    this.pending.delete(pending.responseId);
+    this.pending.delete(pending.key);
   }
 
   private sendForStream(type: string, payload: JsonObject): void {

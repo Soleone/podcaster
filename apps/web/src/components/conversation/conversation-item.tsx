@@ -22,7 +22,11 @@ export function ConversationRow({ item }: { item: ConversationItem }) {
   return <Message className="conversation-message assistant-row">
     <MessageContent>
       <MessageHeader>Oliver</MessageHeader>
-      <Bubble variant="secondary"><BubbleContent className={cn('conversation-bubble assistant-bubble', item.tentative && 'tentative')}><p>{item.text}</p></BubbleContent></Bubble>
+      <Bubble variant="secondary"><BubbleContent className={cn('conversation-bubble assistant-bubble', item.tentative && 'tentative')}>
+        {item.parts && item.parts.length > 1
+          ? item.parts.map((part, index) => <p key={index} className={cn(index > 0 && 'assistant-part', part.tentative && 'assistant-part-tentative')}>{part.text}</p>)
+          : <p>{item.text}</p>}
+      </BubbleContent></Bubble>
     </MessageContent>
   </Message>;
 }

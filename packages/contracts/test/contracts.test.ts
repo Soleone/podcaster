@@ -22,7 +22,7 @@ function hasUnpairedSurrogate(value: string): boolean {
   }
   return false;
 }
-const canonical = new Ajv2020({ allErrors: true, strict: true });
+const canonical = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
 addFormats(canonical);
 canonical.addKeyword({
   keyword: "maxUtf8Bytes",
@@ -49,6 +49,8 @@ const cases = [
   ["events/reasoning-final.json", "reasoning-final", "reasoning-final"],
   ["events/reasoning-delta.json", "reasoning-delta", "reasoning-delta"],
   ["events/response-failed.json", "response-failed", "response-failed"],
+  ["events/response-part-final.json", "response.part_final", "response-part-final"],
+  ["events/response-part-started.json", "response.part_started", "response-part-started"],
   ["events/session-state.json", "session-state", "session-state"],
   ["events/sidecar-message.json", "sidecar-message", "sidecar-message"],
   ["events/transcript-final.json", "transcript-final", "transcript-final"],
@@ -156,6 +158,41 @@ describe("canonical and generated model-associated validator parity", () => {
   test("generates exactly one runtime schema for every canonical schema", () => {
     expect(Object.keys(CONTRACT_SCHEMAS).sort()).toEqual(cases.map(([path]) => path).sort());
     expect(Object.keys(CONTRACT_VALIDATORS).sort()).toEqual(Object.values(CONTRACT_SCHEMAS).map(schema => schema.title).sort());
+  });
+});
+
+describe("multi-part response part constraints", () => {
+  const partStarted = (payload: Record<string, unknown>) => CONTRACT_VALIDATORS.ResponsePartStartedEvent({ protocolVersion: 1, sessionId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f1", epoch: 2, eventId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f3", monotonicMs: 1000, type: "response.part_started", payload });
+  const base = { turnId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f5", responseId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f6" };
+  test("accepts stall at index 0 and body at indices 1-7", () => {
+    expect(partStarted({ ...base, kind: "stall", partIndex: 0 })).toBe(true);
+    for (const index of [1, 3, 7]) expect(partStarted({ ...base, kind: "body", partIndex: index })).toBe(true);
+  });
+  test("rejects stall at nonzero index, body at index 0, and out-of-range indices", () => {
+    expect(partStarted({ ...base, kind: "stall", partIndex: 1 })).toBe(false);
+    expect(partStarted({ ...base, kind: "body", partIndex: 0 })).toBe(false);
+    expect(partStarted({ ...base, kind: "body", partIndex: 8 })).toBe(false);
+    expect(partStarted({ ...base, kind: "body", partIndex: -1 })).toBe(false);
+    expect(partStarted({ ...base, kind: "stall", partIndex: 0.5 })).toBe(false);
+  });
+  test("rejects a partId without a partIndex, and unknown kinds", () => {
+    expect(partStarted({ ...base, kind: "body", partIndex: 1, partId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f7" })).toBe(true);
+    expect(partStarted({ ...base, kind: "body", partId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f7" })).toBe(false);
+    expect(partStarted({ ...base, kind: "intro", partIndex: 0 })).toBe(false);
+  });
+  test("multipart TTS started requires outputStreamId; legacy may omit it", () => {
+    const env = { protocolVersion: 1, sessionId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f1", epoch: 2, eventId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f3", monotonicMs: 1000, type: "tts.started" };
+    const base = { responseId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f6", playbackId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f7", sampleRate: 24000 };
+    expect(CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, payload: base })).toBe(true);
+    expect(CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, payload: { ...base, partIndex: 1 } })).toBe(false);
+    expect(CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, payload: { ...base, partIndex: 1, outputStreamId: 42 } })).toBe(true);
+  });
+  test("reasoning events reject partId without partIndex", () => {
+    const env = { protocolVersion: 1, sessionId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f1", epoch: 2, eventId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f3", monotonicMs: 1000, type: "reasoning.delta" };
+    const base = { turnId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f5", responseId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f6", text: "hi" };
+    expect(CONTRACT_VALIDATORS.ReasoningDeltaEvent({ ...env, payload: base })).toBe(true);
+    expect(CONTRACT_VALIDATORS.ReasoningDeltaEvent({ ...env, payload: { ...base, partIndex: 2 } })).toBe(true);
+    expect(CONTRACT_VALIDATORS.ReasoningDeltaEvent({ ...env, payload: { ...base, partId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f8" } })).toBe(false);
   });
 });
 

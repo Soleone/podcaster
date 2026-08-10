@@ -18,7 +18,7 @@ const SESSION = '018f1f32-7abc-7def-8abc-0123456789ab';
 
 function item(partial: Partial<StoredRecordingItem> & { itemId: string; role: RecordingRole; recordSeq: number; sampleRate: 16000 | 24000 }): StoredRecordingItem {
   return {
-    sessionId: SESSION, turnId: null, responseId: null, playbackId: null, outputEpoch: null, sampleCount: 0,
+    sessionId: SESSION, turnId: null, responseId: null, partIndex: null, playbackId: null, outputEpoch: null, sampleCount: 0,
     interrupted: false, deliveredSamples: null, terminalReason: null, captureStartSequence: null, captureEndSequence: null,
     truncated: false, durationMs: 0, createdAt: '2026-01-01T00:00:00Z', monotonicMs: 0, data: new Blob([], { type: 'audio/mpeg' }),
     ...partial,

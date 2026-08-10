@@ -32,7 +32,7 @@ describe('WebSocketSessionTransport output binding', () => {
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 2);
     (transport as unknown as { socket: FakeWebSocket }).socket = socket;
-    (transport as unknown as { output: unknown }).output = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, expectedSequence: 0, sampleOffset: 0, terminal: false };
+    (transport as unknown as { outputs: { single: unknown } }).outputs.single = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, expectedSequence: 0, sampleOffset: 0, terminal: false };
     const chunks: Array<{ sequence: number; sampleOffset: number; samples: number }> = [];
     transport.onAudio(chunk => chunks.push({ sequence: chunk.sequence, sampleOffset: chunk.sampleOffset, samples: chunk.pcm16.length }));
     const first = encodeBinaryAudioFrame({ channel: 2, streamId: 77, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024);
@@ -49,7 +49,7 @@ describe('WebSocketSessionTransport output binding', () => {
       const socket = new FakeWebSocket();
       const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 2);
       (transport as unknown as { socket: FakeWebSocket }).socket = socket;
-      (transport as unknown as { output: unknown }).output = output;
+      (transport as unknown as { outputs: { single: unknown } }).outputs.single = output;
       const usedStreams = (transport as unknown as { usedOutputStreams: Set<number> }).usedOutputStreams;
       for (const stream of used) usedStreams.add(stream);
       return { transport, socket };
@@ -75,11 +75,11 @@ describe('WebSocketSessionTransport output binding', () => {
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 3);
     (transport as unknown as { socket: FakeWebSocket }).socket = socket;
-    (transport as unknown as { output: unknown }).output = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: false };
+    (transport as unknown as { outputs: { single: unknown } }).outputs.single = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: false };
     (transport as unknown as { usedOutputStreams: Set<number> }).usedOutputStreams.add(77);
     transport.sendTerminal({ playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', cancelledEpoch: 2, finalPlayedSampleOffset: 240, reason: 'cancelled' });
-    expect((transport as unknown as { output: { terminal: boolean } }).output.terminal).toBe(true);
-    (transport as unknown as { output: unknown }).output = { playbackId: '018f1f32-7ac0-7def-8abc-0123456789ab', outputEpoch: 3, expectedSequence: 0, sampleOffset: 0, terminal: false };
+    expect((transport as unknown as { outputs: { single: { terminal: boolean } } }).outputs.single.terminal).toBe(true);
+    (transport as unknown as { outputs: { single: unknown } }).outputs.single = { playbackId: '018f1f32-7ac0-7def-8abc-0123456789ab', outputEpoch: 3, expectedSequence: 0, sampleOffset: 0, terminal: false };
     const chunks: number[] = [];
     transport.onAudio(chunk => chunks.push(chunk.pcm16.length));
     const fresh = encodeBinaryAudioFrame({ channel: 2, streamId: 78, sequence: 0, monotonicUs: 3n, pcm16: new Int16Array(480) }, 64 * 1024).buffer;
@@ -90,7 +90,7 @@ describe('WebSocketSessionTransport output binding', () => {
     const lateSocket = new FakeWebSocket();
     const lateTransport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 3);
     (lateTransport as unknown as { socket: FakeWebSocket }).socket = lateSocket;
-    (lateTransport as unknown as { output: unknown }).output = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: false };
+    (lateTransport as unknown as { outputs: { single: unknown } }).outputs.single = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: false };
     lateTransport.sendTerminal({ playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', cancelledEpoch: 2, finalPlayedSampleOffset: 240, reason: 'cancelled' });
     const late = encodeBinaryAudioFrame({ channel: 2, streamId: 77, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(240) }, 64 * 1024).buffer;
     (lateTransport as unknown as { handleBinary(data: unknown): void }).handleBinary(late);
@@ -103,7 +103,7 @@ describe('WebSocketSessionTransport output binding', () => {
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 2);
     (transport as unknown as { socket: FakeWebSocket }).socket = socket;
-    (transport as unknown as { output: unknown }).output = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', responseId: '018f1f32-7ac1-7def-8abc-0123456789ab', outputEpoch: 2, expectedSequence: 0, sampleOffset: 0, terminal: false };
+    (transport as unknown as { outputs: { single: unknown } }).outputs.single = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', responseId: '018f1f32-7ac1-7def-8abc-0123456789ab', outputEpoch: 2, expectedSequence: 0, sampleOffset: 0, terminal: false };
     const gapped = encodeBinaryAudioFrame({ channel: 2, streamId: 77, sequence: 1, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024);
     (transport as unknown as { handleBinary(data: unknown): void }).handleBinary(gapped.buffer);
     expect(socket.closed).toBe(4000);
@@ -383,6 +383,49 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     emitText(socket, TTS_ENDED(responseB, playbackB, 240));
     expectNoProtocolFailure(socket);
     expect(chunks).toEqual([480, 240]);
+  });
+});
+
+describe('WebSocketSessionTransport multi-part output routing', () => {
+  it('routes interleaved part PCM by outputStreamId and keeps parent identity across parts', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const chunks: Array<{ playbackId: string; sampleOffset: number; samples: number }> = [];
+    transport.onAudio(chunk => chunks.push({ playbackId: chunk.playbackId, sampleOffset: chunk.sampleOffset, samples: chunk.pcm16.length }));
+    // Part 0 (stall): same responseId as part 1, new reasoning.started per part.
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0 }));
+    emitText(socket, hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }));
+    emitText(socket, hostEvent('tts.started', { responseId: responseA, playbackId: playbackA, sampleRate: 24_000, outputStreamId: 77, partIndex: 0 }));
+    // Part 1 (body) starts while part 0 PCM is still streaming.
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 1 }));
+    emitText(socket, hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 1, kind: 'body' }));
+    emitText(socket, hostEvent('tts.started', { responseId: responseA, playbackId: playbackB, sampleRate: 24_000, outputStreamId: 78, partIndex: 1 }));
+    // Interleave binary frames from both streams; each must route to its own part.
+    emitBinary(socket, 77, 0, 480);
+    emitBinary(socket, 78, 0, 240);
+    emitBinary(socket, 77, 1, 160);
+    emitBinary(socket, 78, 1, 120);
+    emitText(socket, hostEvent('reasoning.final', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 1, text: 'The body answer.' }));
+    emitText(socket, hostEvent('response.part_final', { turnId: turnUuid, responseId: responseA, partIndex: 1, kind: 'body' }));
+    emitText(socket, hostEvent('tts.ended', { responseId: responseA, playbackId: playbackA, generatedSamples: 640, partIndex: 0 }));
+    emitText(socket, hostEvent('tts.ended', { responseId: responseA, playbackId: playbackB, generatedSamples: 360, partIndex: 1 }));
+    expectNoProtocolFailure(socket);
+    expect(chunks).toEqual([
+      { playbackId: playbackA, sampleOffset: 0, samples: 480 },
+      { playbackId: playbackB, sampleOffset: 0, samples: 240 },
+      { playbackId: playbackA, sampleOffset: 480, samples: 160 },
+      { playbackId: playbackB, sampleOffset: 240, samples: 120 },
+    ]);
+  });
+
+  it('rejects a multipart tts.started that reuses an output stream id', async () => {
+    const socket = new EventSocket();
+    await wiredTransport(socket);
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0 }));
+    emitText(socket, hostEvent('tts.started', { responseId: responseA, playbackId: playbackA, sampleRate: 24_000, outputStreamId: 77, partIndex: 0 }));
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 1 }));
+    emitText(socket, hostEvent('tts.started', { responseId: responseA, playbackId: playbackB, sampleRate: 24_000, outputStreamId: 77, partIndex: 1 }));
+    expect(socket.closed).toBe(4000);
   });
 });
 

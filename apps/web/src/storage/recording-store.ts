@@ -11,6 +11,7 @@ export interface StoredRecordingItem {
   role: RecordingRole;
   turnId: string | null;
   responseId: string | null;
+  partIndex: number | null;
   playbackId: string | null;
   outputEpoch: number | null;
   sampleRate: RecordingSampleRate;

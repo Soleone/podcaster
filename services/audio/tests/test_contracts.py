@@ -42,6 +42,8 @@ CASES = [
     ("events/reasoning-final.json", "reasoning-final", "reasoning-final"),
     ("events/reasoning-delta.json", "reasoning-delta", "reasoning-delta"),
     ("events/response-failed.json", "response-failed", "response-failed"),
+    ("events/response-part-final.json", "response.part_final", "response-part-final"),
+    ("events/response-part-started.json", "response.part_started", "response-part-started"),
     ("events/session-state.json", "session-state", "session-state"),
     ("events/sidecar-message.json", "sidecar-message", "sidecar-message"),
     ("events/transcript-final.json", "transcript-final", "transcript-final"),

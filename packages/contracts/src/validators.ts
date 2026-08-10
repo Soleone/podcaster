@@ -21,7 +21,7 @@ function hasUnpairedSurrogate(value: string): boolean {
   }
   return false;
 }
-const ajv = new Ajv2020({ allErrors: true, strict: true });
+const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
 addFormats(ajv);
 ajv.addKeyword({
   keyword: "maxUtf8Bytes",
