@@ -7,7 +7,7 @@ body{margin:0}
 .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-weight:700;color:var(--muted-foreground);margin:0}
 .readiness-title{font-size:clamp(1.5rem,4vw,2rem);font-weight:700;line-height:1.15;letter-spacing:-.01em;margin:.2rem 0 0}
 
-.readiness-card{padding:1.5rem;box-shadow:0 1rem 3rem color-mix(in srgb,var(--shadow-color) 7%,transparent)}
+.readiness-card{padding:1.5rem;border-color:var(--border);box-shadow:0 1px 2px color-mix(in srgb,var(--shadow-color) 5%,transparent)}
 .readiness-card-head{margin-bottom:1rem}
 .readiness-card-title{font-size:1.25rem;font-weight:700;line-height:1.2;margin:0}
 .readiness-subhead{margin:.35rem 0 0;color:var(--muted-foreground);line-height:1.45}
@@ -27,11 +27,21 @@ body{margin:0}
 .capability-next{font-weight:600;color:var(--foreground)}
 
 .readiness-note{margin-top:1rem}
-.readiness-details{margin-top:1rem}
-.readiness-details-toggle{gap:.4rem}
+.readiness-actions{display:flex;justify-content:flex-end;gap:.75rem;flex-wrap:wrap;margin-top:1rem}
+.readiness-actions>button{min-width:14rem}
+
+.readiness-foot{display:flex;align-items:center;gap:1.25rem;flex-wrap:wrap;margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border)}
+.readiness-foot-body{flex-basis:100%;margin-top:.25rem}
+.readiness-ghost-link{color:var(--muted-foreground)}
+.readiness-details-toggle{gap:.4rem;color:var(--muted-foreground)}
 .readiness-chevron{width:1rem;height:1rem;flex:none;color:var(--muted-foreground);transition:transform .15s ease}
 .readiness-chevron-open{transform:rotate(-180deg)}
-.readiness-details-region{padding:.5rem 0 0;color:var(--muted-foreground);font-size:.85rem;line-height:1.45}
+.readiness-diagnostics-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted-foreground);margin:0 0 .25rem}
+.readiness-diagnostics{color:var(--muted-foreground);font-size:.85rem;line-height:1.45;margin:0}
 
-a:focus-visible,.readiness-details-toggle:focus-visible{outline:3px solid var(--ring);outline-offset:3px}
-@media(max-width:36rem){.capability-head{flex-wrap:wrap}}
+a:focus-visible,.readiness-details-toggle:focus-visible,.readiness-ghost-link:focus-visible{outline:3px solid var(--ring);outline-offset:3px}
+
+@media(max-width:36rem){
+  .capability-head{flex-wrap:wrap}
+  .readiness-actions>button{flex:1 1 100%}
+}

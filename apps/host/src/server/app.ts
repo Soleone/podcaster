@@ -96,10 +96,10 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         {
           id: 'voice_input', label: 'Voice input',
           state: microphoneGranted ? 'ready' : 'needs_action',
-          reason: microphoneGranted ? 'Microphone permission is granted.' : 'Microphone permission is required before capture.',
-          action: microphoneGranted ? 'No action needed.' : 'Enable microphone after acknowledging the disclosure.',
+          reason: microphoneGranted ? 'Microphone access is allowed.' : 'Microphone access is needed before capture.',
+          action: microphoneGranted ? 'No action needed.' : 'Enable the microphone below.',
         },
-        { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: audioReady ? 'Selected Nemotron and Kokoro runtime is ready.' : 'Selected local audio runtime is not ready.', action: audioReady ? 'No action needed.' : 'Wait for selected model startup or restart the host.' },
+        { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: audioReady ? 'Your local audio engine is running.' : "Your local audio engine isn't running yet.", action: audioReady ? 'No action needed.' : 'Wait a moment, then check again.' },
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
       ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi.status,
     };

@@ -70,10 +70,6 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
     }
   }
 
-  async function restoreMicrophonePermission() {
-    if (await microphoneGrantedStatus()) setMicrophoneReady(true);
-  }
-
   async function checkReadiness(remember: boolean) {
     setLoading(true); setError(undefined);
     try {
@@ -109,42 +105,58 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
   const transcriptOnlyReady = audioReady && !reasoningReady;
   const canStart = props.sessionAvailable || realSessionReady || transcriptOnlyReady;
 
+  const subhead = realSessionReady
+    ? 'Everything is ready on this device.'
+    : transcriptOnlyReady
+      ? 'Transcript-only mode is ready. Assistant responses are unavailable.'
+      : 'A few things need your attention before you can start.';
+
   return <main className="readiness-shell">
     <header className="readiness-header">
-      <p className="eyebrow">Local readiness</p>
+      <p className="eyebrow">Get started</p>
       <h1 className="readiness-title">Set up your thinking companion</h1>
     </header>
     {!acknowledged ? <Card className="readiness-card" aria-labelledby="privacy-title">
       <div className="readiness-card-head">
         <h2 id="privacy-title" className="readiness-card-title">Before you continue</h2>
       </div>
-      <p className="readiness-copy"><strong>Speech recognition and voice playback run locally.</strong> For a response, the current transcript, bounded recent conversation context, your validated persona interpretation, and the selected response posture are sent through Pi/Codex to its configured cloud model provider. Raw audio and your full local history are not sent.</p>
-      <p className="readiness-copy">This app does not request an ordinary API key and has no silent metered-provider fallback. The configured provider—not this app—controls its handling, retention, and model-improvement use under your account and settings.</p>
-      <p className="readiness-links"><a href="https://help.openai.com/en/articles/11369540-codex-in-chatgpt-faq" rel="noreferrer">Codex data handling</a> · <a href="https://help.openai.com/en/articles/5722486/data-controls-faq" rel="noreferrer">OpenAI data controls</a> · <a href="https://openai.com/policies/privacy-policy/" rel="noreferrer">OpenAI privacy policy</a></p>
-      <div className="flex flex-wrap gap-3 mt-4"><Button onClick={() => void checkReadiness(true)} disabled={loading}>{loading ? <><Spinner />Checking…</> : 'Continue and check readiness'}</Button></div>
+      <PrivacyStatement />
+      <div className="readiness-actions"><Button onClick={() => void checkReadiness(true)} disabled={loading}>{loading ? <><Spinner />Checking…</> : 'Continue and check readiness'}</Button></div>
     </Card> : <Card className="readiness-card" aria-labelledby="status-title">
       <div className="readiness-card-head">
         <h2 id="status-title" className="readiness-card-title">Readiness</h2>
-        <p role="status" className="readiness-subhead">Secure local connection established. Audio capture has not started.</p>
+        <p role="status" className="readiness-subhead">{subhead}</p>
       </div>
       <ul className="capability-list">{snapshot?.capabilities.map(row => <CapabilityRow key={row.id} row={row} />)}</ul>
-      {!microphoneReady ? <div className="flex flex-wrap gap-3 mt-4"><Button onClick={() => void enableMicrophone()} disabled={loading}>{loading ? <><Spinner />Requesting microphone…</> : 'Enable microphone'}</Button></div> : <>
+      {!microphoneReady ? <div className="readiness-actions"><Button onClick={() => void enableMicrophone()} disabled={loading}>{loading ? <><Spinner />Requesting microphone…</> : 'Enable microphone'}</Button></div> : <>
         <Alert role="status" variant="success" className="readiness-note"><CircleCheck className="size-4 mt-0.5 shrink-0 text-success" aria-hidden="true" /><p>Microphone permission is ready. Capture is stopped until the session starts.</p></Alert>
-        <div className="flex flex-wrap gap-3">
+        <div className="readiness-actions">
           {!transcriptOnlyReady ? <Button onClick={() => capability && props.onStart(capability, 'full')} disabled={!capability || !canStart}>Start session</Button> : null}
           {transcriptOnlyReady ? <Button variant="secondary" onClick={() => capability && props.onStart(capability, 'transcript_only')} disabled={!capability}>Start transcript-only session</Button> : null}
         </div>
         {transcriptOnlyReady ? <p className="text-muted-foreground mt-3 leading-relaxed" role="status">Pi reasoning is unavailable. Transcript-only mode records stable local transcripts and does not generate or speak assistant responses.</p> : null}
         {!canStart ? <p className="text-muted-foreground mt-3 leading-relaxed">Active conversation is unavailable until the host audio-model integration is ready.</p> : null}
       </>}
-      <DetailsToggle sidecar={snapshot?.sidecar} capability={capability} />
+      <div className="readiness-foot">
+        <DisclosureToggle />
+        <DetailsToggle sidecar={snapshot?.sidecar} capability={capability} />
+      </div>
     </Card>}
     {error ? <Alert variant="destructive" className="readiness-note"><CircleAlert className="size-4 mt-0.5 shrink-0 text-destructive" aria-hidden="true" /><p>{error}</p></Alert> : null}
   </main>;
 }
 
+function PrivacyStatement() {
+  return <>
+    <p className="readiness-copy"><strong>Speech recognition and voice playback run locally.</strong> For a response, the current transcript, bounded recent conversation context, your validated persona interpretation, and the selected response posture are sent through Pi/Codex to its configured cloud model provider. Raw audio and your full local history are not sent.</p>
+    <p className="readiness-copy">This app does not request an ordinary API key and has no silent metered-provider fallback. The configured provider—not this app—controls its handling, retention, and model-improvement use under your account and settings.</p>
+    <p className="readiness-links"><a href="https://help.openai.com/en/articles/11369540-codex-in-chatgpt-faq" rel="noreferrer">Codex data handling</a> · <a href="https://help.openai.com/en/articles/5722486-data-controls-faq" rel="noreferrer">OpenAI data controls</a> · <a href="https://openai.com/policies/privacy-policy/" rel="noreferrer">OpenAI privacy policy</a></p>
+  </>;
+}
+
 function CapabilityRow({ row }: { row: Capability }) {
   const Icon = capabilityIcons[row.id] ?? Info;
+  const ready = row.state === 'ready';
   return <li className="capability-row">
     <span className="capability-icon"><Icon className="size-4" aria-hidden="true" /></span>
     <div className="capability-body">
@@ -152,21 +164,36 @@ function CapabilityRow({ row }: { row: Capability }) {
         <span className="capability-label">{row.label}</span>
         <Badge variant={capabilityBadge[row.state]}>{capabilityBadgeLabel[row.state]}</Badge>
       </div>
-      <p className="capability-reason">{row.reason}</p>
-      <p className="capability-action"><span className="capability-next">Next:</span> {row.action}</p>
+      {!ready ? <>
+        <p className="capability-reason">{row.reason}</p>
+        {row.action ? <p className="capability-action"><span className="capability-next">Next:</span> {row.action}</p> : null}
+      </> : null}
     </div>
   </li>;
 }
 
+// Quiet "Privacy terms" affordance that re-opens the disclosure copy in place,
+// so the privacy boundary stays re-readable at the moment the user presses Start.
+function DisclosureToggle() {
+  const [open, setOpen] = useState(false);
+  return <>
+    <Button variant="ghost" size="sm" className="readiness-ghost-link" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      Privacy terms
+    </Button>
+    {open ? <div className="readiness-foot-body" role="region" aria-label="Privacy terms"><PrivacyStatement /></div> : null}
+  </>;
+}
+
 function DetailsToggle({ sidecar, capability }: { sidecar: string | undefined; capability: string | undefined }) {
   const [open, setOpen] = useState(false);
-  return <div className="readiness-details">
-    <Button variant="ghost" size="sm" className="readiness-details-toggle" aria-expanded={open} aria-controls="readiness-details-region" onClick={() => setOpen(value => !value)}>
+  return <>
+    <Button variant="ghost" size="sm" className="readiness-details-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       <ChevronDown className={cn('readiness-chevron', open && 'readiness-chevron-open')} aria-hidden="true" />
       Details
     </Button>
-    {open ? <div id="readiness-details-region" role="region" aria-label="Readiness details" className="readiness-details-region">
-      <p>Audio sidecar: {sidecar}. Session capability: {capability ? 'issued in memory' : 'not issued'}.</p>
+    {open ? <div className="readiness-foot-body" role="region" aria-label="Readiness diagnostics">
+      <p className="readiness-diagnostics-label">Diagnostics</p>
+      <p className="readiness-diagnostics">Audio sidecar: {sidecar ?? 'unknown'}. Session capability: {capability ? 'issued in memory' : 'not issued'}.</p>
     </div> : null}
-  </div>;
+  </>;
 }
