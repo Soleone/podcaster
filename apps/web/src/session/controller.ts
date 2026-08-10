@@ -20,7 +20,7 @@ export interface SessionControllerOptions {
   playbackFactory?: (input: { playbackId: string; outputEpoch: number; sampleRate: number }) => ControlledPlayback;
   schedule?: (delay: number, callback: () => void) => () => void;
 }
-interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean; partIndex?: number }
+interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean; partIndex?: number; pendingAudio?: Array<{ sampleOffset: number; pcm16: Int16Array }> }
 interface ResponsePlaybackGroup { responseId: string; parts: ActivePlayback[]; activeIndex: number; terminal: boolean }
 interface Provisional {
   responseId: string;
@@ -118,7 +118,9 @@ export class SessionController {
         group.parts.push(part);
         if (firstPart) { group.activeIndex = 0; this.active = part; }
         // Non-first parts are queued and become audible when their predecessor
-        // reports a terminal receipt (see advanceGroup).
+        // reports a terminal receipt (see advanceGroup). Their PCM is held in
+        // handleAudio until then so it can never overlap the still-speaking
+        // predecessor (the sidecar prefetches the successor while part 0 plays).
       }
     } else if (event.type === 'tts.ended') {
       const part = typeof event.payload.playbackId === 'string' ? this.playbackByPart.get(event.payload.playbackId) : undefined;
@@ -281,7 +283,15 @@ export class SessionController {
 
   private handleAudio(chunk: OutputAudioChunk): void {
     const part = this.playbackByPart.get(chunk.playbackId);
-    if (part && !part.terminal) part.player.append(chunk.sampleOffset, chunk.pcm16);
+    if (!part || part.terminal) return;
+    if (part !== this.active) {
+      // Queued part: hold its PCM until advanceGroup promotes it, so its audio
+      // cannot start while the previous part is still speaking. The chunks are
+      // flushed in arrival order when the part becomes active.
+      (part.pendingAudio ??= []).push({ sampleOffset: chunk.sampleOffset, pcm16: chunk.pcm16 });
+      return;
+    }
+    part.player.append(chunk.sampleOffset, chunk.pcm16);
   }
   private async handleTransportFailure(message: string): Promise<void> {
     const active = this.active;
@@ -318,7 +328,9 @@ export class SessionController {
     this.playbackByPart.delete(completedPlaybackId);
     const nextIndex = index + 1;
     const next = group.parts[nextIndex];
-    if (!next) {
+    if (!next || next.terminal) {
+      // No live successor: the response is done, or the successor was cancelled
+      // while queued (whole-group teardown) and must not be promoted.
       group.terminal = true;
       this.groups.delete(part.responseId);
       if (this.active?.playbackId === completedPlaybackId) this.active = undefined;
@@ -326,6 +338,11 @@ export class SessionController {
     }
     group.activeIndex = nextIndex;
     this.active = next;
+    const pendingAudio = next.pendingAudio;
+    if (pendingAudio) {
+      delete next.pendingAudio;
+      for (const chunk of pendingAudio) next.player.append(chunk.sampleOffset, chunk.pcm16);
+    }
     void next.player.resume().catch(() => undefined);
   }
   private playbackKey(outputEpoch: number, playbackId: string): string { return `${outputEpoch}:${playbackId}`; }

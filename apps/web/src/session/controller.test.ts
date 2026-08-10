@@ -60,6 +60,42 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('holds a queued part\u2019s PCM until its predecessor terminalizes, then flushes it in order', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'part-0', sampleRate: 24000, partIndex: 0 }));
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'part-1', sampleRate: 24000, partIndex: 1 }));
+    transport.emitAudio({ playbackId: 'part-0', sequence: 0, sampleOffset: 0, pcm16: new Int16Array(480) });
+    transport.emitAudio({ playbackId: 'part-1', sequence: 0, sampleOffset: 0, pcm16: new Int16Array(480) });
+    transport.emitAudio({ playbackId: 'part-1', sequence: 1, sampleOffset: 480, pcm16: new Int16Array(480) });
+    // The active part plays immediately; the queued part stays silent while its
+    // predecessor is still speaking.
+    expect(players[0]!.append).toHaveBeenCalledOnce();
+    expect(players[1]!.append).not.toHaveBeenCalled();
+    // Predecessor terminalizes -> queued part is promoted and its held PCM
+    // flushes in arrival order (offsets 0 then 480).
+    await controller.reportPlaybackTerminal({ playbackId: 'part-0', cancelledEpoch: 0, finalPlayedSampleOffset: 480, reason: 'completed' });
+    expect(players[1]!.append).toHaveBeenCalledTimes(2);
+    expect(players[1]!.append.mock.calls.map(call => call[0])).toEqual([0, 480]);
+    expect(players[1]!.resume).toHaveBeenCalledOnce();
+    writer.close();
+  });
+
+  it('drops held PCM when a queued part is cancelled before it becomes active', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'part-0', sampleRate: 24000, partIndex: 0 }));
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'part-1', sampleRate: 24000, partIndex: 1 }));
+    transport.emitAudio({ playbackId: 'part-1', sequence: 0, sampleOffset: 0, pcm16: new Int16Array(480) });
+    expect(players[1]!.append).not.toHaveBeenCalled();
+    // Barge-in accept cancels the whole response: active and queued parts stop
+    // and the queued part's held audio never reaches its player.
+    await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    await transport.emit(event('session', 0, 'barge_in.confirmed', { responseId: 'response', outputEpoch: 0, resumable: false }));
+    expect(players[0]!.stops).toEqual(['cancelled']);
+    expect(players[1]!.stops).toEqual(['cancelled']);
+    expect(players[1]!.append).not.toHaveBeenCalled();
+    writer.close();
+  });
+
   it('rejects wrong-session and stale non-accounting events before side effects', async () => {
     const { controller, players, transport, writer } = await setup(2);
     await transport.emit(event('other', 2, 'tts.started', { responseId: 'wrong', playbackId: 'wrong', sampleRate: 24000 }));
