@@ -120,6 +120,7 @@ function boundedPersonaForPi(persona: PersonaInterpretation, maxBytes: number): 
     },
     challenge_enabled: persona.challenge_enabled,
     interests: [...persona.interests],
+    experiences: [...(persona.experiences ?? [])],
     body: body.slice(0, bodyEnd).join(""),
   });
   if (Buffer.byteLength(serialize(0), "utf8") > maxBytes) return;

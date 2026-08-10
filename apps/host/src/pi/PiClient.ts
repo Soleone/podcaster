@@ -91,7 +91,7 @@ function promptFor(input: PiRequestInput): string {
   if (input.maxWords !== 45) throw new Error("maxWords must be exactly 45");
   for (const [name, value, max] of [["transcript", input.transcript, 16_384], ["boundedContext", input.boundedContext, 16_384], ["personaInterpretation", input.personaInterpretation, 8_192]] as const)
     if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > max) throw new Error(`${name} exceeds its bound`);
-  return `Return only the response text, at most 45 words. Posture: ${input.posture}\nPersona interpretation:\n${input.personaInterpretation}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
+  return `Return only the response text, at most 45 words. Posture: ${input.posture}\nIf the persona lists experiences or tastes, you may briefly weave in at most one when it genuinely illuminates the user's topic; keep it to a phrase, never invent any, and let the user's topic stay the focus.\nPersona interpretation:\n${input.personaInterpretation}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
 }
 
 export class StdioPiClient implements PiClient {

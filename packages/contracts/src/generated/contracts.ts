@@ -30,7 +30,7 @@ export type TranscriptPartialEvent = { "protocolVersion": 1; "sessionId": string
 export type TtsEndedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.ended"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "generatedSamples": number; }; };
 export type TtsStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.started"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "sampleRate": number; }; };
 export type HistoryExport = { "version": 1; "exportedAt": string; "sessions": Array<{ "sessionId": string; "startedAt": string; "endedAt"?: string | null; "personaDigest": string; "turns": Array<{ "turnId": string; "role": "user" | "assistant"; "text": string; "createdAt": string; "posture"?: "riff" | "question" | "challenge" | "silence"; "deliveredSampleOffset"?: number; "interrupted"?: boolean; "failures"?: Array<string>; }>; }>; };
-export type Persona = { "version": 1; "name": string; "invitation_only": boolean; "posture_weights": { "riff": number; "question": number; "challenge": number; }; "challenge_enabled": boolean; "interests": Array<string>; "body": string; };
+export type Persona = { "version": 1; "name": string; "invitation_only": boolean; "posture_weights": { "riff": number; "question": number; "challenge": number; }; "challenge_enabled": boolean; "interests": Array<string>; "experiences"?: Array<string>; "body": string; };
 export type ProtocolEnvelope = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; };
 
 export const CORE_EVENT_TYPES = [
@@ -3411,6 +3411,14 @@ export const CONTRACT_SCHEMAS = {
         "items": {
           "type": "string",
           "maxLength": 80
+        }
+      },
+      "experiences": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "string",
+          "maxLength": 200
         }
       },
       "body": {

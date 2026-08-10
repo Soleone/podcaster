@@ -204,6 +204,8 @@ def test_persona_body_utf8_byte_limit_and_well_formed_strings() -> None:
         {**valid, "body": "😀" * 4097},
         {**valid, "body": "\ud800"},
         {**valid, "body": "\udc00"},
+        {**valid, "experiences": ["x" * 201]},
+        {**valid, "experiences": ["a"] * 21},
     ]:
         with pytest.raises(Exception):
             validate("persona.json", invalid)

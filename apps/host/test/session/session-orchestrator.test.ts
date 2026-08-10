@@ -175,7 +175,7 @@ describe("safe session orchestrator", () => {
 
   it("serializes a bounded structurally valid persona for Pi by truncating only its body", async () => {
     const body = 'Escaped \\ quote " and emoji 😀.\n'.repeat(400);
-    const personaSource = `---\nversion: 1\nname: Detailed companion\ninvitation_only: true\nposture_weights: { riff: 40, question: 40, challenge: 20 }\nchallenge_enabled: true\ninterests: [audio systems, safety]\n---\n${body}`;
+    const personaSource = `---\nversion: 1\nname: Detailed companion\ninvitation_only: true\nposture_weights: { riff: 40, question: 40, challenge: 20 }\nchallenge_enabled: true\ninterests: [audio systems, safety]\nexperiences:\n  - Spent a winter logging shipping forecasts for a community radio night show\n---\n${body}`;
     const pi = new FakePi();
     const { session } = setup({ pi, personaSource });
     await session.handleStableFinal(turn(0));
@@ -189,6 +189,7 @@ describe("safe session orchestrator", () => {
       posture_weights: { riff: 40, question: 40, challenge: 20 },
       challenge_enabled: true,
       interests: ["audio systems", "safety"],
+      experiences: ["Spent a winter logging shipping forecasts for a community radio night show"],
     });
     expect(persona.body.length).toBeLessThan(body.length);
     expect(body.startsWith(persona.body)).toBe(true);

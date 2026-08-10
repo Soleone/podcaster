@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PERSONA_MARKDOWN, parsePersona } from "../src/persona/index.js";
 
-const GOLDEN_DIGEST = "9348614b0ab7d3e69dedcf4a22822be8af77487185db780eefc4e5a7644c1dac";
+const GOLDEN_DIGEST = "d46604d3c926d965fdc70314af836fcb98f749a230e445ea0e33343b11f26393";
 
 describe("persona v1 parser", () => {
   it("parses the tracked supported default into a stable canonical interpretation", () => {
@@ -17,11 +17,12 @@ describe("persona v1 parser", () => {
     expect(result.warnings).toEqual([]);
     expect(result.interpretation).toMatchObject({
       version: 1,
-      name: "Thoughtful companion",
+      name: "Oliver",
       invitation_only: false,
       posture_weights: { riff: 50, question: 35, challenge: 15 },
       challenge_enabled: true,
     });
+    expect(result.interpretation.experiences?.length).toBeGreaterThan(0);
     expect(result.digest).toBe(GOLDEN_DIGEST);
     expect({ digest: result.digest, interpretation: result.interpretation }).toEqual(golden);
     expect(result.digest).toMatch(/^[a-f0-9]{64}$/u);
@@ -31,7 +32,7 @@ describe("persona v1 parser", () => {
     const first = parsePersona("Hello 😀\r\nworld");
     const second = parsePersona("Hello 😀\nworld");
     expect(first).toEqual(second);
-    expect(first.ok && first.interpretation.name).toBe("Thoughtful companion");
+    expect(first.ok && first.interpretation.name).toBe("Oliver");
   });
 
   it.each([
@@ -58,12 +59,14 @@ describe("persona v1 parser", () => {
     if (result.ok) expect(result.interpretation.body).toBe("First section\n\n---\n\nSecond section");
   });
 
-  it("counts name and interest limits by Unicode code point", () => {
-    const valid = parsePersona(`---\nname: ${"😀".repeat(80)}\ninterests: [${"😀".repeat(80)}]\n---\nbody`);
+  it("counts name, interest, and experience limits by Unicode code point", () => {
+    const valid = parsePersona(`---\nname: ${"😀".repeat(80)}\ninterests: [${"😀".repeat(80)}]\nexperiences: [${"😀".repeat(200)}]\n---\nbody`);
     expect(valid.ok).toBe(true);
     for (const source of [
       `---\nname: ${"😀".repeat(81)}\n---\nbody`,
       `---\ninterests: [${"😀".repeat(81)}]\n---\nbody`,
+      `---\nexperiences: [${"😀".repeat(201)}]\n---\nbody`,
+      `---\nexperiences: [${Array.from({ length: 21 }, () => "a").join(", ")}]\n---\nbody`,
     ]) expect(parsePersona(source)).toMatchObject({ ok: false, errors: expect.arrayContaining([expect.objectContaining({ code: "invalid_value" })]) });
   });
 

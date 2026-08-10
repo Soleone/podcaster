@@ -7,7 +7,7 @@ import type { PersonaDiagnostic, PersonaInterpretation, PersonaParseResult } fro
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_SOURCE_BYTES = 24 * 1024;
 const LONG_BODY_BYTES = 8 * 1024;
-const ALLOWED_KEYS = new Set(["version", "name", "invitation_only", "posture_weights", "challenge_enabled", "interests"]);
+const ALLOWED_KEYS = new Set(["version", "name", "invitation_only", "posture_weights", "challenge_enabled", "interests", "experiences"]);
 
 function lineAt(source: string, offset: number): number {
   return source.slice(0, Math.max(0, offset)).split("\n").length;
@@ -118,6 +118,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
   const weights = frontMatter.posture_weights ?? DEFAULT_PERSONA_FIELDS.posture_weights;
   const challengeEnabled = frontMatter.challenge_enabled ?? DEFAULT_PERSONA_FIELDS.challenge_enabled;
   const interests = frontMatter.interests ?? DEFAULT_PERSONA_FIELDS.interests;
+  const experiences = frontMatter.experiences ?? DEFAULT_PERSONA_FIELDS.experiences;
 
   if (version !== 1) errors.push(diagnostic(source, "error", "invalid_value", "version must be 1.", offsetOfKey(source, "version")));
   if (typeof name !== "string" || codePointLength(name) > 80) errors.push(diagnostic(source, "error", "invalid_value", "name must be a string of at most 80 characters.", offsetOfKey(source, "name")));
@@ -129,6 +130,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
     errors.push(diagnostic(source, "error", "weights_sum", "posture_weights must sum to 100.", offsetOfKey(source, "posture_weights")));
   }
   if (!Array.isArray(interests) || interests.length > 20 || interests.some(item => typeof item !== "string" || codePointLength(item) > 80)) errors.push(diagnostic(source, "error", "invalid_value", "interests must contain at most 20 strings of at most 80 characters.", offsetOfKey(source, "interests")));
+  if (!Array.isArray(experiences) || experiences.length > 20 || experiences.some(item => typeof item !== "string" || codePointLength(item) > 200)) errors.push(diagnostic(source, "error", "invalid_value", "experiences must contain at most 20 strings of at most 200 characters.", offsetOfKey(source, "experiences")));
   const bodyBytes = Buffer.byteLength(body, "utf8");
   if (bodyBytes > MAX_BODY_BYTES) errors.push(diagnostic(source, "error", "body_too_large", `Persona body exceeds ${MAX_BODY_BYTES} bytes.`));
   else if (bodyBytes > LONG_BODY_BYTES) warnings.push(diagnostic(source, "warning", "body_long", "Persona body is long and may be truncated in bounded reasoning context."));
@@ -143,6 +145,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
     posture_weights: { riff: (weights as Record<string, number>).riff!, question: (weights as Record<string, number>).question!, challenge: (weights as Record<string, number>).challenge! },
     challenge_enabled: challengeEnabled as boolean,
     interests: [...(interests as string[])],
+    experiences: [...(experiences as string[])],
     body,
   };
   if (!CONTRACT_VALIDATORS.Persona(interpretation)) return { ok: false, errors: [diagnostic(source, "error", "invalid_value", "Persona interpretation failed canonical validation.")], warnings };
