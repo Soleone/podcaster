@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Brain, Captions, CircleAlert, CircleStop, ClipboardList, Copy, Ear, MessageCircleQuestion, Pause, Trash, Volume2, type LucideIcon } from 'lucide-react';
+import { Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Ear, MessageCircleQuestion, Pause, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Bubble, BubbleContent } from '../components/ui/bubble';
 import { Button } from '../components/ui/button';
+import { ButtonGroup, ButtonGroupSeparator } from '../components/ui/button-group';
 import { Card } from '../components/ui/card';
 import { Marker, MarkerContent } from '../components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '../components/ui/message';
+import { cn } from '../lib/utils';
 import { Spinner } from '../components/ui/spinner';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '../components/ui/message-scroller';
 import { activityLog, type ActivityEntry } from './activity-log';
@@ -78,16 +80,24 @@ function ActivityLogPanel() {
   };
   return <Card className="activity-log">
     <div className="activity-log-header">
-      <Button variant="secondary" className="activity-log-toggle" aria-expanded={open} aria-controls="activity-log-region" onClick={() => setOpen(value => !value)}><ClipboardList className="activity-log-icon" aria-hidden="true" />Activity log</Button>
+      <Button variant="ghost" size="sm" className="activity-log-toggle" aria-expanded={open} aria-controls="activity-log-region" onClick={() => setOpen(value => !value)}>
+        <ChevronDown className={cn('activity-log-chevron', open && 'activity-log-chevron-open')} aria-hidden="true" />
+        Activity log
+        {entries.length > 0 ? <Badge className="activity-log-count">{entries.length}</Badge> : null}
+      </Button>
       {open ? <div className="activity-log-actions">
         {notice ? <span className="activity-log-notice" role="status">{notice}</span> : null}
-        <Button variant="secondary" onClick={copyLog}><Copy className="activity-log-icon" aria-hidden="true" />Copy</Button>
-        <Button variant="secondary" onClick={() => { activityLog.clear(); setNotice(''); }}><Trash className="activity-log-icon" aria-hidden="true" />Clear</Button>
+        <ButtonGroup aria-label="Activity log actions">
+          <Button variant="outline" size="icon" className="size-8" title="Copy" aria-label="Copy entries" onClick={copyLog}><Copy className="activity-log-icon" aria-hidden="true" /></Button>
+          <ButtonGroupSeparator />
+          <Button variant="outline" size="icon" className="size-8" title="Clear" aria-label="Clear entries" onClick={() => { activityLog.clear(); setNotice(''); }}><Trash className="activity-log-icon" aria-hidden="true" /></Button>
+        </ButtonGroup>
       </div> : null}
     </div>
     {open ? <div id="activity-log-region" role="region" aria-label="Activity log entries" className="activity-log-region">
       {entries.length === 0 ? <p className="hint">No activity logged yet.</p> : <ul className="activity-log-list">
         {[...entries].reverse().map((entry, index) => <li key={`${entry.ts}-${index}`} className="activity-log-entry">
+          <time className="log-entry-time font-mono" dateTime={new Date(entry.ts).toISOString()}>{formatLogTime(entry.ts)}</time>
           <Badge className="log-level" variant={entry.level === 'error' ? 'destructive' : entry.level === 'warn' ? 'warning' : 'primary'}>{entry.level}</Badge>
           <span className="log-entry-source">{entry.source}</span>
           <span className="log-entry-message">{entry.message}{entry.detail ? ` — ${entry.detail}` : ''}</span>
@@ -97,3 +107,4 @@ function ActivityLogPanel() {
   </Card>;
 }
 function formatElapsed(seconds: number): string { const minutes = Math.floor(seconds / 60); return `${minutes}:${String(seconds % 60).padStart(2, '0')}`; }
+function formatLogTime(ts: number): string { const date = new Date(ts); return [date.getHours(), date.getMinutes(), date.getSeconds()].map(value => String(value).padStart(2, '0')).join(':'); }

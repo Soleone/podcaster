@@ -33,15 +33,21 @@
 .recording-row{display:flex;align-items:center;gap:.75rem}
 .recording-toggle{display:flex;align-items:center;gap:.5rem}
 .recording-status{font-variant-numeric:tabular-nums}
-.activity-log{margin-top:1.5rem}
-.activity-log-header{display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap}
-.activity-log-icon{width:1rem;height:1rem;flex:none}
+.activity-log{margin-top:1.5rem;overflow:hidden}
+.activity-log-header{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;padding:.4rem .5rem}
+.activity-log-toggle{gap:.45rem}
+.activity-log-chevron{width:1rem;height:1rem;flex:none;color:var(--muted-foreground);transition:transform .15s ease}
+.activity-log-chevron-open{transform:rotate(-180deg)}
+.activity-log-count{font-variant-numeric:tabular-nums}
+.activity-log-icon{width:.875rem;height:.875rem;flex:none}
 .activity-log-actions{display:flex;align-items:center;gap:.5rem}
-.activity-log-notice{color:var(--muted-foreground);font-size:.8rem}
-.activity-log-region{margin-top:.75rem;border-top:1px solid var(--border);padding-top:.75rem}
-.activity-log-list{list-style:none;margin:0;padding:0;max-height:16rem;overflow-y:auto;display:flex;flex-direction:column;gap:.35rem}
-.activity-log-entry{display:flex;align-items:baseline;gap:.5rem;font-size:.8rem;line-height:1.4;overflow-wrap:anywhere}
-.log-level{text-transform:capitalize}
-.log-entry-source{color:var(--muted-foreground);flex:none}
+.activity-log-notice{color:var(--muted-foreground);font-size:.75rem}
+.activity-log-region{border-top:1px solid var(--border);padding:.4rem .5rem .6rem}
+.activity-log-list{list-style:none;margin:0;padding:0;max-height:16rem;overflow-y:auto;display:flex;flex-direction:column}
+.activity-log-entry{display:grid;grid-template-columns:auto auto 4.75rem minmax(0,1fr);align-items:baseline;column-gap:.6rem;padding:.25rem .5rem;border-radius:.375rem;font-size:.75rem;line-height:1.35;overflow-wrap:anywhere}
+.activity-log-entry:hover{background:color-mix(in srgb,var(--muted) 50%,transparent)}
+.log-entry-time{color:var(--muted-foreground);font-size:.7rem;font-variant-numeric:tabular-nums}
+.log-level{text-transform:capitalize;justify-self:start}
+.log-entry-source{color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .log-entry-message{min-width:0}
 @media(max-width:36rem){.activity-log-actions{width:100%;justify-content:flex-end}}
