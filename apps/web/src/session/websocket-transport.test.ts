@@ -393,12 +393,13 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     const chunks: Array<{ playbackId: string; sampleOffset: number; samples: number }> = [];
     transport.onAudio(chunk => chunks.push({ playbackId: chunk.playbackId, sampleOffset: chunk.sampleOffset, samples: chunk.pcm16.length }));
     // Part 0 (stall): same responseId as part 1, new reasoning.started per part.
-    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0 }));
+    // The wire contract emits response.part_started BEFORE reasoning.started.
     emitText(socket, hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }));
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0 }));
     emitText(socket, hostEvent('tts.started', { responseId: responseA, playbackId: playbackA, sampleRate: 24_000, outputStreamId: 77, partIndex: 0 }));
     // Part 1 (body) starts while part 0 PCM is still streaming.
-    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 1 }));
     emitText(socket, hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 1, kind: 'body' }));
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 1 }));
     emitText(socket, hostEvent('tts.started', { responseId: responseA, playbackId: playbackB, sampleRate: 24_000, outputStreamId: 78, partIndex: 1 }));
     // Interleave binary frames from both streams; each must route to its own part.
     emitBinary(socket, 77, 0, 480);
@@ -416,6 +417,20 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
       { playbackId: playbackA, sampleOffset: 480, samples: 160 },
       { playbackId: playbackB, sampleOffset: 240, samples: 120 },
     ]);
+  });
+
+  it('accepts response.part_started as the first event of a brand-new response', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const seen: string[] = [];
+    transport.onEvent(event => { seen.push(event.type); });
+    // The host emits response.part_started before reasoning.started, so on a
+    // fresh transport latestResponseId is still undefined when it arrives; it
+    // must establish the response instead of failing the session.
+    emitText(socket, hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }));
+    emitText(socket, hostEvent('reasoning.started', { turnId: turnUuid, responseId: responseA, posture: 'riff', partIndex: 0 }));
+    expectNoProtocolFailure(socket);
+    expect(seen).toEqual(['response.part_started', 'reasoning.started']);
   });
 
   it('rejects a multipart tts.started that reuses an output stream id', async () => {

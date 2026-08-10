@@ -84,8 +84,20 @@ export class WebSocketSessionTransport implements SessionTransport {
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.delta did not match the established response.'); return; }
         } else if (hostEvent.type === 'reasoning.final') {
           if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.final did not match the established response.'); return; }
-        } else if (hostEvent.type === 'response.part_started' || hostEvent.type === 'response.part_final') {
-          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure(`${hostEvent.type} did not match the established response.`); return; }
+        } else if (hostEvent.type === 'response.part_started') {
+          const responseId = String(hostEvent.payload.responseId);
+          // A part_started may be the FIRST event of a new response (the host emits
+          // it before reasoning.started). If it belongs to a different response
+          // than the one currently established, the previous response was
+          // superseded before it terminalized and its output bindings are dead.
+          if (this.latestResponseId !== undefined && responseId !== this.latestResponseId) {
+            for (const binding of this.outputs.byStream.values()) binding.terminal = true;
+            if (this.outputs.single) this.outputs.single.terminal = true;
+          }
+          this.latestResponseId = responseId;
+        } else if (hostEvent.type === 'response.part_final') {
+          // A part_final must follow that part's reasoning.started/final, so keep strict matching.
+          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.part_final did not match the established response.'); return; }
         } else if (hostEvent.type === 'tts.started') {
           if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('tts.started did not match the established response identity.'); return; }
           const outputStreamId = typeof hostEvent.payload.outputStreamId === 'number' ? hostEvent.payload.outputStreamId : undefined;
