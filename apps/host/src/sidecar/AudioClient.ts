@@ -279,7 +279,7 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   pause(_responseId: string): void { /* browser is the audible pause authority */ }
-  resume(_responseId: string): void { /* browser is the audible resume authority */ }
+  resume(_responseId: string, _rewindMs?: number): void { /* browser is the audible resume authority */ }
   cancel(responseId: string, partIndex?: number): void {
     if (partIndex !== undefined) {
       const pending = this.pending.get(pendingKey(responseId, partIndex));

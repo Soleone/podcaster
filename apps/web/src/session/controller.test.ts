@@ -121,6 +121,15 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('passes the host-authorized rewind through a resume decision', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    await transport.emit(event('session', 0, 'interruption.decision', { turnId: 'turn', responseId: 'response', playbackId: 'playback', outputEpoch: 0, action: 'resume', intent: 'continue_previous', confidence: 'high', disposition: 'resume_requested', pausedSampleOffset: 0, rewindMs: 500 }));
+    expect(players[0]!.resume).toHaveBeenCalledWith(500);
+    writer.close();
+  });
+
   it('continues playback and explains an unanswered interruption prompt', async () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));

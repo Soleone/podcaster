@@ -42,7 +42,7 @@ class InstrumentedPlayback implements ControlledPlayback {
   setGeneratedSamples(samples: number): void { this.playback.setGeneratedSamples(samples); }
   append(offset: number, pcm16: Int16Array): void { this.playback.append(offset, pcm16); }
   async pause() { this.stats.playbackPauses++; return this.playback.pause(); }
-  async resume(): Promise<void> { this.stats.playbackResumes++; await this.playback.resume(); }
+  async resume(rewindMs?: number): Promise<void> { this.stats.playbackResumes++; await this.playback.resume(rewindMs); }
   stop(reason: PlaybackStopReason) { return this.playback.stop(reason); }
 }
 

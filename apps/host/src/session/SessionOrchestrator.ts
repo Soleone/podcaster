@@ -28,7 +28,9 @@ export interface SpeechOutputPort {
   begin(input: { sessionId: string; epoch: number; responseId: string; partIndex?: number; partId?: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): SpeechOutputStream;
   synthesize(input: { sessionId: string; epoch: number; responseId: string; partIndex?: number; partId?: string; text: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): Promise<SpeechSynthesisStart>;
   pause(responseId: string): void;
-  resume(responseId: string): void;
+  // The host's sidecar is not audible, but retaining the requested rewind on
+  // this control path keeps browser and host interruption decisions aligned.
+  resume(responseId: string, rewindMs?: number): void;
   cancel(responseId: string, partIndex?: number): void;
   release?(responseId: string, partIndex?: number): void;
 }
@@ -81,6 +83,7 @@ interface ProvisionalState {
   responseId: string;
   outputEpoch: number;
   echoRecovered: boolean;
+  pausedAtMs: number;
   pausedSampleOffset?: number;
   generatedSamples?: number;
   deciding?: AbortController;
@@ -648,7 +651,7 @@ export class SessionOrchestrator {
     active.phaseBeforeProvisional = this.phase;
     this.options.speech.pause(responseId);
     const ledger = active.playbackId ? this.playback.get(active.playbackId) : undefined;
-    const provisional: ProvisionalState = { responseId, outputEpoch: active.epoch, echoRecovered: false, cancelTimer: () => {}, ...(ledger ? { generatedSamples: ledger.generatedSamples } : {}) };
+    const provisional: ProvisionalState = { responseId, outputEpoch: active.epoch, echoRecovered: false, pausedAtMs: this.now(), cancelTimer: () => {}, ...(ledger ? { generatedSamples: ledger.generatedSamples } : {}) };
     this.provisional = provisional;
     this.phase = "echo_provisional";
     this.emit("barge_in.provisional", { responseId, outputEpoch: active.epoch, resumable: true });
@@ -825,6 +828,7 @@ export class SessionOrchestrator {
     const redirection = !correction && isBareRedirection(turn.text);
     const accept = correction || redirection || (decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text));
     const disposition = accept ? "accept_takeover" : decision.intent === "continue_previous" ? "resume_requested" : hasLexicalContent(turn.text) ? "resume_fragment" : "resume_noise";
+    const rewindMs = accept ? 0 : this.rewindMsFor(provisional);
     this.emit("interruption.decision", {
       turnId: turn.turnId,
       responseId: provisional.responseId,
@@ -835,10 +839,11 @@ export class SessionOrchestrator {
       confidence: decision.confidence,
       disposition,
       pausedSampleOffset: provisional.pausedSampleOffset,
+      ...(rewindMs > 0 ? { rewindMs } : {}),
     });
     if (!accept) {
       provisional.echoRecovered = true;
-      this.resolveProvisional("rejected");
+      this.resolveProvisional("rejected", rewindMs);
       return false;
     }
     provisional.cancelTimer();
@@ -858,7 +863,7 @@ export class SessionOrchestrator {
     return true;
   }
 
-  private resolveProvisional(type: "rejected" | "timed_out"): boolean {
+  private resolveProvisional(type: "rejected" | "timed_out", requestedRewindMs?: number): boolean {
     const provisional = this.provisional;
     if (!provisional || this.phase === "stopped") return false;
     provisional.cancelTimer();
@@ -878,18 +883,22 @@ export class SessionOrchestrator {
       && provisional.pausedSampleOffset !== undefined
       && (provisional.echoRecovered || type === "timed_out"),
     );
+    const rewindMs = safe ? requestedRewindMs ?? this.rewindMsFor(provisional) : 0;
     if (safe && active) {
-      this.options.speech.resume(active.responseId);
+      this.options.speech.resume(active.responseId, rewindMs);
       this.phase = "playing";
     } else {
       this.advanceEpochAndCancel();
       this.phase = "listening";
     }
-    this.emit(`barge_in.${type}`, { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: safe });
+    this.emit(`barge_in.${type}`, { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: safe, ...(rewindMs > 0 ? { rewindMs } : {}) });
     this.emitState();
     return true;
   }
 
+  private rewindMsFor(provisional: ProvisionalState): number {
+    return this.now() - provisional.pausedAtMs > 1_000 ? 500 : 0;
+  }
   private finalizeAcceptedTakeover(pending: AcceptancePendingTerminal): void {
     if (this.acceptancePendingTerminal !== pending || pending.responseId !== this.active?.responseId) return;
     pending.cancelTimer();

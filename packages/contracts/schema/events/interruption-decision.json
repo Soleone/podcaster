@@ -16,6 +16,7 @@
         "confidence": { "enum": ["low", "medium", "high"] },
         "disposition": { "enum": ["resume_noise", "resume_fragment", "resume_requested", "accept_takeover"] },
         "pausedSampleOffset": { "type": "integer", "minimum": 0 },
+        "rewindMs": { "type": "integer", "minimum": 0, "maximum": 1000 },
         "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
         "partId": { "type": "string", "format": "uuid" }
       }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }

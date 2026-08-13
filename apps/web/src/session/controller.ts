@@ -9,7 +9,7 @@ export interface ControlledPlayback {
   setGeneratedSamples(samples: number): void;
   append(offset: number, pcm16: Int16Array): void;
   pause(): Promise<PlaybackProgress>;
-  resume(): Promise<void>;
+  resume(rewindMs?: number): Promise<void>;
   stop(reason: PlaybackStopReason): Promise<PlaybackTerminal>;
 }
 export interface SessionControllerOptions {
@@ -22,6 +22,11 @@ export interface SessionControllerOptions {
 }
 interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean; partIndex?: number; pendingAudio?: Array<{ sampleOffset: number; pcm16: Int16Array }> }
 interface ResponsePlaybackGroup { responseId: string; parts: ActivePlayback[]; activeIndex: number; terminal: boolean }
+function resumeRewindMs(payload: Record<string, unknown>): number {
+  const rewindMs = payload.rewindMs;
+  return Number.isSafeInteger(rewindMs) && (rewindMs as number) > 0 ? rewindMs as number : 0;
+}
+
 interface Provisional {
   responseId: string;
   outputEpoch: number;
@@ -176,8 +181,9 @@ export class SessionController {
       const active = this.active;
       if (!provisional || !active || provisional.pausedSampleOffset === undefined || event.payload.pausedSampleOffset !== provisional.pausedSampleOffset) return;
       if (event.payload.action === 'resume') {
+        const rewindMs = resumeRewindMs(event.payload);
         this.clearProvisional();
-        await active.player.resume();
+        await active.player.resume(rewindMs);
       } else if (event.payload.action === 'accept') {
         provisional.confirmed = true;
         await this.terminalize('cancelled');
@@ -206,8 +212,9 @@ export class SessionController {
         stopped: this.stopped,
         confirmed: provisional.confirmed,
       });
+      const rewindMs = resumeRewindMs(event.payload);
       this.clearProvisional();
-      if (safe) await active.player.resume();
+      if (safe) await active.player.resume(rewindMs);
       else await this.terminalize('cancelled');
     }
   }

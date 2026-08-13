@@ -16,9 +16,13 @@ class FakeAudioContext {
   currentTime = 0;
   destination = {} as AudioDestinationNode;
   sources: FakeSource[] = [];
+  bufferLengths: number[] = [];
   gain = { gain: { value: 1 }, connect: vi.fn() };
   createGain = vi.fn(() => this.gain as unknown as GainNode);
-  createBuffer = vi.fn((_channels: number, length: number) => ({ getChannelData: () => new Float32Array(length) }) as unknown as AudioBuffer);
+  createBuffer = vi.fn((_channels: number, length: number) => {
+    this.bufferLengths.push(length);
+    return { getChannelData: () => new Float32Array(length) } as unknown as AudioBuffer;
+  });
   createBufferSource = vi.fn(() => {
     const source = new FakeSource();
     this.sources.push(source);
@@ -55,6 +59,39 @@ describe('BrowserPlayback', () => {
     const receipt = await playback.stop('cancelled');
     expect(receipt).toEqual({ playbackId: 'playback', cancelledEpoch: 4, finalPlayedSampleOffset: 960, reason: 'cancelled' });
     expect(terminal).toHaveBeenCalledOnce();
+  });
+
+  it('rebuilds the scheduled chain 500ms before a long-pause resume without rewinding ledger progress', async () => {
+    const { context, playback, progress } = setup();
+    playback.setGeneratedSamples(48_000);
+    playback.append(0, new Int16Array(48_000));
+    context.currentTime = 0.75;
+    expect(await playback.pause()).toMatchObject({ playedSampleOffset: 18_000 });
+
+    await playback.resume(500);
+
+    expect(context.sources).toHaveLength(2);
+    expect(context.sources[0]!.stop).toHaveBeenCalledOnce();
+    expect(context.sources[1]!.start).toHaveBeenCalledWith(0.75);
+    expect(context.bufferLengths).toEqual([48_000, 42_000]);
+    // Replayed samples are intentionally not reported as a backward seek.
+    expect(progress).toHaveBeenCalledTimes(1);
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ playedSampleOffset: 18_000 }));
+    context.sources[1]!.finish();
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ playedSampleOffset: 48_000 }));
+  });
+
+  it('resumes a short pause in place', async () => {
+    const { context, playback } = setup();
+    playback.setGeneratedSamples(48_000);
+    playback.append(0, new Int16Array(48_000));
+    context.currentTime = 0.75;
+    await playback.pause();
+
+    await playback.resume();
+
+    expect(context.sources).toHaveLength(1);
+    expect(context.sources[0]!.stop).not.toHaveBeenCalled();
   });
 
   it('reports the streamed generated prefix before the final extent is declared', async () => {

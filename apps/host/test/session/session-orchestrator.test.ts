@@ -367,6 +367,44 @@ describe("safe session orchestrator", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "barge_in.rejected", payload: expect.objectContaining({ resumable: true }) }));
   });
 
+  it("rewinds only resumes that follow a pause longer than one second", async () => {
+    let now = 0;
+    const { session, events } = setup({ now: () => now });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
+    now = 1_000;
+    session.setEchoRecovered(true);
+    expect(session.rejectBargeIn()).toBe(true);
+    expect(events.filter(event => event.type === "barge_in.rejected").at(-1)!.payload.rewindMs).toBeUndefined();
+
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
+    now = 2_001;
+    session.setEchoRecovered(true);
+    expect(session.rejectBargeIn()).toBe(true);
+    expect(events.filter(event => event.type === "barge_in.rejected").at(-1)!.payload).toMatchObject({ resumable: true, rewindMs: 500 });
+  });
+
+  it("uses one rewind directive for an interruption decision and its resolution", async () => {
+    let now = 0;
+    const { session, events } = setup({ now: () => now, interruptionClassifier: { decide: async () => ({ action: "resume", intent: "non_substantive", confidence: "high", reason: "Noise." }) } });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
+    now = 1_001;
+
+    await session.handleStableFinal(turn(1, "um"));
+
+    expect(events.find(event => event.type === "interruption.decision")!.payload.rewindMs).toBe(500);
+    expect(events.find(event => event.type === "barge_in.rejected")!.payload.rewindMs).toBe(500);
+  });
+
   it("defaults a low-confidence takeover decision to resuming the same epoch", async () => {
     const { session, speech, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "accept", intent: "new_request", confidence: "low", reason: "Ambiguous." }) } });
     await session.handleStableFinal(turn(0));

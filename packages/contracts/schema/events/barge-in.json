@@ -10,6 +10,7 @@
         "responseId": { "type": "string", "format": "uuid" },
         "outputEpoch": { "type": "integer", "minimum": 0 },
         "resumable": { "type": "boolean" },
+        "rewindMs": { "type": "integer", "minimum": 0, "maximum": 1000 },
         "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
         "partId": { "type": "string", "format": "uuid" },
         "playbackId": { "type": "string", "format": "uuid" }

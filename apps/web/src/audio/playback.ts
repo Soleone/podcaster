@@ -19,12 +19,23 @@ interface ScheduledSource {
   endOffset: number;
 }
 
+interface AudioChunk {
+  sampleOffset: number;
+  pcm16: Int16Array;
+}
+
+const REWIND_HISTORY_MS = 1_000;
+
 export class BrowserPlayback {
   private readonly ledger: PlaybackLedger;
   private readonly context: AudioContext;
   private readonly gain: GainNode;
   private readonly scheduled: ScheduledSource[] = [];
   private readonly pending = new Map<number, Int16Array>();
+  // Scheduled PCM is retained only for a small rolling playback window so a
+  // long barge-in can replay the listener's recent context without retaining
+  // a complete response in memory.
+  private readonly recentAudio: AudioChunk[] = [];
   private nextStartTime = 0;
   private scheduledUntil = 0;
   private stopped = false;
@@ -68,6 +79,7 @@ export class BrowserPlayback {
       if (!pcm16) return;
       const sampleOffset = this.scheduledUntil;
       this.pending.delete(sampleOffset);
+      this.rememberAudio(sampleOffset, pcm16);
       const buffer = this.context.createBuffer(1, pcm16.length, this.declaredSampleRate);
       const output = buffer.getChannelData(0);
       for (let index = 0; index < pcm16.length; index++) output[index] = (pcm16[index] ?? 0) / 0x8000;
@@ -92,7 +104,10 @@ export class BrowserPlayback {
 
   private reportPlayed(offset: number): void {
     const progress = this.ledger.markPlayed(offset);
-    if (progress) void this.sink.progress(progress);
+    if (progress) {
+      this.trimRecentAudio(progress.playedSampleOffset);
+      void this.sink.progress(progress);
+    }
   }
 
   private accountCurrentTime(): void {
@@ -121,11 +136,78 @@ export class BrowserPlayback {
     return this.ledger.progress();
   }
 
-  async resume(): Promise<void> {
+  async resume(rewindMs = 0): Promise<void> {
     if (!this.stopped) {
+      this.rewind(Math.floor(this.declaredSampleRate * Math.max(0, rewindMs) / 1_000));
       this.gain.gain.value = 1;
       await this.context.resume();
     }
+  }
+
+  private rememberAudio(sampleOffset: number, pcm16: Int16Array): void {
+    const endOffset = sampleOffset + pcm16.length;
+    if (this.recentAudio.some(chunk => chunk.sampleOffset <= sampleOffset && chunk.sampleOffset + chunk.pcm16.length >= endOffset)) return;
+    this.recentAudio.push({ sampleOffset, pcm16: pcm16.slice() });
+  }
+
+  private trimRecentAudio(playedSampleOffset: number): void {
+    const earliest = Math.max(0, playedSampleOffset - Math.ceil(this.declaredSampleRate * REWIND_HISTORY_MS / 1_000));
+    while (this.recentAudio.length > 0) {
+      const chunk = this.recentAudio[0]!;
+      const endOffset = chunk.sampleOffset + chunk.pcm16.length;
+      if (endOffset <= earliest) {
+        this.recentAudio.shift();
+        continue;
+      }
+      if (chunk.sampleOffset < earliest) {
+        this.recentAudio[0] = { sampleOffset: earliest, pcm16: chunk.pcm16.slice(earliest - chunk.sampleOffset) };
+      }
+      return;
+    }
+  }
+
+  private rewind(rewindSamples: number): void {
+    if (!Number.isSafeInteger(rewindSamples) || rewindSamples <= 0) return;
+    this.accountCurrentTime();
+    const replayEnd = this.scheduledUntil;
+    const replayStart = Math.max(0, this.ledger.deliveredSamples() - rewindSamples);
+    if (replayStart >= replayEnd) return;
+
+    const replay = this.replayAudio(replayStart, replayEnd);
+    // A bounded history can be unavailable after an unusually delayed resume.
+    // Keep the already-scheduled chain intact rather than risking a gap.
+    if (!replay) return;
+
+    const pending = [...this.pending.entries()];
+    for (const { source } of this.scheduled.splice(0)) {
+      source.onended = null;
+      try { source.stop(); } catch { /* already stopped */ }
+    }
+    this.pending.clear();
+    this.scheduledUntil = replayStart;
+    this.nextStartTime = this.context.currentTime;
+    for (const chunk of replay) this.pending.set(chunk.sampleOffset, chunk.pcm16);
+    for (const [sampleOffset, pcm16] of pending) this.pending.set(sampleOffset, pcm16);
+    this.drainContiguous();
+  }
+
+  private replayAudio(startOffset: number, endOffset: number): AudioChunk[] | undefined {
+    const replay: AudioChunk[] = [];
+    let nextOffset = startOffset;
+    for (const chunk of this.recentAudio) {
+      const chunkEnd = chunk.sampleOffset + chunk.pcm16.length;
+      if (chunkEnd <= nextOffset) continue;
+      if (chunk.sampleOffset > nextOffset) return;
+      const takeStart = nextOffset - chunk.sampleOffset;
+      const takeEnd = Math.min(chunk.pcm16.length, endOffset - chunk.sampleOffset);
+      if (takeEnd > takeStart) {
+        const pcm16 = chunk.pcm16.slice(takeStart, takeEnd);
+        replay.push({ sampleOffset: nextOffset, pcm16 });
+        nextOffset += pcm16.length;
+      }
+      if (nextOffset === endOffset) return replay;
+    }
+    return;
   }
 
   async stop(reason: PlaybackStopReason): Promise<PlaybackTerminal> {
