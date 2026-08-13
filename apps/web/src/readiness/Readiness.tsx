@@ -6,10 +6,13 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
+import { SettingsButton } from '../settings/SettingsDialog';
 import './readiness.css';
 
 type Capability = { id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string };
-type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: string };
+type VoiceInfo = { id: string; label: string };
+type VoiceCatalog = { catalogId: string; backendId: string; modelId: string; runtimeConfigId: string; revision: string; defaultVoiceId: string; voices: VoiceInfo[] };
+type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: string; voiceCatalog?: VoiceCatalog };
 
 const DISCLOSURE_KEY = 'podcaster.disclosure';
 const DISCLOSURE_VERSION = 'voice-cloud-boundary-v1';
@@ -18,7 +21,7 @@ const capabilityIcons: Record<string, LucideIcon> = { voice_input: Mic, voice_ou
 const capabilityBadge: Record<Capability['state'], 'success' | 'warning' | 'destructive'> = { ready: 'success', needs_action: 'warning', unavailable: 'destructive' };
 const capabilityBadgeLabel: Record<Capability['state'], string> = { ready: 'Ready', needs_action: 'Needs attention', unavailable: 'Unavailable' };
 
-export function Readiness(props: { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void }) {
+export function Readiness(props: { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onOpenSettings: () => void }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const [capability, setCapability] = useState<string>();
   const [snapshot, setSnapshot] = useState<Snapshot>();
@@ -52,7 +55,9 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
         });
         if (response.ok && !cancelled) {
           lastReportedMic.current = microphoneReady;
-          setSnapshot(await response.json() as Snapshot);
+          const next = await response.json() as Snapshot;
+          setSnapshot(next);
+          if (next.voiceCatalog) props.onCatalog?.(next.voiceCatalog);
         }
       } catch { /* the visible snapshot remains authoritative until the next retry */ }
     };
@@ -79,7 +84,11 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
       const granted = await microphoneGrantedStatus();
       const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-podcaster-capability': boot.capability }, body: JSON.stringify({ microphoneGranted: granted }) });
       if (!response.ok) throw new Error('Readiness check failed. Retry from this page.');
-      setCapability(boot.capability); setSnapshot(await response.json() as Snapshot); setAcknowledged(true);
+      setCapability(boot.capability);
+      const next = await response.json() as Snapshot;
+      setSnapshot(next);
+      if (next.voiceCatalog) props.onCatalog?.(next.voiceCatalog);
+      setAcknowledged(true);
       if (remember) {
         try { localStorage.setItem(DISCLOSURE_KEY, DISCLOSURE_VERSION); } catch { /* session can continue without persistence */ }
       }
@@ -113,8 +122,11 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
 
   return <main className="readiness-shell">
     <header className="readiness-header">
-      <p className="eyebrow">Get started</p>
-      <h1 className="readiness-title">Set up your thinking companion</h1>
+      <div>
+        <p className="eyebrow">Get started</p>
+        <h1 className="readiness-title">Set up your thinking companion</h1>
+      </div>
+      {acknowledged ? <SettingsButton onClick={props.onOpenSettings} /> : null}
     </header>
     {!acknowledged ? <Card className="readiness-card" aria-labelledby="privacy-title">
       <div className="readiness-card-head">
@@ -148,7 +160,7 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
 
 function PrivacyStatement() {
   return <>
-    <p className="readiness-copy"><strong>Speech recognition and voice playback run locally.</strong> For a response, the current transcript, bounded recent conversation context, your validated persona interpretation, and the selected response posture are sent through Pi/Codex to its configured cloud model provider. Raw audio and your full local history are not sent.</p>
+    <p className="readiness-copy"><strong>Speech recognition and voice playback run locally.</strong> For a response, the current transcript, bounded recent conversation context, your saved persona (sent as system instructions to the configured cloud model), and the selected response posture are sent through Pi to its configured cloud model provider. Raw audio and your full local history are not sent. Voice selection always stays on this device.</p>
     <p className="readiness-copy">This app does not request an ordinary API key and has no silent metered-provider fallback. The configured provider—not this app—controls its handling, retention, and model-improvement use under your account and settings.</p>
     <p className="readiness-links"><a href="https://help.openai.com/en/articles/11369540-codex-in-chatgpt-faq" rel="noreferrer">Codex data handling</a> · <a href="https://help.openai.com/en/articles/5722486-data-controls-faq" rel="noreferrer">OpenAI data controls</a> · <a href="https://openai.com/policies/privacy-policy/" rel="noreferrer">OpenAI privacy policy</a></p>
   </>;

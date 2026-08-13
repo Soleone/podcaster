@@ -1,5 +1,6 @@
 .session-shell{width:min(56rem,calc(100% - 2rem));margin:2rem auto}
 .session-header{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.session-header-actions{display:flex;align-items:center;gap:.5rem}
 .session-header .eyebrow{margin:0}
 .status-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem 1rem;padding:.4rem .65rem;margin:1rem 0;box-shadow:0 .35rem 1.2rem color-mix(in srgb,var(--shadow-color) 5%,transparent)}
 .status-label,.status-actions{display:flex;align-items:center;gap:.65rem}

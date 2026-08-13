@@ -140,7 +140,7 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.socket?.close(1000, 'session ended');
     this.socket = undefined;
   }
-  startSession(sessionSeed: string, reasoningMode: 'full' | 'transcript_only'): void { this.sendCommand('session.start', { sessionSeed, reasoningMode }); }
+  startSession(input: { sessionSeed: string; reasoningMode: 'full' | 'transcript_only'; settings: { version: 1; persona: string; voice: { catalogId: string; voiceId: string } } }): void { this.sendCommand('session.start', { sessionSeed: input.sessionSeed, reasoningMode: input.reasoningMode, settings: input.settings }); }
   startAudio(streamId: number): void { this.sendCommand('audio.start', { streamId, sampleRate: 16_000, channels: 1, frameSamples: 320 }); }
   stopAudio(streamId: number): void { this.sendCommand('audio.stop', { streamId }); }
   acknowledgePersisted(event: StableEvent): void {

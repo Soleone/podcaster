@@ -21,9 +21,13 @@ import { RecordingStore, type RecordingItemSummary } from './storage/recording-s
 import { StableTurnWriter } from './storage/stable-turn-writer';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
+import { DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { SettingsStore } from './settings/settings-store';
+import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
+import { SettingsDialog } from './settings/SettingsDialog';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
-const PERSONA_DIGEST = 'a'.repeat(64);
+type SessionStartSettings = { version: 1; persona: string; voice: { catalogId: string; voiceId: string } };
 
 interface FakeRuntimeStats {
   captureStarts: number;
@@ -77,8 +81,15 @@ export function App() {
   recordingSessionRef.current = sessionId;
   const recordingGenRef = useRef(0);
   const lastCheapRef = useRef<{ enabled: boolean; count: number } | null>(null);
+  const settingsStoreRef = useRef<SettingsStore | undefined>(undefined);
+  const voiceCatalogRef = useRef<VoiceCatalog | undefined>(undefined);
+  const settingsFrozenRef = useRef<SettingsModel | undefined>(undefined);
+  const [settingsModel, setSettingsModel] = useState<SettingsModel>(() => defaultSettingsModel(undefined));
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSaveError, setSettingsSaveError] = useState<string | undefined>(undefined);
 
-  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string) => {
+  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, settings: SessionStartSettings) => {
     const transport = new FakeSessionTransport();
     await transport.connect(cap);
     recordingStoreRef.current?.close();
@@ -136,7 +147,7 @@ export function App() {
     setSessionId(id);
   }, []);
 
-  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only') => {
+  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings) => {
     recordingStoreRef.current?.close();
     const recordingStore = await RecordingStore.open();
     recordingStoreRef.current = recordingStore;
@@ -167,7 +178,7 @@ export function App() {
     unsubscribeRef.current = controller.subscribe(setView);
     controllerRef.current = controller;
     transportRef.current = transport;
-    await transport.startSession(seed, reasoningMode);
+    await transport.startSession({ sessionSeed: seed, reasoningMode, settings });
     const random = new Uint32Array(1); crypto.getRandomValues(random);
     const streamId = random[0] ?? 0;
     captureStreamIdRef.current = streamId;
@@ -204,7 +215,7 @@ export function App() {
         conversationItems: conversationFromStoredTurns(turns),
       };
       startedAt.current = new Date(active.startedAt).getTime();
-      await composeFakeSession(opened, active.sessionId, restored, 'fake-recovered');
+      await composeFakeSession(opened, active.sessionId, restored, 'fake-recovered', { version: 1, persona: DEFAULT_AGENT_PERSONA, voice: { catalogId: '', voiceId: '' } });
     });
     return () => { cancelled = true; };
   }, [composeFakeSession]);
@@ -238,13 +249,17 @@ export function App() {
     writerRef.current = opened;
     const id = uuidV7();
     const seed = uuidV7();
-    const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest: PERSONA_DIGEST });
+    const frozen: SettingsModel = { persona: settingsModel.persona, voice: { catalogId: settingsModel.voice.catalogId, voiceId: settingsModel.voice.voiceId } };
+    settingsFrozenRef.current = frozen;
+    const settings: SessionStartSettings = { version: 1, persona: frozen.persona, voice: { catalogId: frozen.voice.catalogId, voiceId: frozen.voice.voiceId } };
+    const personaDigest = settingsDigest(settings);
+    const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
     startedAt.current = Date.now();
     activityLog.append({ level: 'info', source: 'app', message: `session started (${cap})` });
     const initial = { ...initialSessionState, dominant: 'listening' as const, announcement: 'Listening' };
-    if (fakeServices) await composeFakeSession(opened, id, initial, cap);
-    else await composeRealSession(opened, id, initial, cap, seed, reasoningMode);
+    if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
+    else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
   }
 
   async function stop() {
@@ -326,6 +341,41 @@ export function App() {
     if (current) await fetchRecordingSummaries(current);
   }, [fetchRecordingSummaries]);
 
+  const onCatalog = useCallback((catalog: VoiceCatalog) => {
+    voiceCatalogRef.current = catalog;
+    setSettingsModel(prev => applyReconciled(prev.persona, reconcileVoice(prev.voice, catalog)));
+  }, []);
+
+  const saveSettings = useCallback(async (persona: string, voice: VoicePreference) => {
+    setSettingsSaving(true);
+    setSettingsSaveError(undefined);
+    try {
+      const store = settingsStoreRef.current ?? await SettingsStore.open();
+      settingsStoreRef.current = store;
+      const ok = await store.save({ version: 1, persona, voice });
+      if (!ok) throw new Error('Settings could not be saved on this device.');
+      setSettingsModel(applyReconciled(persona, { voice }));
+      setSettingsOpen(false);
+    } catch (error) {
+      setSettingsSaveError(error instanceof Error ? error.message : 'Settings could not be saved.');
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void SettingsStore.open().then(async store => {
+      settingsStoreRef.current = store;
+      const stored = await store.load();
+      if (cancelled) return;
+      const catalog = voiceCatalogRef.current;
+      const reconciled = reconcileVoice(stored?.voice, catalog);
+      setSettingsModel(applyReconciled(stored?.persona ?? DEFAULT_AGENT_PERSONA, reconciled));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   const deleteRecording = useCallback(async () => {
     const store = recordingStoreRef.current;
     const current = recordingSessionRef.current;
@@ -352,16 +402,22 @@ export function App() {
     return true;
   }, [fetchRecordingSummaries]);
 
-  if (!view) return <Readiness sessionAvailable={fakeServices} onStart={start} />;
+  if (!view) return <>
+    <Readiness sessionAvailable={fakeServices} onStart={start} onCatalog={onCatalog} onOpenSettings={() => setSettingsOpen(true)} />
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} />
+  </>;
   return <div className="session-layout">
     <SessionScreen
       state={view}
       elapsedSeconds={elapsed}
       onStop={() => void stop()}
       onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
+      onOpenSettings={() => setSettingsOpen(true)}
+      settingsOpen={settingsOpen}
       recording={recordingView}
       onToggleBubbleTrim={toggleBubbleTrim}
     />
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} />
     {sessionId ? <RecordingControls sessionId={sessionId} buildExport={buildExport} recording={recordingView} onToggleRecording={toggleRecording} onDelete={deleteRecording} /> : null}
   </div>;
 }

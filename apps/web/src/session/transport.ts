@@ -2,10 +2,15 @@ import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledge
 import type { StableEvent } from '../storage/stable-turn-writer';
 
 export interface OutputAudioChunk { playbackId: string; sequence: number; sampleOffset: number; pcm16: Int16Array }
+export interface SessionStartRequest {
+  sessionSeed: string;
+  reasoningMode: 'full' | 'transcript_only';
+  settings: { version: 1; persona: string; voice: { catalogId: string; voiceId: string } };
+}
 export interface SessionTransport {
   connect(capability: string): Promise<void>;
   disconnect(): void;
-  startSession(sessionSeed: string, reasoningMode: 'full' | 'transcript_only'): void | Promise<void>;
+  startSession(input: SessionStartRequest): void | Promise<void>;
   startAudio(streamId: number): void | Promise<void>;
   stopAudio(streamId: number): void | Promise<void>;
   acknowledgePersisted(event: StableEvent): void | Promise<void>;

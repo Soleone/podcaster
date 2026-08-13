@@ -15,6 +15,7 @@ import { MessageScroller, MessageScrollerButton, MessageScrollerContent, Message
 import { activityLog, type ActivityEntry } from './activity-log';
 import type { RecordingSessionViewState, RecordingTrimTargetId } from '../recording/trim-state';
 import type { SessionViewState } from './state';
+import { SettingsButton } from '../settings/SettingsDialog';
 import './session.css';
 
 const headings: Record<SessionViewState['dominant'], string> = {
@@ -24,7 +25,7 @@ const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> =
   idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean> }) {
+export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; onOpenSettings: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean> }) {
   const [trimAnnouncement, setTrimAnnouncement] = useState('');
   const handleTrim = useCallback(async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
     const ok = await props.onToggleBubbleTrim(targetId, trimmed);
@@ -35,11 +36,13 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
   }, [props.onToggleBubbleTrim]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
+      // An open settings dialog consumes Escape; it must not also cancel assistant speech.
+      if (props.settingsOpen) return;
       if (event.key === 'Escape' && (props.state.dominant === 'reasoning' || props.state.dominant === 'speaking')) { event.preventDefault(); props.onCancelAssistant(); }
     };
     document.addEventListener('keydown', keydown);
     return () => document.removeEventListener('keydown', keydown);
-  }, [props.onCancelAssistant, props.state.dominant]);
+  }, [props.onCancelAssistant, props.state.dominant, props.settingsOpen]);
 
   const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking';
   // Keep the "typing" shimmer only until the first reasoning preview arrives; the
@@ -48,7 +51,7 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
   const showAssistantActivity = props.state.dominant === 'speaking' || (props.state.dominant === 'reasoning' && !hasAssistantText);
   const StateIcon = stateIcons[props.state.dominant];
   return <main className="session-shell">
-    <header className="session-header"><p className="eyebrow">Active voice session</p><Button variant="destructive" className="max-sm:w-full" onClick={props.onStop}>Stop session</Button></header>
+    <header className="session-header"><p className="eyebrow">Active voice session</p><div className="session-header-actions"><SettingsButton onClick={props.onOpenSettings} title="Settings · applies next session" /><Button variant="destructive" className="max-sm:w-full" onClick={props.onStop}>Stop session</Button></div></header>
     <Card className={`status-bar state-${props.state.dominant}`}>
       <div className="status-label">{StateIcon ? <StateIcon className="state-icon" aria-hidden="true" /> : <Spinner className="state-icon" />}<h1 id="session-status-heading">{headings[props.state.dominant]}</h1></div>
       <div className="status-actions"><Badge className="elapsed-badge" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>{assistantActive ? <Button variant="secondary" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}</div>

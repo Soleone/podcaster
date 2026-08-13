@@ -3,7 +3,7 @@
 body{margin:0}
 
 .readiness-shell{width:min(46rem,calc(100% - 2rem));margin:3rem auto}
-.readiness-header{margin:0 0 1.5rem}
+.readiness-header{margin:0 0 1.5rem;display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
 .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-weight:700;color:var(--muted-foreground);margin:0}
 .readiness-title{font-size:clamp(1.5rem,4vw,2rem);font-weight:700;line-height:1.15;letter-spacing:-.01em;margin:.2rem 0 0}
 
