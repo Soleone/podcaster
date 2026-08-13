@@ -8,24 +8,63 @@ test.afterAll(async () => { await stopDevServer(server); });
 const STREAM = '018f1f32-7abf-7def-8abc-0123456789ab';
 const UTTERANCE = '018f1f32-7ac0-7def-8abc-0123456789ab';
 
-test('records a turn, exports an MP3 download, and deletes the recording', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
-  const toggle = page.getByLabel('Record this session');
-  await toggle.check();
-  await expect(page.getByLabel('Recording status: 0 items')).toBeVisible();
-
+async function recordUserTurn(page: import('@playwright/test').Page): Promise<void> {
   await emit(page, 'vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 });
   // Tap one more capture frame after the VAD relay opened the slice.
   await page.evaluate(() => window.__podcasterTest!.capture());
   await emit(page, 'vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 1 });
   await emit(page, 'transcript.final', { turnId: UTTERANCE, text: 'Recorded words', endpointComplete: true });
-  await expect(page.getByLabel('Recording status: 1 item')).toBeVisible();
+}
 
+test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+  const toggle = page.getByLabel('Record this session');
+  await toggle.click();
+  await expect(page.getByLabel('Recording status: 0 items')).toBeVisible();
+
+  await recordUserTurn(page);
+  await expect(page.getByLabel('Recording status: 1 of 1 included')).toBeVisible();
+
+  // The persisted user bubble exposes a trim control.
+  const remove = page.getByRole('button', { name: 'Remove your message from recording' });
+  await expect(remove).toBeVisible();
+
+  // Remove the bubble from the recording.
+  await remove.click();
+  await expect(page.getByRole('button', { name: 'Undo removal of your message' })).toBeVisible();
+  // The bubble stays in the transcript.
+  await expect(page.getByText('Recorded words')).toBeVisible();
+  // Trimmed presentation: state text, dimmed/line-through styling, data attribute.
+  await expect(page.getByText('Not included in recording')).toBeVisible();
+  const trimmedBubble = page.locator('.conversation-bubble.user-bubble.trimmed');
+  await expect(trimmedBubble).toHaveAttribute('data-trimmed', 'true');
+  // It was the only included item, so Export is disabled; Delete stays enabled.
+  await expect(page.getByRole('button', { name: 'Export' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  await expect(page.getByLabel('Recording status: 0 of 1 included')).toBeVisible();
+
+  // Reload the active fake session: trimmed presentation and Undo are restored
+  // from IndexedDB before actions are exposed.
+  await page.reload();
+  await page.waitForFunction(() => Boolean(window.__podcasterTest));
+  await expect(page.getByRole('button', { name: 'Undo removal of your message' })).toBeVisible();
+  await expect(page.getByText('Not included in recording')).toBeVisible();
+  await expect(page.locator('.conversation-bubble.user-bubble.trimmed')).toHaveAttribute('data-trimmed', 'true');
+  await expect(page.getByLabel('Recording status: 0 of 1 included')).toBeVisible();
+
+  // Undo restores the bubble and re-enables export.
+  await page.getByRole('button', { name: 'Undo removal of your message' }).click();
+  await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible();
+  await expect(page.getByLabel('Recording status: 1 of 1 included')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export' })).toBeEnabled();
+
+  // Export an MP3 download.
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^podcaster-[0-9a-f]{8}-\d{4}-\d{2}-\d{2}\.mp3$/);
 
+  // Whole-recording delete stays available even after all this.
   await page.getByRole('button', { name: 'Delete' }).click();
   await expect(page.getByLabel('Recording status: 0 items')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeDisabled();

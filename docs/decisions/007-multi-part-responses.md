@@ -82,7 +82,7 @@ The response, not the individual part, owns pause/resume/takeover.
 
 Every TTS part produces one `StoredRecordingItem` with `role: "agent"`, the parent `responseId`, its own `playbackId`, and nullable `partIndex/partId`. Part 0 is a separate recording item. Pause/resume updates the same item. Trim, delete, and export operate on the item boundary, so a user can trim/export one part without rewriting adjacent audio.
 
-IndexedDB moves to version **4** and adds `responseParts`, keyed by `sessionId:responseId:partIndex`, with indexes on `sessionId`, `turnId`, `responseId`, `playbackId`, and `partIndex`. It stores part kind, text, playback accounting, and terminal state. `StoredTurn.responseId` remains the parent; for multipart responses its scalar `assistantText` may be a materialized ordered join for compatibility, while scalar `playbackId` is null. `responseParts` is authoritative. Existing version-3 rows require no data rewrite and are read as legacy single-part responses.
+IndexedDB moves to version **5** and adds `responseParts`, keyed by `sessionId:responseId:partIndex`, with indexes on `sessionId`, `turnId`, `responseId`, `playbackId`, and `partIndex`. It stores part kind, text, playback accounting, and terminal state. `StoredTurn.responseId` remains the parent; for multipart responses its scalar `assistantText` may be a materialized ordered join for compatibility, while scalar `playbackId` is null. `responseParts` is authoritative. Existing version-3 rows require no data rewrite and are read as legacy single-part responses.
 
 `recordingItems` adds nullable `partIndex` and `partId` plus an index on `[responseId, partIndex]`. `recordSeq` follows audible part order, not completion order.
 

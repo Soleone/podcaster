@@ -46,12 +46,15 @@ function orderItems(items: StoredRecordingItem[], turnSequences: Map<string, num
  */
 export async function buildRecording(sessionId: string, deps: SpliceDependencies): Promise<Blob | null> {
   const [items, turns] = await Promise.all([deps.store.getSessionItems(sessionId), deps.turns.getTurns(sessionId)]);
-  if (items.length === 0) return null;
+  // Trimmed bubbles are excluded before ordering, decoding, resampling, or gap
+  // insertion so their Blobs are never touched during export.
+  const survivors = items.filter(item => !item.trimmed);
+  if (survivors.length === 0) return null;
   const turnSequences = new Map(turns.map(turn => [turn.turnId, turn.timelineSequence]));
   const gapSamples = Math.round(FINAL_SAMPLE_RATE * Math.max(0, deps.gapMs ?? EXPORT_GAP_MS) / 1000);
   const segments: Float32Array[] = [];
   let totalSamples = 0;
-  for (const item of orderItems(items, turnSequences)) {
+  for (const item of orderItems(survivors, turnSequences)) {
     const { sampleRate, channelData } = await deps.decode(new Uint8Array(await item.data.arrayBuffer()));
     let samples = channelData;
     if (item.role === 'agent' && item.interrupted && item.deliveredSamples !== null) {

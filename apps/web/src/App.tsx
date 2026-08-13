@@ -17,8 +17,10 @@ import { FakeSessionTransport } from './session/fake-transport';
 import type { SessionTransport } from './session/transport';
 import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
-import { RecordingStore } from './storage/recording-store';
+import { RecordingStore, type RecordingItemSummary } from './storage/recording-store';
 import { StableTurnWriter } from './storage/stable-turn-writer';
+import { deleteSessionRecording } from './recording/export';
+import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 const PERSONA_DIGEST = 'a'.repeat(64);
@@ -68,6 +70,13 @@ export function App() {
   const recordingUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const statsRef = useRef<FakeRuntimeStats>({ captureStarts: 0, captureStops: 0, captureRunning: false, playbackPauses: 0, playbackResumes: 0, playbackStops: [] });
   const startedAt = useRef(Date.now());
+  const [recordingView, setRecordingView] = useState<RecordingSessionViewState>(emptyRecordingSessionView);
+  const recordingViewRef = useRef(recordingView);
+  recordingViewRef.current = recordingView;
+  const recordingSessionRef = useRef<string | undefined>(undefined);
+  recordingSessionRef.current = sessionId;
+  const recordingGenRef = useRef(0);
+  const lastCheapRef = useRef<{ enabled: boolean; count: number } | null>(null);
 
   const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string) => {
     const transport = new FakeSessionTransport();
@@ -78,6 +87,8 @@ export function App() {
     const recorder = new RecordingRecorder({ sessionId: id, store: recordingStore, encode: createEncoderClient() });
     await recorder.start();
     recordingRecorderRef.current = recorder;
+    recordingSessionRef.current = id;
+    await fetchRecordingSummaries(id);
     recordingUnsubscribeRef.current = transport.onEvent(event => recorder.onSessionEvent(event));
     let controller!: SessionController;
     controller = new SessionController({
@@ -132,6 +143,8 @@ export function App() {
     const recorder = new RecordingRecorder({ sessionId: id, store: recordingStore, encode: createEncoderClient() });
     await recorder.start();
     recordingRecorderRef.current = recorder;
+    recordingSessionRef.current = id;
+    await fetchRecordingSummaries(id);
     let controller!: SessionController;
     const transport = new WebSocketSessionTransport(id, () => controller?.snapshot().epoch ?? 0);
     await transport.connect(cap);
@@ -252,7 +265,7 @@ export function App() {
   const buildExport = useCallback(async () => {
     const store = recordingStoreRef.current;
     const writer = writerRef.current;
-    const current = sessionId;
+    const current = recordingSessionRef.current;
     if (!store || !writer || !current) return null;
     return buildRecording(current, {
       store,
@@ -261,11 +274,83 @@ export function App() {
       resample: offlineResample,
       encode: createEncoderClient(),
     });
-  }, [sessionId]);
+  }, []);
+
+  const fetchRecordingSummaries = useCallback(async (targetSession: string): Promise<void> => {
+    const store = recordingStoreRef.current;
+    if (!store) return;
+    const gen = ++recordingGenRef.current;
+    let enabled: boolean;
+    let summaries: RecordingItemSummary[];
+    try {
+      [enabled, summaries] = await Promise.all([store.getRecordingEnabled(), store.getSessionItemSummaries(targetSession)]);
+    } catch (error) {
+      if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
+      setRecordingView(prev => ({ ...prev, error: error instanceof Error ? error.message : 'Recording state could not be read.' }));
+      return;
+    }
+    if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
+    lastCheapRef.current = { enabled, count: summaries.length };
+    setRecordingView(prev => ({ ...projectRecordingTrim(summaries, enabled), pendingTargetId: prev.pendingTargetId, notice: prev.notice, error: '' }));
+  }, []);
+
+  const pollRecording = useCallback(async (targetSession: string): Promise<void> => {
+    const store = recordingStoreRef.current;
+    if (!store) return;
+    let enabled: boolean;
+    let count: number;
+    try {
+      [enabled, count] = await Promise.all([store.getRecordingEnabled(), store.countSessionItems(targetSession)]);
+    } catch { return; }
+    if (recordingSessionRef.current !== targetSession) return;
+    const last = lastCheapRef.current;
+    if (!last || last.enabled !== enabled || last.count !== count) {
+      await fetchRecordingSummaries(targetSession);
+    } else {
+      setRecordingView(prev => (prev.enabled === enabled && prev.hydrated) ? prev : { ...prev, enabled });
+    }
+  }, [fetchRecordingSummaries]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const targetSession = sessionId;
+    let cancelled = false;
+    void fetchRecordingSummaries(targetSession);
+    const timer = setInterval(() => { if (!cancelled) void pollRecording(targetSession); }, 1000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [sessionId, fetchRecordingSummaries, pollRecording]);
 
   const toggleRecording = useCallback(async (enabled: boolean) => {
     await recordingRecorderRef.current?.setEnabled(enabled);
-  }, []);
+    const current = recordingSessionRef.current;
+    if (current) await fetchRecordingSummaries(current);
+  }, [fetchRecordingSummaries]);
+
+  const deleteRecording = useCallback(async () => {
+    const store = recordingStoreRef.current;
+    const current = recordingSessionRef.current;
+    if (!store || !current) return;
+    await deleteSessionRecording(current, store);
+    await fetchRecordingSummaries(current);
+  }, [fetchRecordingSummaries]);
+
+  const toggleBubbleTrim = useCallback(async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
+    const store = recordingStoreRef.current;
+    const current = recordingSessionRef.current;
+    if (!store || !current) return false;
+    const target = recordingViewRef.current.targets.get(targetId);
+    if (!target) return false;
+    setRecordingView(prev => ({ ...prev, pendingTargetId: targetId, error: '' }));
+    try {
+      await store.setItemsTrimmed(current, target.itemIds, trimmed);
+    } catch (error) {
+      setRecordingView(prev => ({ ...prev, pendingTargetId: null, error: error instanceof Error ? error.message : 'The bubble could not be updated. Try again.' }));
+      return false;
+    }
+    setRecordingView(prev => ({ ...prev, pendingTargetId: null }));
+    await fetchRecordingSummaries(current);
+    return true;
+  }, [fetchRecordingSummaries]);
 
   if (!view) return <Readiness sessionAvailable={fakeServices} onStart={start} />;
   return <div className="session-layout">
@@ -274,7 +359,9 @@ export function App() {
       elapsedSeconds={elapsed}
       onStop={() => void stop()}
       onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
+      recording={recordingView}
+      onToggleBubbleTrim={toggleBubbleTrim}
     />
-    {sessionId && recordingStoreRef.current ? <RecordingControls sessionId={sessionId} store={recordingStoreRef.current} buildExport={buildExport} onToggleRecording={toggleRecording} /> : null}
+    {sessionId ? <RecordingControls sessionId={sessionId} buildExport={buildExport} recording={recordingView} onToggleRecording={toggleRecording} onDelete={deleteRecording} /> : null}
   </div>;
 }

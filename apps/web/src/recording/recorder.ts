@@ -228,6 +228,7 @@ export class RecordingRecorder {
         durationMs: Math.round((pcm.length / 16000) * 1000),
         createdAt: new Date().toISOString(),
         monotonicMs,
+        trimmed: false,
         data: new Blob([mp3], { type: 'audio/mpeg' }),
       };
       await this.deps.store.put(item);
@@ -269,6 +270,7 @@ export class RecordingRecorder {
         durationMs: Math.round((pcm.length / buffer.sampleRate) * 1000),
         createdAt: new Date().toISOString(),
         monotonicMs,
+        trimmed: false,
         data: new Blob([mp3], { type: 'audio/mpeg' }),
       };
       await this.deps.store.put(item);

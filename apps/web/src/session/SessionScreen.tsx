@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Ear, MessageCircleQuestion, Pause, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert } from '../components/ui/alert';
@@ -13,6 +13,7 @@ import { cn } from '../lib/utils';
 import { Spinner } from '../components/ui/spinner';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '../components/ui/message-scroller';
 import { activityLog, type ActivityEntry } from './activity-log';
+import type { RecordingSessionViewState, RecordingTrimTargetId } from '../recording/trim-state';
 import type { SessionViewState } from './state';
 import './session.css';
 
@@ -23,7 +24,15 @@ const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> =
   idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void }) {
+export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean> }) {
+  const [trimAnnouncement, setTrimAnnouncement] = useState('');
+  const handleTrim = useCallback(async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
+    const ok = await props.onToggleBubbleTrim(targetId, trimmed);
+    setTrimAnnouncement(ok
+      ? (trimmed ? 'Removed from recording.' : 'Restored to recording.')
+      : 'That bubble could not be updated. Try again.');
+    return ok;
+  }, [props.onToggleBubbleTrim]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && (props.state.dominant === 'reasoning' || props.state.dominant === 'speaking')) { event.preventDefault(); props.onCancelAssistant(); }
@@ -45,6 +54,7 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
       <div className="status-actions"><Badge className="elapsed-badge" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>{assistantActive ? <Button variant="secondary" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}</div>
     </Card>
     <p className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{props.state.announcement}</p>
+    {trimAnnouncement ? <p className="visually-hidden" role="status" aria-live="polite">{trimAnnouncement}</p> : null}
     {props.state.degradedMessage ? <Alert>{props.state.degradedMessage}</Alert> : null}
     <section aria-labelledby="conversation-title" className="conversation"><h2 id="conversation-title">Conversation</h2>
       <div className="conversation-scroll">
@@ -53,7 +63,7 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
             <MessageScrollerViewport aria-label="Conversation transcript">
               <MessageScrollerContent className="conversation-list" aria-busy={props.state.dominant === 'reasoning'}>
                 {props.state.conversationItems.length === 0 && !props.state.tentativeText ? <MessageScrollerItem messageId="conversation-empty"><p className="hint">Your conversation will appear here.</p></MessageScrollerItem> : null}
-                {props.state.conversationItems.filter(item => !(item.kind === 'assistant' && !item.text)).map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} /></MessageScrollerItem>)}
+                {props.state.conversationItems.filter(item => !(item.kind === 'assistant' && !item.text)).map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} recording={props.recording} onToggleBubbleTrim={handleTrim} /></MessageScrollerItem>)}
                 {showAssistantActivity ? <MessageScrollerItem messageId="assistant-activity"><Marker role="status" className="assistant-activity"><MarkerContent className="shimmer"><span className="font-medium">Oliver</span> {props.state.dominant === 'speaking' ? 'is speaking…' : 'is typing…'}</MarkerContent></Marker></MessageScrollerItem> : null}
                 {props.state.tentativeText ? <MessageScrollerItem messageId="tentative-transcript"><Message align="end" className="conversation-message user-row"><MessageContent><MessageHeader>You · tentative</MessageHeader><Bubble variant="tinted"><BubbleContent className="conversation-bubble tentative"><p>{props.state.tentativeText}</p></BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
                 {props.state.playbackNotice ? <MessageScrollerItem messageId="playback-notice"><Marker variant="separator" className="continuation-marker"><MarkerContent>{props.state.playbackNotice}</MarkerContent></Marker></MessageScrollerItem> : null}

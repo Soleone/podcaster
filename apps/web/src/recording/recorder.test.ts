@@ -174,4 +174,16 @@ describe('RecordingRecorder', () => {
     expect(items.map(item => item.recordSeq).sort((a, b) => a - b)).toEqual([0, 1]);
     reopened.close();
   });
+
+  it('starts every newly persisted row untrimmed', async () => {
+    const { store, recorder } = await setup();
+    await store.setRecordingEnabled(true);
+    await recorder.start();
+    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onCaptureAudio(captureFrame(0));
+    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
+    expect((await store.getSessionItems(SESSION))[0]!.trimmed).toBe(false);
+    store.close();
+  });
 });

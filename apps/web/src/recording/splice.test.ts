@@ -20,7 +20,7 @@ function item(partial: Partial<StoredRecordingItem> & { itemId: string; role: Re
   return {
     sessionId: SESSION, turnId: null, responseId: null, partIndex: null, playbackId: null, outputEpoch: null, sampleCount: 0,
     interrupted: false, deliveredSamples: null, terminalReason: null, captureStartSequence: null, captureEndSequence: null,
-    truncated: false, durationMs: 0, createdAt: '2026-01-01T00:00:00Z', monotonicMs: 0, data: new Blob([], { type: 'audio/mpeg' }),
+    truncated: false, durationMs: 0, createdAt: '2026-01-01T00:00:00Z', monotonicMs: 0, trimmed: false, data: new Blob([], { type: 'audio/mpeg' }),
     ...partial,
   };
 }
@@ -124,6 +124,46 @@ describe('buildRecording', () => {
     await buildRecording(SESSION, { store, turns, decode, resample, encode, gapMs: 150 });
     const gap = Math.round(FINAL_SAMPLE_RATE * 150 / 1000);
     expect(encode.mock.calls[0]![0].length).toBe(Math.round(1600 * FINAL_SAMPLE_RATE / 16000) + Math.round(800 * FINAL_SAMPLE_RATE / 16000) + gap);
+    store.close();
+  });
+
+  it('excludes trimmed rows before decoding and inserts one gap per surviving segment', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const T2 = '018f1f32-7abe-7def-8abc-0123456789ab';
+    const store = (await deps([], [turn(T1, 1), turn(T2, 2)])).store;
+    const { decode, resample, encode, turns } = await deps([
+      { sampleRate: 16000, channelData: tone(1600) },   // user T1 (survivor)
+      { sampleRate: 16000, channelData: tone(800) },    // user T2 (survivor)
+    ], [turn(T1, 1), turn(T2, 2)]);
+    await store.put(item({ itemId: 'u1', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    await store.put(item({ itemId: 'a1', role: 'agent', recordSeq: 1, sampleRate: 24000, turnId: T1, trimmed: true }));
+    await store.put(item({ itemId: 'u2', role: 'user', recordSeq: 2, sampleRate: 16000, turnId: T2 }));
+
+    await buildRecording(SESSION, { store, turns, decode, resample, encode });
+    expect(decode).toHaveBeenCalledTimes(2);
+    expect(resample).toHaveBeenCalledTimes(2);
+    // survivors preserve turn order (user before absent agent), role, and recordSeq.
+    expect(resample.mock.calls.map(call => call[0].length)).toEqual([1600, 800]);
+    const gap = Math.round(FINAL_SAMPLE_RATE * EXPORT_GAP_MS / 1000);
+    expect(encode.mock.calls[0]![0].length).toBe(Math.round(1600 * FINAL_SAMPLE_RATE / 16000) + Math.round(800 * FINAL_SAMPLE_RATE / 16000) + gap);
+    store.close();
+  });
+
+  it('returns null when every row is trimmed without touching audio', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const T2 = '018f1f32-7abe-7def-8abc-0123456789ab';
+    const store = (await deps([], [turn(T1, 1), turn(T2, 2)])).store;
+    const { decode, resample, encode, turns } = await deps([
+      { sampleRate: 16000, channelData: tone(1600) },
+      { sampleRate: 16000, channelData: tone(800) },
+    ], [turn(T1, 1), turn(T2, 2)]);
+    await store.put(item({ itemId: 'u1', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1, trimmed: true }));
+    await store.put(item({ itemId: 'u2', role: 'user', recordSeq: 1, sampleRate: 16000, turnId: T2, trimmed: true }));
+    const blob = await buildRecording(SESSION, { store, turns, decode, resample, encode });
+    expect(blob).toBeNull();
+    expect(decode).not.toHaveBeenCalled();
+    expect(resample).not.toHaveBeenCalled();
+    expect(encode).not.toHaveBeenCalled();
     store.close();
   });
 });

@@ -1,5 +1,5 @@
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
-export const PODCASTER_DB_VERSION = 3;
+export const PODCASTER_DB_VERSION = 4;
 
 export const STORES = {
   sessions: 'sessions',
@@ -102,6 +102,18 @@ export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name
         ensureIndex(recordingItems, 'turnId', 'turnId');
         ensureIndex(recordingItems, 'playbackId', 'playbackId');
         ensureIndex(recordingItems, 'recordSeq', 'recordSeq');
+      } else if (event.oldVersion >= 3) {
+        // Version 4 adds the required `trimmed` flag. Backfill every existing
+        // version-3 row (preserving all fields and the audio Blob) as included.
+        const recordingItems = transaction.objectStore(STORES.recordingItems);
+        const cursorRequest = recordingItems.openCursor();
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+          const row = cursor.value as Record<string, unknown>;
+          if (typeof row.trimmed !== 'boolean') cursor.update({ ...row, trimmed: false });
+          cursor.continue();
+        };
       }
     };
     request.onsuccess = () => resolve(request.result);

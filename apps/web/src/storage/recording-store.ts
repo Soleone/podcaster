@@ -25,7 +25,20 @@ export interface StoredRecordingItem {
   durationMs: number;
   createdAt: string;
   monotonicMs: number;
+  trimmed: boolean;
   data: Blob;
+}
+
+/** Blob-free projection of a stored recording row for UI trim state. */
+export interface RecordingItemSummary {
+  itemId: string;
+  sessionId: string;
+  recordSeq: number;
+  role: RecordingRole;
+  turnId: string | null;
+  responseId: string | null;
+  partIndex: number | null;
+  trimmed: boolean;
 }
 
 export class RecordingStore {
@@ -68,8 +81,54 @@ export class RecordingStore {
     return await requestResult(transaction.objectStore(STORES.recordingItems).index('sessionId').getAll(sessionId)) as StoredRecordingItem[];
   }
 
+  async getSessionItemSummaries(sessionId: string): Promise<RecordingItemSummary[]> {
+    const items = await this.getSessionItems(sessionId);
+    return items.map(item => ({
+      itemId: item.itemId,
+      sessionId: item.sessionId,
+      recordSeq: item.recordSeq,
+      role: item.role,
+      turnId: item.turnId,
+      responseId: item.responseId,
+      partIndex: item.partIndex,
+      trimmed: item.trimmed,
+    }));
+  }
+
+  async setItemTrimmed(itemId: string, trimmed: boolean): Promise<void> {
+    const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
+    const store = transaction.objectStore(STORES.recordingItems);
+    const item = await requestResult(store.get(itemId)) as StoredRecordingItem | undefined;
+    if (item) store.put({ ...item, trimmed });
+    await transactionDone(transaction);
+  }
+
+  /**
+   * Atomically marks every supplied row for one session as trimmed or included.
+   * Empty input is a no-op. Every row must exist and belong to the session; the
+   * transaction aborts without partial writes otherwise.
+   */
+  async setItemsTrimmed(sessionId: string, itemIds: string[], trimmed: boolean): Promise<void> {
+    if (itemIds.length === 0) return;
+    const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
+    const store = transaction.objectStore(STORES.recordingItems);
+    const updates: StoredRecordingItem[] = [];
+    for (const itemId of itemIds) {
+      const item = await requestResult(store.get(itemId)) as StoredRecordingItem | undefined;
+      if (!item || item.sessionId !== sessionId) {
+        transaction.abort();
+        await transactionDone(transaction).catch(() => undefined);
+        throw new Error(`Trim batch rejected: recording item ${itemId} is missing or belongs to another session.`);
+      }
+      updates.push(item);
+    }
+    for (const item of updates) store.put({ ...item, trimmed });
+    await transactionDone(transaction);
+  }
+
   async countSessionItems(sessionId: string): Promise<number> {
-    return (await this.getSessionItems(sessionId)).length;
+    const transaction = this.db.transaction(STORES.recordingItems, 'readonly');
+    return await requestResult(transaction.objectStore(STORES.recordingItems).index('sessionId').count(sessionId)) as number;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
