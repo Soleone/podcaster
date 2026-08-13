@@ -1,14 +1,24 @@
 import { randomBytes } from 'node:crypto';
-import { CONTRACT_VALIDATORS, decodeBinaryAudioFrame } from '@app/contracts';
+import { composePersonaAppend, CONTRACT_VALIDATORS, decodeBinaryAudioFrame, isValidSessionSettingsSnapshot, type SessionSettingsSnapshot } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
 import type { PiResearchClient } from '../pi/PiResearchClient.js';
 import { SessionOrchestrator, type SessionEvent } from '../session/SessionOrchestrator.js';
+import { PiInterruptionIntentClassifier } from '../session/InterruptionIntentClassifier.js';
 import { AudioClient, type SttFinal, type SttPartial, type VadEndEvent, type VadStartEvent } from '../sidecar/AudioClient.js';
 import type { SidecarProcess } from '../sidecar/process.js';
 
 const MAX_PENDING_FINALS = 8;
 const MAX_COMPLETED_PERSISTENCE_ACKS = 64;
+export interface BrowserSessionOptions {
+  multiPartEnabled?: boolean;
+  /** Session-owned response Pi client; receives the frozen persona append. */
+  createResponseClient(personaAppend: string): PiClient;
+  /** Session-owned research Pi client; receives the frozen persona append. */
+  createResearchClient(personaAppend: string): PiResearchClient;
+  /** Session-owned persona-neutral classifier client. */
+  createClassifierClient(): PiClient;
+}
 function rawBytes(raw: RawData): Uint8Array {
   if (Buffer.isBuffer(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
   if (Array.isArray(raw)) { const value = Buffer.concat(raw); return new Uint8Array(value.buffer, value.byteOffset, value.byteLength); }
@@ -32,24 +42,41 @@ function event(sessionId: string, epoch: number, type: string, payload: Record<s
 }
 
 export class BrowserSession {
+  private readonly socket: WebSocket;
+  private readonly sidecar: SidecarProcess;
+  private readonly options: BrowserSessionOptions;
   private sessionId: string | undefined;
   private orchestrator: SessionOrchestrator | undefined;
-  private readonly audio: AudioClient;
+  private audio: AudioClient | undefined;
   private captureStreamId: number | undefined;
   private pending = new Map<string, PendingFinal>();
   private completedPersistenceAcks = new Map<string, CompletedPersistenceAck>();
   private stopped = false;
+  private responsePi: PiClient | undefined;
+  private researchPi: PiResearchClient | undefined;
+  private classifierPi: PiClient | undefined;
+  private ownedPis: Array<{ shutdown(): Promise<void> }> = [];
 
-  constructor(private readonly socket: WebSocket, sidecar: SidecarProcess, private readonly pi: PiClient, private readonly researchPi: PiResearchClient, private readonly multiPartEnabled = true) {
-    this.audio = new AudioClient(sidecar, {
-      speechStart: value => this.speechStart(value),
-      speechEnd: value => this.speechEnd(value),
-      partial: value => this.partial(value),
-      final: value => this.final(value),
-      failure: code => this.failure(code),
-    }, frame => {
-      if (!this.stopped && socket.readyState === socket.OPEN) socket.send(frame, { binary: true });
-    });
+  constructor(socket: WebSocket, sidecar: SidecarProcess, options: BrowserSessionOptions) {
+    this.socket = socket;
+    this.sidecar = sidecar;
+    this.options = options;
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.orchestrator?.stop();
+    this.pending.clear();
+    this.completedPersistenceAcks.clear();
+    await this.audio?.close();
+    for (const client of this.ownedPis) {
+      try { await client.shutdown(); } catch { /* best-effort child teardown */ }
+    }
+    this.responsePi = undefined;
+    this.researchPi = undefined;
+    this.classifierPi = undefined;
+    this.ownedPis = [];
   }
 
   async handle(raw: RawData, binary: boolean): Promise<void> {
@@ -60,7 +87,7 @@ export class BrowserSession {
       try {
         const decoded = decodeBinaryAudioFrame(bytes, MAX_BINARY_PAYLOAD);
         if (decoded.channel !== 1 || decoded.streamId !== this.captureStreamId || decoded.pcm16.length !== 320) throw new Error();
-        this.audio.input(bytes);
+        this.audio!.input(bytes);
       } catch { this.protocolError('invalid_capture_frame'); }
       return;
     }
@@ -88,27 +115,37 @@ export class BrowserSession {
     }
   }
 
-  async stop(): Promise<void> {
-    if (this.stopped) return;
-    this.stopped = true;
-    this.orchestrator?.stop();
-    this.pending.clear();
-    this.completedPersistenceAcks.clear();
-    await this.audio.close();
-  }
-
   private async start(command: { sessionId: string; epoch: number; payload: Record<string, unknown> }): Promise<void> {
     if (this.orchestrator || command.epoch !== 0) return this.protocolError('second_start');
+    const settings = command.payload.settings as SessionSettingsSnapshot | undefined;
+    if (!isValidSessionSettingsSnapshot(settings)) return this.protocolError('invalid_settings');
     this.sessionId = command.sessionId;
     const reasoningMode = command.payload.reasoningMode;
+    const personaAppend = composePersonaAppend(settings.persona);
+    // Session-owned Pi clients carry the frozen persona append; never reuse a
+    // mutable global client across sessions and never log prompt/persona text.
+    this.responsePi = this.options.createResponseClient(personaAppend);
+    this.researchPi = this.options.createResearchClient(personaAppend);
+    this.classifierPi = this.options.createClassifierClient();
+    this.ownedPis.push(this.responsePi, this.researchPi, this.classifierPi);
+    this.audio = new AudioClient(this.sidecar, {
+      speechStart: value => this.speechStart(value),
+      speechEnd: value => this.speechEnd(value),
+      partial: value => this.partial(value),
+      final: value => this.final(value),
+      failure: code => this.failure(code),
+    }, frame => {
+      if (!this.stopped && this.socket.readyState === this.socket.OPEN) this.socket.send(frame, { binary: true });
+    }, settings.voice);
     this.orchestrator = new SessionOrchestrator({
       sessionId: command.sessionId,
       sessionSeed: String(command.payload.sessionSeed),
-      pi: this.pi,
+      pi: this.responsePi,
       speech: this.audio,
       researchPi: this.researchPi,
-      multiPartEnabled: this.multiPartEnabled,
+      multiPartEnabled: this.options.multiPartEnabled !== false,
       transcriptOnly: reasoningMode === 'transcript_only',
+      interruptionClassifier: new PiInterruptionIntentClassifier(this.classifierPi),
       emit: value => this.send(value),
     });
     await this.audio.connect();
@@ -118,11 +155,11 @@ export class BrowserSession {
   private async startAudio(payload: Record<string, unknown>): Promise<void> {
     if (this.captureStreamId !== undefined) return this.protocolError('second_audio_start');
     this.captureStreamId = Number(payload.streamId);
-    await this.audio.open(this.captureStreamId);
+    await this.audio!.open(this.captureStreamId);
   }
   private stopAudio(payload: Record<string, unknown>): void {
     if (this.captureStreamId === undefined || Number(payload.streamId) !== this.captureStreamId) return this.protocolError('audio_stream_mismatch');
-    this.audio.reset();
+    this.audio!.reset();
     this.captureStreamId = undefined;
   }
 
@@ -130,7 +167,7 @@ export class BrowserSession {
     const orchestrator = this.orchestrator;
     if (!orchestrator || this.stopped) return;
     const epoch = orchestrator.handleSpeechStart();
-    try { this.audio.bindEpoch(value.utteranceId, epoch); } catch { this.failure('invalid_utterance'); }
+    try { this.audio!.bindEpoch(value.utteranceId, epoch); } catch { this.failure('invalid_utterance'); }
     if (this.sessionId) this.send(event(this.sessionId, epoch, 'vad.speech_start', { streamId: value.streamId, utteranceId: value.utteranceId, captureStartSequence: value.captureStartSequence }));
   }
   private speechEnd(value: VadEndEvent): void {

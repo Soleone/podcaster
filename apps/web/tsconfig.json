@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "jsx": "react-jsx", "lib": ["ES2022", "DOM", "DOM.Iterable"], "module": "ESNext", "moduleResolution": "Bundler", "noEmit": true },
+  "compilerOptions": { "jsx": "react-jsx", "lib": ["ES2022", "DOM", "DOM.Iterable"], "module": "ESNext", "moduleResolution": "Bundler", "noEmit": true, "baseUrl": ".", "paths": { "@/*": ["./src/*"] } },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
 }

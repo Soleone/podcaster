@@ -26,6 +26,7 @@ export interface VadStartEvent { streamId: string; utteranceId: string; captureS
 export interface VadEndEvent { streamId: string; utteranceId: string; captureStartSequence: number; captureEndSequence: number }
 export interface SttPartial { streamId: string; utteranceId: string; epoch: number; sequence: number; text: string; replacedCharacters: number }
 export interface SttFinal { streamId: string; utteranceId: string; epoch: number; text: string; endpointComplete: true }
+export interface AudioClientVoiceSelection { catalogId: string; voiceId: string }
 export interface AudioClientEvents {
   speechStart?(event: VadStartEvent): void;
   speechEnd?(event: VadEndEvent): void;
@@ -90,12 +91,24 @@ export class AudioClient implements SpeechOutputPort {
   private failed = false;
   private closing = false;
   private connectPromise: Promise<void> | undefined;
+  private readonly sidecar: SidecarProcess;
+  private readonly events: AudioClientEvents;
+  private readonly binarySink: (frame: Uint8Array) => void;
+  private readonly selection: AudioClientVoiceSelection | undefined;
+  private readonly voiceId: string;
 
   constructor(
-    private readonly sidecar: SidecarProcess,
-    private readonly events: AudioClientEvents = {},
-    private readonly binarySink: (frame: Uint8Array) => void = () => {},
-  ) {}
+    sidecar: SidecarProcess,
+    events: AudioClientEvents = {},
+    binarySink: (frame: Uint8Array) => void = () => {},
+    selection?: AudioClientVoiceSelection,
+  ) {
+    this.sidecar = sidecar;
+    this.events = events;
+    this.binarySink = binarySink;
+    this.selection = selection;
+    this.voiceId = selection?.voiceId ?? 'af_heart';
+  }
 
   connect(): Promise<void> {
     if (this.connectPromise) return this.connectPromise;
@@ -233,7 +246,7 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   private ttsFields(input: { responseId: string; epoch: number; partIndex?: number; partId?: string }): Record<string, unknown> {
-    return { responseId: input.responseId, epoch: input.epoch, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
+    return { responseId: input.responseId, epoch: input.epoch, voiceId: this.voiceId, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
   }
 
   private removeAdmitted(pending: PendingTts): void {
@@ -246,7 +259,7 @@ export class AudioClient implements SpeechOutputPort {
       const pending = this.queued.shift()!;
       pending.queued = false;
       this.admitted.push(pending);
-      this.sendForStream('tts.open', this.ttsFields(pending));
+      this.sendForStream('tts.open', { responseId: pending.responseId, epoch: pending.epoch, voiceId: this.voiceId, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
       for (let index = 0; index < pending.bufferedAppends.length; index++) {
         this.sendForStream('tts.append', { responseId: pending.responseId, epoch: pending.epoch, sequence: index, text: pending.bufferedAppends[index]!, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
       }
@@ -329,6 +342,21 @@ export class AudioClient implements SpeechOutputPort {
       if (this.readinessSeen || this.streamId) return this.protocolFailure();
       this.readinessSeen = true;
       this.readyStatus = payload.status as typeof this.readyStatus;
+      // Fail closed when a session voice selection cannot be reconciled against
+      // the current verified catalog before any stream opens.
+      if (this.readyStatus === 'ready' && this.selection) {
+        const selection = this.selection;
+        const catalog = payload.voiceCatalog as { catalogId?: unknown; voices?: Array<{ id?: unknown }> } | undefined;
+        const voices = catalog?.voices;
+        const catalogMatches = typeof catalog?.catalogId === 'string' && catalog.catalogId === selection.catalogId;
+        const voicePresent = Array.isArray(voices) && voices.some(voice => voice.id === selection.voiceId);
+        if (!catalogMatches || !voicePresent) {
+          this.failed = true;
+          this.events.failure?.('catalog_mismatch');
+          this.failAll(new Error('audio sidecar catalog drifted from the session voice selection'));
+          this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio voice catalog mismatch');
+        }
+      }
       return;
     }
     if (message.type === 'stream.opened') { this.streamOpenedMessage(payload); return; }
@@ -389,6 +417,7 @@ export class AudioClient implements SpeechOutputPort {
     const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
     const outputStreamId = Number(payload.outputStreamId);
     if (!pending || pending.sidecarStarted || pending.epoch !== payload.epoch || this.usedOutputStreams.has(outputStreamId)) return this.protocolFailure();
+    if (this.selection && payload.voiceId !== this.selection.voiceId) return this.protocolFailure();
     pending.playbackId = String(payload.playbackId);
     pending.outputStreamId = outputStreamId;
     pending.sampleRate = Number(payload.sampleRate);

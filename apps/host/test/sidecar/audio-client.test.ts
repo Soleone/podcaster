@@ -10,6 +10,7 @@ const playbackId = '018f1f32-7abd-7def-8abc-0123456789ab';
 const responseId = '018f1f32-7abe-7def-8abc-0123456789ab';
 const responseId2 = '018f1f32-7abf-7def-8abc-0123456789ab';
 const playbackId2 = '018f1f32-7ac0-7def-8abc-0123456789ab';
+const voiceCatalog = Object.freeze({ catalogId: 'sess-catalog', backendId: 'kokoro', modelId: 'kokoro-82m-onnx', runtimeConfigId: 'rc', revision: 'rev', defaultVoiceId: 'af_heart', voices: [{ id: 'af_heart', label: 'af_heart' }, { id: 'af_bella', label: 'Bella' }] });
 const servers: Array<{ close(): Promise<void> }> = [];
 afterEach(async () => { for (const server of servers.splice(0)) await server.close(); });
 
@@ -23,7 +24,7 @@ async function fakeSidecar(options: { gap?: boolean; cancelRace?: boolean; cance
     let ttsCount = 0;
     expect(request.headers.authorization).toBe('Bearer secret');
     expect(request.headers.origin).toBeUndefined();
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1', voiceCatalog } }));
     socket.on('message', raw => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
       const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
@@ -42,7 +43,7 @@ async function fakeSidecar(options: { gap?: boolean; cancelRace?: boolean; cance
         if (message.type === 'tts.request') {
           ttsCount++;
           // Legacy one-shot: emit immediately
-          socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, outputStreamId, sampleRate: 24000 } }));
+          socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, outputStreamId, sampleRate: 24000, voiceId: 'af_heart' } }));
           socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
           if (!options.cancelRace || requestIndex > 0) setTimeout(() => {
             socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: options.gap && requestIndex === 0 ? 2 : 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
@@ -57,7 +58,7 @@ async function fakeSidecar(options: { gap?: boolean; cancelRace?: boolean; cance
         const currentPlaybackId = requestIndex === 0 ? playbackId : playbackId2;
         const responseId = message.payload.responseId as string;
         const epoch = message.payload.epoch as number;
-        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, outputStreamId, sampleRate: 24000 } }));
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId: currentPlaybackId, outputStreamId, sampleRate: 24000, voiceId: 'af_heart' } }));
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
         if (!options.cancelRace || requestIndex > 0) setTimeout(() => {
           socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: options.gap && requestIndex === 0 ? 2 : 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
@@ -86,7 +87,7 @@ async function fakeVadSidecar() {
   let sidecarSocket: WebSocket | undefined;
   wss.on('connection', socket => {
     sidecarSocket = socket;
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1', voiceCatalog } }));
     socket.on('message', raw => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
       const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
@@ -108,7 +109,7 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
   wss.on('connection', (socket, request) => {
     expect(request.headers.authorization).toBe('Bearer secret');
     expect(request.headers.origin).toBeUndefined();
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1', voiceCatalog } }));
     socket.on('message', raw => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
       const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
@@ -124,7 +125,7 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
         const epoch = message.payload.epoch as number;
         const partIndex = message.payload.partIndex as number | undefined;
         const partId = message.payload.partId as string | undefined;
-        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId, outputStreamId, sampleRate: 24000, ...(options.echoPartIndex && partIndex !== undefined ? { partIndex } : {}), ...(options.echoPartId && partId !== undefined ? { partId } : {}) } }));
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId, epoch, playbackId, outputStreamId, sampleRate: 24000, voiceId: 'af_heart', ...(options.echoPartIndex && partIndex !== undefined ? { partIndex } : {}), ...(options.echoPartId && partId !== undefined ? { partId } : {}) } }));
         if (!options.echoPartIndex) return;
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
@@ -322,7 +323,7 @@ async function fakeRecordedSidecar() {
   wss.on('connection', (socket, request) => {
     expect(request.headers.authorization).toBe('Bearer secret');
     sidecarSocket = socket;
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1', voiceCatalog } }));
     socket.on('message', raw => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
       const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
@@ -362,7 +363,7 @@ describe('AudioClient TTS admission gate (decision 007 two-stream prefetch)', ()
     expect(commands.some(c => c.type === 'tts.append' && c.payload.partIndex === 2)).toBe(false);
     expect(commands.some(c => c.type === 'tts.commit' && c.payload.partIndex === 2)).toBe(false);
     // Oldest (stall) terminalizes -> body2 flushes open/append/commit in order.
-    push({ type: 'tts.started', payload: { streamId: opened, responseId, epoch: 0, playbackId, outputStreamId: 55, sampleRate: 24000, partIndex: 0 } });
+    push({ type: 'tts.started', payload: { streamId: opened, responseId, epoch: 0, playbackId, outputStreamId: 55, sampleRate: 24000, voiceId: 'af_heart', partIndex: 0 } });
     push(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
     push(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
     push({ type: 'tts.ended', payload: { streamId: opened, responseId, epoch: 0, playbackId, generatedSamples: 960, partIndex: 0 } });

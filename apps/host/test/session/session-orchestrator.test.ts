@@ -174,26 +174,16 @@ describe("safe session orchestrator", () => {
     expect(pi.inputs).toEqual([]);
   });
 
-  it("serializes a bounded structurally valid persona for Pi by truncating only its body", async () => {
-    const body = 'Escaped \\ quote " and emoji 😀.\n'.repeat(400);
-    const personaSource = `---\nversion: 1\nname: Detailed companion\ninvitation_only: true\nposture_weights: { riff: 40, question: 40, challenge: 20 }\nchallenge_enabled: true\ninterests: [audio systems, safety]\nexperiences:\n  - Spent a winter logging shipping forecasts for a community radio night show\n---\n${body}`;
+  it("keeps the structured persona out of user-facing Pi requests while it still drives policy", async () => {
+    const personaSource = `---\nversion: 1\nname: Detailed companion\ninvitation_only: true\nposture_weights: { riff: 40, question: 40, challenge: 20 }\nchallenge_enabled: true\ninterests: [audio systems, safety]\nexperiences:\n  - Spent a winter logging shipping forecasts for a community radio night show\n---\nBody text.`;
+    let policyPersona: unknown;
     const pi = new FakePi();
-    const { session } = setup({ pi, personaSource });
+    const { session } = setup({ pi, personaSource, policyDecide: input => { policyPersona = input.persona; return policy("riff")(input); } });
     await session.handleStableFinal(turn(0));
-    const serialized = pi.inputs[0]!.personaInterpretation;
-    const persona = JSON.parse(serialized);
-    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(8 * 1024);
-    expect(persona).toMatchObject({
-      version: 1,
-      name: "Detailed companion",
-      invitation_only: true,
-      posture_weights: { riff: 40, question: 40, challenge: 20 },
-      challenge_enabled: true,
-      interests: ["audio systems", "safety"],
-      experiences: ["Spent a winter logging shipping forecasts for a community radio night show"],
-    });
-    expect(persona.body.length).toBeLessThan(body.length);
-    expect(body.startsWith(persona.body)).toBe(true);
+    const input = pi.inputs[0]!;
+    expect(Object.keys(input).sort()).toEqual(["boundedContext", "maxWords", "posture", "transcript"]);
+    expect(JSON.stringify(input)).not.toContain("Detailed companion");
+    expect(policyPersona).toMatchObject({ name: "Detailed companion", interests: ["audio systems", "safety"] });
   });
 
   it("emits schema-valid events and deduplicates stable finals", async () => {

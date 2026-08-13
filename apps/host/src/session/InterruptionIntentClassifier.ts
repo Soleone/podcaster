@@ -1,4 +1,4 @@
-import type { PiClient } from "../pi/PiClient.js";
+import { createPiClient, type PiClient } from "../pi/PiClient.js";
 
 export type InterruptionIntent = "non_substantive" | "continue_previous" | "new_request" | "correction" | "topic_change" | "stop_previous";
 export type InterruptionConfidence = "low" | "medium" | "high";
@@ -21,6 +21,13 @@ export interface InterruptionIntentClassifier {
 
 const intents = new Set<InterruptionIntent>(["non_substantive", "continue_previous", "new_request", "correction", "topic_change", "stop_previous"]);
 const confidences = new Set<InterruptionConfidence>(["low", "medium", "high"]);
+
+// A fixed, persona-neutral system prompt for interruption classification so the
+// user's editable persona can never steer a control decision. Classifiers must
+// emit compact JSON, unlike the spoken-reply podcaster client.
+export const CLASSIFIER_SYSTEM_PROMPT = `You are a speech-intent classifier for a voice assistant. Decide whether a piece of user speech takes over a paused assistant answer or should resume it.
+Return ONLY compact JSON with exactly these keys and no other text or code-fence: action,intent,confidence,reason.
+action is \"resume\" or \"accept\". intent is one of: non_substantive, continue_previous, new_request, correction, topic_change, stop_previous.\nconfidence is one of: low, medium, high.\nUse resume only for fragments, acknowledgements, noise, or explicit requests to carry on. Use accept for a clear new request, correction, topic change, or stop.\nNegation or rejection of the paused answer (no, not, don't, wrong, different, something else, \"not those\") is a correction - accept it even when the speech is disfluent. Bare redirections like \"Fantasy setting\" are topic changes. Bias only genuinely ambiguous speech without a takeover cue to resume.`;
 export function parseInterruptionDecision(value: string): InterruptionIntentDecision | undefined {
   let parsed: unknown;
   try { parsed = JSON.parse(value); } catch { return; }
@@ -34,19 +41,17 @@ export function parseInterruptionDecision(value: string): InterruptionIntentDeci
 }
 
 export class PiInterruptionIntentClassifier implements InterruptionIntentClassifier {
-  constructor(private readonly pi: PiClient) {}
+  private readonly pi: PiClient;
+  constructor(pi?: PiClient) { this.pi = pi ?? createPiClient({ systemPrompt: CLASSIFIER_SYSTEM_PROMPT }); }
   async decide(input: InterruptionIntentInput, signal: AbortSignal): Promise<InterruptionIntentDecision> {
     const instruction = [
-      "Classify whether this speech takes over a paused answer. Return ONLY compact JSON with exactly action,intent,confidence,reason.",
-      "action is resume or accept. intent is non_substantive,continue_previous,new_request,correction,topic_change,stop_previous.",
-      "Use resume only for fragments, acknowledgements, noise, or explicit requests to carry on. Use accept for a clear new request, correction, topic change, or stop.",
-      "Negation or rejection of the paused answer (no, not, don't, wrong, different, something else, 'not those') is a correction — accept it even when the speech is disfluent. Bare redirections like 'Fantasy setting' are topic changes. Bias only genuinely ambiguous speech without a takeover cue to resume.",
+      "Classify whether this speech takes over a paused answer.",
       `Paused answer: ${input.interruptedResponseText.slice(0, 1000)}`,
       `Transcript: ${input.transcript.slice(0, 1000)}`,
     ].join("\n");
     let final: string | undefined;
     let duplicate = false;
-    for await (const event of this.pi.request({ posture: "question", transcript: instruction, boundedContext: input.boundedContext.slice(0, 2000), personaInterpretation: "{}", maxWords: 45 }, signal)) {
+    for await (const event of this.pi.request({ posture: "question", transcript: instruction, boundedContext: input.boundedContext.slice(0, 2000), maxWords: 45 }, signal)) {
       if (event.type === "error") throw new Error(event.detail);
       if (event.type === "final") { if (final !== undefined) duplicate = true; else final = event.text; }
     }

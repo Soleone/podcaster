@@ -53,6 +53,7 @@ class StreamingTtsAdapter(Protocol):
         text: str,
         cancel: Cancellation,
         on_audio: AudioCallback | None = None,
+        voice: str | None = None,
     ) -> SynthesisResult: ...
 
     def reset(self) -> None: ...

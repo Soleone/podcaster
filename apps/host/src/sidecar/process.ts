@@ -4,6 +4,7 @@ import type { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { isValidVoiceCatalog, type VoiceCatalog } from '@app/contracts';
 
 const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -45,13 +46,41 @@ export async function startSidecar(python = process.env.PYTHON ?? `${repositoryR
   };
 }
 
-export async function sidecarHealth(sidecar: SidecarProcess): Promise<boolean> {
+export type SidecarRuntimeStatus = 'starting' | 'ready' | 'failed';
+export interface SidecarRuntimeSnapshot {
+  status: SidecarRuntimeStatus;
+  stt: string;
+  tts: string;
+  voiceCatalog?: VoiceCatalog;
+}
+
+/**
+ * Strict /health snapshot parser. Returns undefined when the sidecar is
+ * unreachable or emits a malformed runtime snapshot. A ready snapshot without a
+ * valid voice catalog is treated as not ready so the browser never over-promises
+ * voices.
+ */
+export async function sidecarSnapshot(sidecar: SidecarProcess): Promise<SidecarRuntimeSnapshot | undefined> {
   try {
     const response = await fetch(`${sidecar.origin}/health`, { headers: { authorization: `Bearer ${sidecar.secret}` }, signal: AbortSignal.timeout(1000) });
-    if (!response.ok) return false;
-    const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown };
-    return value.status === 'ready'
-      && value.stt === 'nemotron-3.5-transformers-fp32-320ms-paced-v1'
-      && value.tts === 'kokoro-82m-onnx-fp32-af-heart-cuda-v1';
-  } catch { return false; }
+    if (!response.ok) return undefined;
+    const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown; voiceCatalog?: unknown };
+    if (value.status !== 'starting' && value.status !== 'ready' && value.status !== 'failed') return undefined;
+    const snapshot: SidecarRuntimeSnapshot = { status: value.status, stt: String(value.stt ?? ''), tts: String(value.tts ?? '') };
+    if (value.status === 'ready') {
+      if (!isValidVoiceCatalog(value.voiceCatalog)) return undefined;
+      snapshot.voiceCatalog = value.voiceCatalog;
+    }
+    return snapshot;
+  } catch { return undefined; }
+}
+
+export async function sidecarHealth(sidecar: SidecarProcess): Promise<boolean> {
+  const snapshot = await sidecarSnapshot(sidecar);
+  return Boolean(
+    snapshot?.status === 'ready'
+    && snapshot.voiceCatalog !== undefined
+    && snapshot.stt === 'nemotron-3.5-transformers-fp32-320ms-paced-v1'
+    && snapshot.tts === 'kokoro-82m-onnx-fp32-af-heart-cuda-v1'
+  );
 }

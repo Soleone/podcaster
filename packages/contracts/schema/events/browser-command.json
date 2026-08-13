@@ -17,7 +17,8 @@
               "type": "object",
               "required": [
                 "sessionSeed",
-                "reasoningMode"
+                "reasoningMode",
+                "settings"
               ],
               "properties": {
                 "sessionSeed": {
@@ -29,6 +30,42 @@
                     "full",
                     "transcript_only"
                   ]
+                },
+                "settings": {
+                  "type": "object",
+                  "required": [
+                    "version",
+                    "persona",
+                    "voice"
+                  ],
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "persona": {
+                      "type": "string",
+                      "maxUtf8Bytes": 8192
+                    },
+                    "voice": {
+                      "type": "object",
+                      "required": [
+                        "catalogId",
+                        "voiceId"
+                      ],
+                      "properties": {
+                        "catalogId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "voiceId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false

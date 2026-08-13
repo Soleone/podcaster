@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { PODCASTER_SYSTEM_PROMPT } from "@app/contracts";
 import { PI_MODEL, StdioPiClient, type PiEvent, type PiRequestInput } from "../../src/pi/PiClient.js";
 import { makeFakePi, type FakePiScenario } from "../fixtures/fake-pi.js";
 
-const input: PiRequestInput = { posture: "riff", transcript: "A stable transcript", boundedContext: "Prior local context", personaInterpretation: "Be concise", maxWords: 45 };
+const input: PiRequestInput = { posture: "riff", transcript: "A stable transcript", boundedContext: "Prior local context", maxWords: 45 };
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())); });
@@ -24,7 +25,7 @@ describe("production Pi RPC boundary", () => {
     expect(await value.probe()).toMatchObject({ status: "ready", correctiveAction: "None." });
     await value.shutdown();
     const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    expect(calls[0].argv).toEqual(["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", PI_MODEL]);
+    expect(calls[0].argv).toEqual(["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", PI_MODEL, "--system-prompt", PODCASTER_SYSTEM_PROMPT]);
     expect(calls[0].env).not.toContain("OPENAI_API_KEY");
   });
 

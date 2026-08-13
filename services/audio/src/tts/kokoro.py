@@ -33,6 +33,9 @@ ROOT = Path(__file__).resolve().parents[4]
 MODEL_PATH = (ROOT / "models/kokoro-82m-onnx/kokoro-v1.0.onnx").resolve()
 VOICES_PATH = (ROOT / "models/kokoro-82m-onnx/voices-v1.0.bin").resolve()
 OWNED_THREAD_PREFIXES = ("kokoro-inference", "kokoro-output", "kokoro-runtime-executor")
+# Stable identity for the voice catalog's runtimeConfigId, aligned with the
+# readiness tts id without importing runtime (avoids a circular import).
+TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
 
 # onnxruntime-gpu 1.22.0 (cu12). onnxruntime 1.22.1 has no GPU wheel; the proxy
 # wheel vendor/onnxruntime-1.22.0-py3-none-any.whl satisfies the onnxruntime
@@ -130,6 +133,8 @@ class KokoroBackend(Protocol):
 
     def prepare(self, model_path: str, voices_path: str, provider: str) -> None: ...
 
+    def get_voices(self) -> list[str]: ...
+
     def create_stream(
         self, text: str, voice: str, speed: float, language: str
     ) -> AsyncIterator[tuple[Any, int]]: ...
@@ -146,6 +151,7 @@ class KokoroOnnxBackend:
     engine: Any = None
     session: Any = None
     poisoned: bool = False
+    voices: list[str] = field(default_factory=list)
 
     runtime_verifier: Callable[[], None] = _verify_runtime_distribution
 
@@ -168,8 +174,17 @@ class KokoroOnnxBackend:
         if not active or active[0] != provider:
             raise RuntimeError("ONNX Runtime did not honor the exact configured provider")
         self.engine = Kokoro.from_session(self.session, voices_path)
-        if VOICE not in self.engine.get_voices():
+        voices = list(self.engine.get_voices())
+        if not voices:
+            raise RuntimeError("verified voices file exposed no voices")
+        if VOICE not in voices:
             raise RuntimeError("pinned Kokoro voice is absent from the verified voices file")
+        self.voices = voices
+
+    def get_voices(self) -> list[str]:
+        if not self.voices:
+            raise RuntimeError("Kokoro backend is not prepared")
+        return list(self.voices)
 
     def create_stream(
         self, text: str, voice: str, speed: float, language: str
@@ -269,6 +284,7 @@ class KokoroStreamingAdapter:
     worker_timeout_seconds: float = 10.0
     _active: bool = False
     _poisoned: bool = False
+    _voices: tuple[str, ...] = ()
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _workers: set[threading.Thread] = field(default_factory=set)
 
@@ -336,6 +352,10 @@ class KokoroStreamingAdapter:
                 finally:
                     raise
             self.backend = backend
+            voices = tuple(sorted(set(backend.get_voices())))
+            if not voices or VOICE not in voices:
+                raise ValueError("verified voices file exposed no usable catalog")
+            self._voices = voices
             self.voice = VOICE
             self.speed = 1.0
             self.language = LANGUAGE
@@ -346,6 +366,33 @@ class KokoroStreamingAdapter:
     def _register(self, thread: threading.Thread) -> None:
         with self._lock:
             self._workers.add(thread)
+
+    def get_voices(self) -> list[dict[str, str]]:
+        with self._lock:
+            if not self.prepared or not self._voices:
+                raise RuntimeError("voice catalog is unavailable until the adapter is prepared")
+            return [{"id": voice, "label": voice} for voice in self._voices]
+
+    def has_voice(self, voice_id: str) -> bool:
+        with self._lock:
+            return self.prepared and voice_id in self._voices
+
+    def voice_catalog(self) -> dict[str, object]:
+        with self._lock:
+            if not self.prepared or not self._voices:
+                raise RuntimeError("voice catalog is unavailable until the adapter is prepared")
+            digest = hashlib.sha256()
+            for part in ("kokoro", "kokoro-82m-onnx", TTS_CONFIG_ID, VOICES_SHA256):
+                digest.update(part.encode("utf-8"))
+            return {
+                "catalogId": digest.hexdigest()[:16],
+                "backendId": "kokoro",
+                "modelId": "kokoro-82m-onnx",
+                "runtimeConfigId": TTS_CONFIG_ID,
+                "revision": VOICES_SHA256[:12],
+                "defaultVoiceId": VOICE,
+                "voices": [{"id": voice, "label": voice} for voice in self._voices],
+            }
 
     def _unregister_dead(self) -> None:
         with self._lock:
@@ -368,6 +415,7 @@ class KokoroStreamingAdapter:
         text: str,
         cancel: Cancellation,
         on_audio: AudioCallback | None = None,
+        voice: str | None = None,
     ) -> SynthesisResult:
         text = validate_text(text, self.max_text_characters)
         cancel.raise_if_cancelled()
@@ -378,6 +426,9 @@ class KokoroStreamingAdapter:
                 raise RuntimeError("Kokoro backend is poisoned")
             if self._active:
                 raise RuntimeError("adapter synthesis is already active")
+            selected_voice = self.voice if voice is None else voice
+            if selected_voice not in self._voices:
+                raise ValueError("requested voice is absent from the verified catalog")
             self._active = True
             backend = self.backend
         started = time.perf_counter()
@@ -404,7 +455,7 @@ class KokoroStreamingAdapter:
             for segment in segment_text(text):
                 cancel.raise_if_cancelled()
                 async for samples, sample_rate in backend.create_stream(
-                    segment, self.voice, self.speed, self.language
+                    segment, selected_voice, self.speed, self.language
                 ):
                     cancel.raise_if_cancelled()
                     if sample_rate != SAMPLE_RATE:

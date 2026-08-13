@@ -138,32 +138,6 @@ function truncateUtf8(value: string, maxBytes: number): string {
   while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
   return bytes.subarray(0, end).toString("utf8");
 }
-function boundedPersonaForPi(persona: PersonaInterpretation, maxBytes: number): string | undefined {
-  const body = Array.from(persona.body);
-  const serialize = (bodyEnd: number) => JSON.stringify({
-    version: persona.version,
-    name: persona.name,
-    invitation_only: persona.invitation_only,
-    posture_weights: {
-      riff: persona.posture_weights.riff,
-      question: persona.posture_weights.question,
-      challenge: persona.posture_weights.challenge,
-    },
-    challenge_enabled: persona.challenge_enabled,
-    interests: [...persona.interests],
-    experiences: [...(persona.experiences ?? [])],
-    body: body.slice(0, bodyEnd).join(""),
-  });
-  if (Buffer.byteLength(serialize(0), "utf8") > maxBytes) return;
-  let low = 0;
-  let high = body.length;
-  while (low < high) {
-    const midpoint = Math.ceil((low + high) / 2);
-    if (Buffer.byteLength(serialize(midpoint), "utf8") <= maxBytes) low = midpoint;
-    else high = midpoint - 1;
-  }
-  return serialize(low);
-}
 function validReasoning(text: string, posture: PiPosture): string | undefined {
   const normalized = text.trim().replace(/\s+/gu, " ");
   if (!normalized) return;
@@ -178,7 +152,6 @@ export class SessionOrchestrator {
   private epoch = 0;
   private readonly persona: PersonaInterpretation;
   private readonly personaDigest: string;
-  private readonly personaForPi: string;
   private readonly seenTurns = new Set<string>();
   private readonly recentDecisions: Array<{ turnId: string; eligible: boolean; posture: Posture }> = [];
   private readonly context: ContextTurn[] = [];
@@ -209,9 +182,6 @@ export class SessionOrchestrator {
     if (!parsed.ok) throw new PersonaValidationError(parsed.errors);
     this.persona = parsed.interpretation;
     this.personaDigest = parsed.digest;
-    const personaForPi = boundedPersonaForPi(parsed.interpretation, 8 * 1024);
-    if (personaForPi === undefined) throw new PersonaValidationError([{ code: "persona_context_too_large", message: "Persona structured fields exceed the reasoning context bound." }]);
-    this.personaForPi = personaForPi;
     this.emitFn = options.emit ?? (() => {});
     this.now = options.now ?? (() => performance.now());
     this.idFactory = options.idFactory ?? (() => defaultUuidV7(Date.now()));
@@ -349,7 +319,7 @@ export class SessionOrchestrator {
         emittedDeltaPrefix = text;
         this.emit("reasoning.delta", { turnId: active.turnId, responseId: active.responseId, text });
       };
-      for await (const event of this.options.pi.request({ posture: policy.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, personaInterpretation: this.personaForPi, maxWords: 45 }, controller.signal)) {
+      for await (const event of this.options.pi.request({ posture: policy.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, maxWords: 45 }, controller.signal)) {
         if (!this.isCurrent(active)) return;
         if (event.type === "final") {
           if (finalText !== undefined) duplicateFinal = true;
@@ -440,7 +410,7 @@ export class SessionOrchestrator {
         emittedStallPreview = text;
         this.emit("reasoning.delta", { turnId: state.turnId, responseId: state.responseId, partIndex: 0, text });
       };
-      for await (const event of this.options.pi.request({ posture: state.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, personaInterpretation: this.personaForPi, maxWords: 45 }, controller.signal)) {
+      for await (const event of this.options.pi.request({ posture: state.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, maxWords: 45 }, controller.signal)) {
         if (!this.isCurrentMultiPart(state)) return;
         if (event.type === "final") stallFinalText = event.text;
         else if (event.type === "delta") {
@@ -482,7 +452,7 @@ export class SessionOrchestrator {
 
       // ---- Body parts from the research Pi child ----
       const bodyAssembler = new ResearchPartAssembler();
-      for await (const event of researchPi.requestBody({ posture: state.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, personaInterpretation: this.personaForPi, stallText }, controller.signal)) {
+      for await (const event of researchPi.requestBody({ posture: state.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, stallText }, controller.signal)) {
         if (!this.isCurrentMultiPart(state)) return;
         if (event.type === "final") {
           try {

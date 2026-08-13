@@ -3,6 +3,7 @@ import { access, lstat, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
 
 import { PI_EXECUTABLE, PI_VERSION, PI_MODEL, type PiEvent, type PiPosture } from "./PiClient.js";
+import { PODCASTER_SYSTEM_PROMPT } from "@app/contracts";
 import { log } from "../logger.js";
 
 const MAX_RECORD_BYTES = 256 * 1024;
@@ -21,7 +22,6 @@ export interface PiResearchRequestInput {
   posture: PiPosture;
   transcript: string;
   boundedContext: string;
-  personaInterpretation: string;
   stallText: string;
   maxWords?: number;
 }
@@ -30,7 +30,7 @@ export interface PiResearchClient {
   shutdown(): Promise<void>;
 }
 
-export interface PiResearchClientOptions { executable?: string; version?: string; model?: string; startupDeadlineMs?: number; requestDeadlineMs?: number; maxWords?: number }
+export interface PiResearchClientOptions { executable?: string; version?: string; model?: string; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number; maxWords?: number }
 
 interface Pending { resolve(value: ObjectValue): void; reject(error: Error): void; timer: NodeJS.Timeout }
 interface Lifecycle { messageEnded: boolean; stopReason: string | undefined; providerError: string | undefined; settled: boolean; assistantText: string; responseBytes: number; textExceeded: boolean }
@@ -79,13 +79,14 @@ function errorEvent(error: Error): PiEvent {
   return { type: "error", state: "unavailable", detail: error.message, correctiveAction: "Retry, or continue transcript-only." };
 }
 function promptForBody(input: PiResearchRequestInput, maxWords: number): string {
-  for (const [name, value, max] of [["transcript", input.transcript, 16_384], ["boundedContext", input.boundedContext, 16_384], ["personaInterpretation", input.personaInterpretation, 8_192], ["stallText", input.stallText, 4096]] as const)
+  for (const [name, value, max] of [["transcript", input.transcript, 16_384], ["boundedContext", input.boundedContext, 16_384], ["stallText", input.stallText, 4096]] as const)
     if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > max) throw new Error(`${name} exceeds its bound`);
-  return `Answer the user's question in full, at most ${maxWords} words total. You said an acknowledgment aloud already; do NOT restate it and do not begin with a greeting or filler. You may use the read-only research tools to gather accurate, current information. Do not present tool output or citations; give a natural spoken answer. Posture: ${input.posture}\nAcknowledgment already spoken:\n${input.stallText}\nPersona interpretation:\n${input.personaInterpretation}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
+  return `Answer the user's question in full, at most ${maxWords} words total. You said an acknowledgment aloud already; do NOT restate it and do not begin with a greeting or filler. You may use the read-only research tools to gather accurate, current information. Do not present tool output or citations; give a natural spoken answer. Posture: ${input.posture}\nAcknowledgment already spoken:\n${input.stallText}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
 }
 
 export class StdioPiResearchClient implements PiResearchClient {
   private readonly executable: string; private readonly version: string; private readonly model: string;
+  private readonly systemPrompt: string; private readonly personaAppend: string;
   private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number; private readonly maxWords: number;
   private child: ChildProcessWithoutNullStreams | undefined; private buffer = Buffer.alloc(0); private stderrBytes = 0;
   private pending = new Map<string, Pending>(); private sequence = 0; private active: ActiveRequest | undefined;
@@ -93,6 +94,7 @@ export class StdioPiResearchClient implements PiResearchClient {
   private starting: Promise<void> | undefined; private ownership: Promise<void> = Promise.resolve(); private closed = false;
   constructor(options: PiResearchClientOptions = {}) {
     this.executable = options.executable ?? PI_EXECUTABLE; this.version = options.version ?? PI_VERSION; this.model = options.model ?? PI_MODEL;
+    this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? "";
     this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
     this.maxWords = options.maxWords ?? DEFAULT_MAX_WORDS;
   }
@@ -162,7 +164,7 @@ export class StdioPiResearchClient implements PiResearchClient {
     const info = await lstat(this.executable); if (!info.isFile()) throw new Error("incompatible pinned Pi executable");
     const canonical = await realpath(this.executable); if (canonical !== this.executable) throw new Error("incompatible non-canonical Pi executable path");
     await access(canonical, constants.X_OK); if (await this.captureVersion(canonical) !== this.version) throw new Error("incompatible Pi version");
-    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--tools", "read,grep,find,ls", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--tools", "read,grep,find,ls", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
     this.child = child; this.buffer = Buffer.alloc(0); this.stderrBytes = 0;
     child.stdout.on("data", (chunk: Buffer) => this.consume(chunk));
     child.stderr.on("data", (chunk: Buffer) => { this.stderrBytes += chunk.length; if (this.stderrBytes > MAX_STDERR_BYTES) this.protocolFailure("Pi stderr exceeded bound"); });

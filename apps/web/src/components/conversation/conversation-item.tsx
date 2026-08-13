@@ -42,7 +42,7 @@ function trimActionFor(item: ConversationItem, target: RecordingTrimTarget | und
     if (item.tentative) return null;
     if (item.playback !== 'completed' && item.playback !== 'interrupted') return null;
   }
-  const who = item.kind === 'assistant' ? "Oliver's response" : 'your message';
+  const who = item.kind === 'assistant' ? "Assistant's response" : 'your message';
   if (target.state === 'included') {
     if (!enabled) return null;
     return { setTrimmed: true, trimmedNow: false, label: 'Remove from recording', accessible: `Remove ${who} from recording` };
@@ -97,7 +97,7 @@ export function ConversationRow({ item, recording, onToggleBubbleTrim }: { item:
   const action = trimActionFor(item, target, recording.enabled);
   return <Message className="conversation-message assistant-row">
     <MessageContent>
-      <MessageHeader>Oliver</MessageHeader>
+      <MessageHeader>Assistant</MessageHeader>
       <Bubble variant="secondary"><BubbleContent className={cn('conversation-bubble assistant-bubble', item.tentative && 'tentative', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
         {item.parts && item.parts.length > 1
           ? item.parts.map((part, index) => <p key={index} className={cn(index > 0 && 'assistant-part', part.tentative && 'assistant-part-tentative')}>{part.text}</p>)

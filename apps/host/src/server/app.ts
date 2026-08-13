@@ -5,10 +5,10 @@ import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
 import type { SidecarProcess } from '../sidecar/process.js';
-import { sidecarHealth } from '../sidecar/process.js';
-import type { PiClient, PiReadiness } from '../pi/PiClient.js';
-import type { PiResearchClient } from '../pi/PiResearchClient.js';
-import { createPiResearchClient } from '../pi/PiResearchClient.js';
+import { sidecarSnapshot } from '../sidecar/process.js';
+import { createPiClient, type PiClient, type PiReadiness } from '../pi/PiClient.js';
+import { createPiResearchClient, type PiResearchClient } from '../pi/PiResearchClient.js';
+import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifier.js';
 import { BrowserSession } from './BrowserSession.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -19,13 +19,17 @@ const unavailablePi: PiClient = {
   async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
   async shutdown() {},
 };
-export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; }
+export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 
 export async function buildApp(options: BuildOptions): Promise<FastifyInstance> {
   const app = Fastify({ bodyLimit: 16 * 1024, logger: false, forceCloseConnections: true });
-  const researchPi = options.researchPi ?? createPiResearchClient();
+  // Per-session client factories: session-owned Pi children are created lazily at
+  // validated session.start, each frozen with the session's persona append.
+  const createResponseClient = options.createResponseClient ?? ((personaAppend: string) => createPiClient({ personaAppend }));
+  const createResearchClient = options.createResearchClient ?? ((personaAppend: string) => createPiResearchClient({ personaAppend }));
+  const createClassifierClient = options.createClassifierClient ?? (() => createPiClient({ systemPrompt: CLASSIFIER_SYSTEM_PROMPT }));
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
   const sessionTtlMs = options.sessionTtlMs ?? SESSION_TTL_MS;
@@ -78,7 +82,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       });
     },
   });
-  app.addHook('onClose', async () => { await Promise.allSettled([...shutdowns]); await researchPi.shutdown(); });
+  app.addHook('onClose', async () => { await Promise.allSettled([...shutdowns]); });
   const authenticate = (request: FastifyRequest): Session | undefined => {
     const id = cookieValue(request.headers.cookie); const capability = request.headers['x-podcaster-capability'];
     if (!id || typeof capability !== 'string') return;
@@ -93,7 +97,8 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     // a perpetual needs-action warning for voice input.
     const body = (request.body ?? {}) as { microphoneGranted?: unknown };
     const microphoneGranted = body.microphoneGranted === true;
-    const [audioReady, pi] = await Promise.all([sidecarHealth(options.sidecar), probePi()]);
+    const [snapshot, pi] = await Promise.all([sidecarSnapshot(options.sidecar), probePi()]);
+    const audioReady = Boolean(snapshot?.status === 'ready' && snapshot.voiceCatalog !== undefined);
     return {
       capabilities: [
         {
@@ -105,6 +110,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: audioReady ? 'Your local audio engine is running.' : "Your local audio engine isn't running yet.", action: audioReady ? 'No action needed.' : 'Wait a moment, then check again.' },
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
       ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi.status,
+      ...(snapshot?.voiceCatalog ? { voiceCatalog: snapshot.voiceCatalog } : {}),
     };
   });
   app.post('/api/bootstrap', { schema: { body: { type: 'object', additionalProperties: false, required: ['disclosureAcknowledged'], properties: { disclosureAcknowledged: { const: true } } } } }, async (_request, reply) => {
@@ -142,7 +148,12 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       const cap = typeof value === 'object' && value !== null ? (value as { capability?: unknown }).capability : undefined;
       if (!session || session.expiresAt <= now() || session.wsAuthenticated || typeof cap !== 'string' || !sameSecret(cap, session.capability)) { socket.close(1008, 'invalid authentication'); return; }
       session.wsAuthenticated = true; session.sockets.add(socket);
-      session.conversation = new BrowserSession(socket, options.sidecar, options.pi ?? unavailablePi, researchPi, options.multiPartEnabled !== false);
+      session.conversation = new BrowserSession(socket, options.sidecar, {
+        multiPartEnabled: options.multiPartEnabled !== false,
+        createResponseClient,
+        createResearchClient,
+        createClassifierClient,
+      });
       expiryTimer = setTimeout(() => socket.close(1008, 'session expired'), Math.max(0, session.expiresAt - now()));
       socket.send(JSON.stringify({ type: 'authenticated' }));
     });

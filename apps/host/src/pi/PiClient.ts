@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { access, lstat, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
+import { PODCASTER_SYSTEM_PROMPT } from "@app/contracts";
 
 export const PI_EXECUTABLE = "/home/soleone/.local/share/pnpm/bin/pi";
 export const PI_VERSION = "0.84.0";
@@ -21,13 +22,13 @@ type ObjectValue = Record<string, unknown>;
 export type PiReadinessStatus = "ready" | "login_required" | "unavailable" | "incompatible" | "rate_limited";
 export interface PiReadiness { status: PiReadinessStatus; detail: string; correctiveAction: string }
 export type PiPosture = "riff" | "question" | "challenge";
-export interface PiRequestInput { posture: PiPosture; transcript: string; boundedContext: string; personaInterpretation: string; maxWords: 45 }
+export interface PiRequestInput { posture: PiPosture; transcript: string; boundedContext: string; maxWords: 45 }
 export type PiEvent =
   | { type: "delta"; text: string }
   | { type: "final"; text: string }
   | { type: "error"; state: Exclude<PiReadinessStatus, "ready">; detail: string; correctiveAction: string };
 export interface PiClient { probe(): Promise<PiReadiness>; request(input: PiRequestInput, signal: AbortSignal): AsyncIterable<PiEvent>; shutdown(): Promise<void> }
-export interface PiClientOptions { executable?: string; version?: string; model?: string; startupDeadlineMs?: number; requestDeadlineMs?: number }
+export interface PiClientOptions { executable?: string; version?: string; model?: string; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number }
 interface Pending { resolve(value: ObjectValue): void; reject(error: Error): void; timer: NodeJS.Timeout }
 interface Lifecycle { messageEnded: boolean; stopReason: string | undefined; providerError: string | undefined; settled: boolean; assistantText: string; responseBytes: number; textExceeded: boolean }
 interface ActiveRequest extends Lifecycle {
@@ -89,18 +90,19 @@ function errorEvent(error: unknown): PiEvent {
 function promptFor(input: PiRequestInput): string {
   if (!( ["riff", "question", "challenge"] as const).includes(input.posture)) throw new Error("invalid posture");
   if (input.maxWords !== 45) throw new Error("maxWords must be exactly 45");
-  for (const [name, value, max] of [["transcript", input.transcript, 16_384], ["boundedContext", input.boundedContext, 16_384], ["personaInterpretation", input.personaInterpretation, 8_192]] as const)
+  for (const [name, value, max] of [["transcript", input.transcript, 16_384], ["boundedContext", input.boundedContext, 16_384]] as const)
     if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > max) throw new Error(`${name} exceeds its bound`);
-  return `Return only the response text, at most 45 words. Posture: ${input.posture}\nIf the persona lists experiences or tastes, you may briefly weave in at most one when it genuinely illuminates the user's topic; keep it to a phrase, never invent any, and let the user's topic stay the focus.\nPersona interpretation:\n${input.personaInterpretation}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
+  return `Posture: ${input.posture}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
 }
 
 export class StdioPiClient implements PiClient {
   private readonly executable: string; private readonly version: string; private readonly model: string;
+  private readonly systemPrompt: string; private readonly personaAppend: string;
   private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number;
   private child: ChildProcessWithoutNullStreams | undefined; private buffer = Buffer.alloc(0); private stderrBytes = 0;
   private pending = new Map<string, Pending>(); private sequence = 0; private active: ActiveRequest | undefined; private probeLifecycle: Lifecycle | undefined;
   private starting: Promise<void> | undefined; private ownership: Promise<void> = Promise.resolve(); private closed = false;
-  constructor(options: PiClientOptions = {}) { this.executable = options.executable ?? PI_EXECUTABLE; this.version = options.version ?? PI_VERSION; this.model = options.model ?? PI_MODEL; this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS; }
+  constructor(options: PiClientOptions = {}) { this.executable = options.executable ?? PI_EXECUTABLE; this.version = options.version ?? PI_VERSION; this.model = options.model ?? PI_MODEL; this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? ""; this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS; }
 
   private async acquire(): Promise<() => void> {
     let release!: () => void; const next = new Promise<void>(resolve => { release = resolve; });
@@ -186,7 +188,7 @@ export class StdioPiClient implements PiClient {
     const info = await lstat(this.executable); if (!info.isFile()) throw new Error("incompatible pinned Pi executable");
     const canonical = await realpath(this.executable); if (canonical !== this.executable) throw new Error("incompatible non-canonical Pi executable path");
     await access(canonical, constants.X_OK); if (await this.captureVersion(canonical) !== this.version) throw new Error("incompatible Pi version");
-    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
     this.child = child; this.buffer = Buffer.alloc(0); this.stderrBytes = 0;
     child.stdout.on("data", (chunk: Buffer) => this.consume(chunk));
     child.stderr.on("data", (chunk: Buffer) => { this.stderrBytes += chunk.length; if (this.stderrBytes > MAX_STDERR_BYTES) this.protocolFailure("Pi stderr exceeded bound"); });

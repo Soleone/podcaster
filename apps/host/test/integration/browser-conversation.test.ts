@@ -36,7 +36,7 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
     let utteranceSequence = 0;
     let activeUtterance = utteranceId;
     let progressiveStarted = false;
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1', voiceCatalog: { catalogId: 'sess-catalog', backendId: 'kokoro', modelId: 'kokoro-82m-onnx', runtimeConfigId: 'rc', revision: 'rev', defaultVoiceId: 'af_heart', voices: [{ id: 'af_heart', label: 'af_heart' }, { id: 'af_bella', label: 'Bella' }] } } }));
     socket.on('message', (raw, binary) => {
       if (binary) {
         activeUtterance = options.multiUtterance
@@ -65,7 +65,7 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
         const partIndex = Number(message.payload.partIndex ?? 0);
         const partPlaybackId = partIndex === 0 ? playbackId : '018f1f32-7ac4-7def-8abc-0123456789ab';
         const outputStreamId = 55 + partIndex;
-        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId: partPlaybackId, outputStreamId, sampleRate: 24000, partIndex } }));
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId: partPlaybackId, outputStreamId, sampleRate: 24000, voiceId: 'af_heart', partIndex } }));
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: outputStreamId, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
       } else if (message.type === 'tts.append' && options.multipart) {
         const partIndex = Number(message.payload.partIndex ?? 0);
@@ -77,7 +77,7 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
         if (options.progressiveTts && message.type === 'tts.append' && !progressiveStarted) {
           // Progressive synthesis: first append starts playback immediately, before commit/final.
           progressiveStarted = true;
-          socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, outputStreamId: 55, sampleRate: 24000 } }));
+          socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, outputStreamId: 55, sampleRate: 24000, voiceId: 'af_heart' } }));
           socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
         }
         // Progressive TTS: open/appends are acked silently, commit triggers the remainder
@@ -85,7 +85,7 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 1, monotonicUs: 3n, pcm16: new Int16Array(480) }, 64 * 1024));
         socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, generatedSamples: 960 } }));
       } else if ((message.type === 'tts.request' || message.type === 'tts.commit') && options.tts) {
-        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, outputStreamId: 55, sampleRate: 24000 } }));
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, outputStreamId: 55, sampleRate: 24000, voiceId: 'af_heart' } }));
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
         setTimeout(() => {
           socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55, sequence: 1, monotonicUs: 3n, pcm16: new Int16Array(480) }, 64 * 1024));
@@ -142,7 +142,7 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
     const nonterminal = new Map<number, { responseId: string; epoch: number }>();
     const sentSeq1 = new Set<number>();
     let utteranceSequence = 0;
-    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' } }));
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1', voiceCatalog: { catalogId: 'sess-catalog', backendId: 'kokoro', modelId: 'kokoro-82m-onnx', runtimeConfigId: 'rc', revision: 'rev', defaultVoiceId: 'af_heart', voices: [{ id: 'af_heart', label: 'af_heart' }, { id: 'af_bella', label: 'Bella' }] } } }));
     socket.on('message', (raw, binary) => {
       if (binary) {
         socket.send(JSON.stringify({ type: 'vad.speech_start', payload: { streamId: opened, utteranceId, captureStartSequence: utteranceSequence } }));
@@ -166,7 +166,7 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
         const responseId = String(message.payload.responseId);
         const epoch = Number(message.payload.epoch);
         nonterminal.set(partIndex, { responseId, epoch });
-        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId, epoch, playbackId, outputStreamId: 55 + partIndex, sampleRate: 24000, partIndex } }));
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: opened, responseId, epoch, playbackId, outputStreamId: 55 + partIndex, sampleRate: 24000, voiceId: 'af_heart', partIndex } }));
         socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 55 + partIndex, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(480) }, 64 * 1024));
       } else if (message.type === 'tts.append') {
         const partIndex = Number(message.payload.partIndex ?? 0);
@@ -193,7 +193,7 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
 describe('browser conversation routing', () => {
   it('completes fake Pi through streaming TTS and authoritative browser terminal accounting', async () => {
     const sidecar = await fakeAudio({ tts: true });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -202,7 +202,7 @@ describe('browser conversation routing', () => {
     const binary: Buffer[] = [];
     socket.on('message', (raw, isBinary) => { if (isBinary) binary.push(Buffer.from(raw as Buffer)); else messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
     const speechStart = await waitFor(messages, 'vad.speech_start');
@@ -228,7 +228,7 @@ describe('browser conversation routing', () => {
 
   it('degrades on persistence failure, permits bounded retry, and rejects acknowledgement after Stop', async () => {
     const sidecar = await fakeAudio();
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -236,7 +236,7 @@ describe('browser conversation routing', () => {
     const messages: Array<Record<string, unknown>> = [];
     socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
     const final = await waitFor(messages, 'transcript.final');
@@ -255,7 +255,7 @@ describe('browser conversation routing', () => {
 
   it('rejects a persistence acknowledgement made stale by an interrupting utterance', async () => {
     const sidecar = await fakeAudio({ multiUtterance: true });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -263,7 +263,7 @@ describe('browser conversation routing', () => {
     const messages: Array<Record<string, unknown>> = [];
     socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     const capture = (captureSequence: number) => socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: captureSequence, monotonicUs: BigInt(captureSequence + 1), pcm16: new Int16Array(320) }, 64 * 1024));
     capture(0);
@@ -286,13 +286,13 @@ describe('browser conversation routing', () => {
     let resolveClosed!: () => void;
     const sidecarClosed = new Promise<void>(resolve => { resolveClosed = resolve; });
     const sidecar = await fakeAudio({ onStreamClose: resolveClosed });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     await new Promise(resolve => setTimeout(resolve, 20));
     socket.close();
@@ -314,7 +314,7 @@ describe('browser conversation routing', () => {
       async shutdown() {},
     };
     const sidecar = await fakeAudio({ progressiveTts: true, multiUtterance: true });
-    const app = await buildApp({ sidecar, pi: controlledPi, multiPartEnabled: false });
+    const app = await buildApp({ sidecar, pi: controlledPi, multiPartEnabled: false, createResponseClient: () => controlledPi, createResearchClient: () => controlledPi, createClassifierClient: () => controlledPi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -323,7 +323,7 @@ describe('browser conversation routing', () => {
     const binary: Buffer[] = [];
     socket.on('message', (raw, isBinary) => { if (isBinary) binary.push(Buffer.from(raw as Buffer)); else messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
     const final = await waitFor(messages, 'transcript.final');
@@ -369,7 +369,7 @@ describe('browser conversation routing', () => {
 
   it('holds a stable final until the exact durable acknowledgement', async () => {
     const sidecar = await fakeAudio();
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -377,7 +377,7 @@ describe('browser conversation routing', () => {
     const messages: Array<Record<string, unknown>> = [];
     socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
     const final = await waitFor(messages, 'transcript.final');
@@ -408,7 +408,7 @@ describe('browser conversation routing', () => {
 
   it('keeps the browser socket open when the sidecar fails mid-turn (capture frames dropped after failure)', async () => {
     const sidecar = await fakeAudio({ failMidTurn: true });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -416,7 +416,7 @@ describe('browser conversation routing', () => {
     const messages: Array<Record<string, unknown>> = [];
     socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     // The sidecar fails shortly after stream open; AudioClient must drop
     // subsequent capture frames instead of throwing (which used to surface as
@@ -439,7 +439,7 @@ describe('browser conversation routing', () => {
       },
       async shutdown() {},
     };
-    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true });
+    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -448,7 +448,7 @@ describe('browser conversation routing', () => {
     const binary: Buffer[] = [];
     socket.on('message', (raw, isBinary) => { if (isBinary) binary.push(Buffer.from(raw as Buffer)); else messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
     const final = await waitFor(messages, 'transcript.final');
@@ -489,7 +489,7 @@ describe('browser conversation routing', () => {
       },
       async shutdown() {},
     };
-    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true });
+    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -497,7 +497,7 @@ describe('browser conversation routing', () => {
     const messages: Array<Record<string, unknown>> = [];
     socket.on('message', (raw, isBinary) => { if (!isBinary) messages.push(JSON.parse(raw.toString())); });
     await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
-    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full' })));
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
     socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
     socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
     const final = await waitFor(messages, 'transcript.final');

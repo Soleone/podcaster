@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* Every surface reads from these tokens; switching the accent is a one-line
    change here (or a data-theme override below). */
@@ -6,11 +7,16 @@
   --background: #f7f4ec;
   --foreground: #173c30;
   --card: #fffdf7;
+  --popover: #fffdf7;
+  --popover-foreground: #173c30;
   --border: #d7d0bf;
+  --input: #d7d0bf;
   --primary: #226e52;
   --primary-foreground: #fff;
   --muted: #e6e1d4;
   --muted-foreground: #52615b;
+  --accent: #e6e1d4;
+  --accent-foreground: #173c30;
   --destructive: #8b2f2f;
   --warning: #a14d28;
   --success: #236846;
@@ -29,11 +35,16 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-border: var(--border);
+  --color-input: var(--input);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-warning: var(--warning);
   --color-success: var(--success);

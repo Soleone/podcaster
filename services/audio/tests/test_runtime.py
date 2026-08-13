@@ -35,14 +35,33 @@ class FakeStt:
 @dataclass
 class FakeTts:
     closed: bool = False
+    default_voice: str = "af_heart"
 
-    def synthesize_stream(self, text, cancel, on_audio=None):
+    def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
         assert text == "response"
+        assert voice in (None, self.default_voice)
         for sequence in range(2):
             cancel.raise_if_cancelled()
             if on_audio:
                 on_audio(AudioChunk(sequence, bytes(960), 24_000, sequence * 480))
         return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 2)
+
+    def get_voices(self):
+        return [{"id": self.default_voice, "label": self.default_voice}]
+
+    def voice_catalog(self):
+        return {
+            "catalogId": "catalog",
+            "backendId": "kokoro",
+            "modelId": "kokoro-82m-onnx",
+            "runtimeConfigId": "rc",
+            "revision": "rev",
+            "defaultVoiceId": self.default_voice,
+            "voices": self.get_voices(),
+        }
+
+    def has_voice(self, voice_id):
+        return voice_id == self.default_voice
 
     def close(self):
         self.closed = True
@@ -281,7 +300,7 @@ def test_cancelled_tts_queues_replacement_until_adapter_exits() -> None:
     calls = 0
 
     class BlockingTts(FakeTts):
-        def synthesize_stream(self, text, cancel, on_audio=None):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -318,7 +337,7 @@ def test_closing_stream_rejects_concurrent_tts_and_fences_worker() -> None:
     release = threading.Event()
 
     class BlockingTts(FakeTts):
-        def synthesize_stream(self, text, cancel, on_audio=None):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
             entered.set()
             release.wait(1)
             cancel.raise_if_cancelled()
@@ -450,7 +469,7 @@ def test_noise_start_while_prior_utterance_finalizes_does_not_close_stream() -> 
 
 def test_adapter_exception_poisons_runtime_until_restart() -> None:
     class ExplodingTts(FakeTts):
-        def synthesize_stream(self, text, cancel, on_audio=None):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
             raise RuntimeError("adapter failed")
 
     runtime = SelectedAudioRuntime(FakeStt(), ExplodingTts())
@@ -474,7 +493,7 @@ def test_cancel_return_is_a_no_more_audio_cutoff() -> None:
     continue_synthesis = threading.Event()
 
     class DelayedTts(FakeTts):
-        def synthesize_stream(self, text, cancel, on_audio=None):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
             assert on_audio is not None
             on_audio(AudioChunk(0, bytes(960), 24_000, 0))
             first.set()

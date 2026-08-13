@@ -28,6 +28,67 @@
     "response": {
       "type": "string",
       "format": "uuid"
+    },
+    "voiceCatalog": {
+      "type": "object",
+      "required": [
+        "catalogId",
+        "backendId",
+        "modelId",
+        "runtimeConfigId",
+        "revision",
+        "defaultVoiceId",
+        "voices"
+      ],
+      "properties": {
+        "catalogId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backendId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeConfigId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultVoiceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "voices": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -56,6 +117,9 @@
             },
             "tts": {
               "const": "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
+            },
+            "voiceCatalog": {
+              "$ref": "#/$defs/voiceCatalog"
             }
           },
           "additionalProperties": false
@@ -65,7 +129,29 @@
       "required": [
         "type",
         "payload"
-      ]
+      ],
+      "if": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "ready"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "voiceCatalog"
+            ]
+          }
+        }
+      }
     },
     {
       "properties": {
@@ -339,7 +425,8 @@
             "streamId",
             "responseId",
             "epoch",
-            "text"
+            "text",
+            "voiceId"
           ],
           "properties": {
             "streamId": {
@@ -356,6 +443,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 4000
+            },
+            "voiceId": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "additionalProperties": false
@@ -377,7 +468,8 @@
           "required": [
             "streamId",
             "responseId",
-            "epoch"
+            "epoch",
+            "voiceId"
           ],
           "properties": {
             "streamId": {
@@ -389,6 +481,10 @@
             "epoch": {
               "type": "integer",
               "minimum": 0
+            },
+            "voiceId": {
+              "type": "string",
+              "minLength": 1
             },
             "partIndex": {
               "type": "integer",
@@ -569,7 +665,8 @@
             "epoch",
             "playbackId",
             "outputStreamId",
-            "sampleRate"
+            "sampleRate",
+            "voiceId"
           ],
           "properties": {
             "streamId": {
@@ -593,6 +690,10 @@
             },
             "sampleRate": {
               "const": 24000
+            },
+            "voiceId": {
+              "type": "string",
+              "minLength": 1
             },
             "partIndex": {
               "type": "integer",

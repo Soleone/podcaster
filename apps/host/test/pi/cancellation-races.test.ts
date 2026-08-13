@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { StdioPiClient, type PiEvent, type PiRequestInput } from "../../src/pi/PiClient.js";
 import { makeFakePi } from "../fixtures/fake-pi.js";
 
-const input: PiRequestInput = { posture: "question", transcript: "What should we test next?", boundedContext: "", personaInterpretation: "Curious", maxWords: 45 };
+const input: PiRequestInput = { posture: "question", transcript: "What should we test next?", boundedContext: "", maxWords: 45 };
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())); });

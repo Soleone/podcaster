@@ -97,6 +97,7 @@ class TtsTextStream:
     done: threading.Event = field(default_factory=threading.Event)
     part_index: int | None = None
     part_id: str | None = None
+    voice_id: str = ""
 
 
 @dataclass
@@ -184,10 +185,21 @@ class SelectedAudioRuntime:
         self.status = "ready"
 
     def readiness(self) -> dict[str, object]:
-        return {
-            "type": "readiness.snapshot",
-            "payload": {"status": self.status, "stt": STT_CONFIG_ID, "tts": TTS_CONFIG_ID},
+        payload: dict[str, object] = {
+            "status": self.status,
+            "stt": STT_CONFIG_ID,
+            "tts": TTS_CONFIG_ID,
         }
+        if self.status == "ready":
+            try:
+                payload["voiceCatalog"] = self.tts.voice_catalog()
+            except BaseException:
+                # A ready runtime must advertise its verified catalog; if it cannot,
+                # report it as not ready so the browser never over-promises voices.
+                self.status = "failed"
+                payload["status"] = "failed"
+                payload.pop("voiceCatalog", None)
+        return {"type": "readiness.snapshot", "payload": payload}
 
     def open_stream(
         self,
@@ -278,9 +290,9 @@ class SelectedAudioRuntime:
             utterance.epoch = epoch
             self._maybe_start_stt(state, utterance)
 
-    def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str) -> None:
+    def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str, *, voice_id: str | None = None) -> None:
         """Compatibility wrapper: one-shot TTS through the progressive path."""
-        self.open_tts(stream_id, response_id, epoch)
+        self.open_tts(stream_id, response_id, epoch, voice_id=voice_id)
         self.append_tts(stream_id, response_id, epoch, 0, text)
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         try:
@@ -301,8 +313,16 @@ class SelectedAudioRuntime:
         epoch: int,
         part_index: int | None = None,
         part_id: str | None = None,
+        *,
+        voice_id: str | None = None,
     ) -> None:
         state = self._state(stream_id)
+        voice_catalog = self.tts.voice_catalog()
+        voices = {str(item["id"]): item for item in voice_catalog.get("voices", [])} if isinstance(voice_catalog.get("voices"), list) else {}
+        if voice_id is None:
+            voice_id = str(voice_catalog.get("defaultVoiceId", ""))
+        if voice_id not in voices:
+            raise ValueError("requested voice is absent from the verified catalog")
         with self._lock:
             if self.status != "ready":
                 raise RuntimeError("selected runtime requires restart")
@@ -336,6 +356,7 @@ class SelectedAudioRuntime:
                 done=done,
                 part_index=part_index,
                 part_id=part_id,
+                voice_id=voice_id,
             )
             state.tts_stream = text_stream
 
@@ -366,6 +387,7 @@ class SelectedAudioRuntime:
                         "playbackId": text_stream.playback_id,
                         "outputStreamId": text_stream.output_stream_id,
                         "sampleRate": 24_000,
+                        "voiceId": text_stream.voice_id,
                     }
                     if text_stream.part_index is not None:
                         started_payload["partIndex"] = text_stream.part_index
@@ -406,7 +428,7 @@ class SelectedAudioRuntime:
                         text_stream.generated_samples += len(chunk.pcm16) // 2
                         local_sequence += 1
 
-                    self.tts.synthesize_stream(chunk_text, text_stream.token, audio)
+                    self.tts.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
                     text_stream.token.raise_if_cancelled()
 
                 # All chunks synthesized, emit tts.ended

@@ -27,14 +27,33 @@ class FakeStt:
 @dataclass
 class FakeTts:
     closed: bool = False
+    default_voice: str = "af_heart"
 
-    def synthesize_stream(self, text, cancel, on_audio=None):
+    def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
         assert text == "response"
+        assert voice in (None, self.default_voice)
         for sequence in range(2):
             cancel.raise_if_cancelled()
             if on_audio:
                 on_audio(AudioChunk(sequence, bytes(960), 24_000, sequence * 480))
         return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 2)
+
+    def get_voices(self):
+        return [{"id": self.default_voice, "label": self.default_voice}]
+
+    def voice_catalog(self):
+        return {
+            "catalogId": "catalog",
+            "backendId": "kokoro",
+            "modelId": "kokoro-82m-onnx",
+            "runtimeConfigId": "rc",
+            "revision": "rev",
+            "defaultVoiceId": self.default_voice,
+            "voices": self.get_voices(),
+        }
+
+    def has_voice(self, voice_id):
+        return voice_id == self.default_voice
 
     def close(self):
         self.closed = True
@@ -105,7 +124,9 @@ def test_legacy_open_without_part_fields_emits_byte_identical_payloads() -> None
         "playbackId",
         "outputStreamId",
         "sampleRate",
+        "voiceId",
     }
+    assert started["payload"]["voiceId"] == "af_heart"
     assert set(ended["payload"]) == {
         "streamId",
         "responseId",
@@ -137,18 +158,13 @@ def test_committed_stream_allows_one_prefetched_successor() -> None:
 
     first_release = threading.Event()
 
-    class BlockingTts:
-        closed: bool = False
-
-        def synthesize_stream(self, text, cancel, on_audio=None):
+    class BlockingTts(FakeTts):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
             first_release.wait(timeout=2)
             cancel.raise_if_cancelled()
             if on_audio:
                 on_audio(AudioChunk(0, bytes(960), 24_000, 0))
             return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 1)
-
-        def close(self):
-            self.closed = True
 
     runtime = SelectedAudioRuntime(FakeStt(), BlockingTts())
     runtime.mark_ready_for_test()
@@ -187,15 +203,10 @@ def test_third_open_raises_defensive_queue_bound() -> None:
 
     release = threading.Event()
 
-    class BlockingTts:
-        closed: bool = False
-
-        def synthesize_stream(self, text, cancel, on_audio=None):
+    class BlockingTts(FakeTts):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
             release.wait(timeout=2)
             return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 1)
-
-        def close(self):
-            self.closed = True
 
     runtime = SelectedAudioRuntime(FakeStt(), BlockingTts())
     runtime.mark_ready_for_test()

@@ -15,7 +15,19 @@ SECRET = "s" * 43
 
 @contextmanager
 def running_server() -> Iterator[tuple[SidecarServer, int]]:
-    runtime = SelectedAudioRuntime(object(), object())
+    class _ReadyTts:
+        def voice_catalog(self):
+            return {
+                "catalogId": "catalog",
+                "backendId": "kokoro",
+                "modelId": "kokoro-82m-onnx",
+                "runtimeConfigId": "rc",
+                "revision": "rev",
+                "defaultVoiceId": "af_heart",
+                "voices": [{"id": "af_heart", "label": "af_heart"}],
+            }
+
+    runtime = SelectedAudioRuntime(object(), _ReadyTts())
     runtime.mark_ready_for_test()
     server = SidecarServer(("127.0.0.1", 0), SECRET, runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

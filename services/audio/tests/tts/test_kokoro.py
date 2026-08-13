@@ -79,6 +79,9 @@ class FakeBackend:
     def prepare(self, model_path: str, voices_path: str, provider: str) -> None:
         self.prepared = (model_path, voices_path, provider)
 
+    def get_voices(self) -> list[str]:
+        return [VOICE]
+
     async def create_stream(
         self, text: str, voice: str, speed: float, language: str
     ) -> AsyncIterator[tuple[np.ndarray, int]]:

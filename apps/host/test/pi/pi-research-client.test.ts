@@ -4,7 +4,7 @@ import { PI_MODEL, type PiEvent } from "../../src/pi/PiClient.js";
 import { StdioPiResearchClient, type PiResearchRequestInput } from "../../src/pi/PiResearchClient.js";
 import { makeFakePi, type FakePiScenario } from "../fixtures/fake-pi.js";
 
-const input: PiResearchRequestInput = { posture: "question", transcript: "A stable transcript", boundedContext: "Prior local context", personaInterpretation: "Be precise", stallText: "Let me look that up.", maxWords: 600 };
+const input: PiResearchRequestInput = { posture: "question", transcript: "A stable transcript", boundedContext: "Prior local context", stallText: "Let me look that up.", maxWords: 600 };
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())); });
