@@ -53,3 +53,6 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+
+# sift local state
+.sift/
