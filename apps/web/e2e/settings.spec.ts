@@ -24,6 +24,12 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   await expect(persona).toBeVisible();
   const initial = await page.locator('#settings-persona-counter').innerText();
 
+  // Agent name sits at the top of the Agent tab and defaults to Oliver.
+  const agentName = page.getByLabel('Agent name');
+  await expect(agentName).toBeVisible();
+  await expect(agentName).toHaveValue('Oliver');
+  await agentName.fill('Ada');
+
   await persona.fill('You are a terse, curious night-owl host who loves coastal weather.');
   await expect(page.locator('#settings-persona-counter')).not.toHaveText(initial);
 
@@ -58,11 +64,13 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
 test('settings survive a reload on the same browser', async ({ page }) => {
   await installFakeMicrophone(page);
   await openSettings(page);
-  await page.getByLabel('Persona').fill('You are Lin, a gentle storyteller.');
+  await page.getByLabel('Agent name').fill('Lin');
+  await page.getByLabel('Persona').fill('You are a gentle storyteller.');
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   await page.reload();
   await page.getByRole('button', { name: /Open settings/ }).first().click();
-  await expect(page.getByLabel('Persona')).toHaveValue('You are Lin, a gentle storyteller.');
+  await expect(page.getByLabel('Agent name')).toHaveValue('Lin');
+  await expect(page.getByLabel('Persona')).toHaveValue('You are a gentle storyteller.');
 });

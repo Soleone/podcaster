@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Settings, Sparkles } from 'lucide-react';
-import { MAX_PERSONA_BYTES, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../components/ui/collapsible';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field';
+import { Input } from '../components/ui/input';
 import { ScrollArea } from '../components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Spinner } from '../components/ui/spinner';
@@ -27,31 +28,35 @@ export interface SettingsDialogProps {
   catalog: VoiceCatalog | undefined;
   saving: boolean;
   saveError: string | undefined;
-  onSave: (persona: string, voice: VoicePreference) => Promise<void>;
+  onSave: (agentName: string, persona: string, voice: VoicePreference) => Promise<void>;
 }
 
 export function SettingsDialog({ open, onOpenChange, model, catalog, saving, saveError, onSave }: SettingsDialogProps) {
+  const [agentName, setAgentName] = useState(model.agentName);
   const [persona, setPersona] = useState(model.persona);
   const [voiceId, setVoiceId] = useState(model.voice.voiceId);
   const [promptOpen, setPromptOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    setAgentName(model.agentName);
     setPersona(model.persona);
     setVoiceId(model.voice.voiceId);
     setPromptOpen(false);
-  }, [open, model.persona, model.voice.voiceId]);
+  }, [open, model.agentName, model.persona, model.voice.voiceId]);
 
+  const agentNameBytes = useMemo(() => utf8ByteLength(agentName), [agentName]);
+  const agentNameInvalid = agentNameBytes > MAX_AGENT_NAME_BYTES;
   const personaBytes = useMemo(() => utf8ByteLength(persona), [persona]);
   const personaInvalid = personaBytes > MAX_PERSONA_BYTES;
   const catalogReady = Boolean(catalog && catalog.voices.length > 0);
   const selectedVoice = catalog?.voices.find(voice => voice.id === voiceId);
-  const canSave = !personaInvalid && !saving;
+  const canSave = !agentNameInvalid && !personaInvalid && !saving;
 
   const commit = async () => {
     if (!canSave) return;
     const voice: VoicePreference = { catalogId: catalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '' };
-    await onSave(persona, voice);
+    await onSave(agentName, persona, voice);
   };
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
@@ -68,6 +73,25 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
           </TabsList>
           <TabsContent value="agent" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-4 pr-1">
             <FieldGroup className="min-h-0 flex-1">
+              <Field data-invalid={agentNameInvalid || undefined}>
+                <FieldLabel htmlFor="settings-agent-name">Agent name</FieldLabel>
+                <FieldContent>
+                  <Input
+                    id="settings-agent-name"
+                    value={agentName}
+                    onChange={event => setAgentName(event.target.value)}
+                    aria-invalid={agentNameInvalid || undefined}
+                    aria-describedby="settings-agent-name-description settings-agent-name-counter"
+                    placeholder="e.g. Oliver"
+                    maxLength={MAX_AGENT_NAME_BYTES}
+                  />
+                  <FieldDescription id="settings-agent-name-description">Name shown above the assistant's messages in the conversation. It is kept out of the system prompt.</FieldDescription>
+                  <p id="settings-agent-name-counter" className={cn('text-xs text-muted-foreground', agentNameInvalid && 'text-destructive')} aria-live="polite">
+                    {agentNameBytes.toLocaleString()} / {MAX_AGENT_NAME_BYTES.toLocaleString()} bytes
+                  </p>
+                  {agentNameInvalid ? <FieldError>Agent name exceeds the {MAX_AGENT_NAME_BYTES}-byte limit.</FieldError> : null}
+                </FieldContent>
+              </Field>
               <Field data-invalid={personaInvalid || undefined} className="min-h-0 flex-1">
                 <FieldLabel htmlFor="settings-persona">Persona</FieldLabel>
                 <FieldContent className="min-h-0">

@@ -21,7 +21,7 @@ import { RecordingStore, type RecordingItemSummary } from './storage/recording-s
 import { StableTurnWriter } from './storage/stable-turn-writer';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { SettingsDialog } from './settings/SettingsDialog';
@@ -249,10 +249,10 @@ export function App() {
     writerRef.current = opened;
     const id = uuidV7();
     const seed = uuidV7();
-    const frozen: SettingsModel = { persona: settingsModel.persona, voice: { catalogId: settingsModel.voice.catalogId, voiceId: settingsModel.voice.voiceId } };
+    const frozen: SettingsModel = { agentName: settingsModel.agentName, persona: settingsModel.persona, voice: { catalogId: settingsModel.voice.catalogId, voiceId: settingsModel.voice.voiceId } };
     settingsFrozenRef.current = frozen;
     const settings: SessionStartSettings = { version: 1, persona: frozen.persona, voice: { catalogId: frozen.voice.catalogId, voiceId: frozen.voice.voiceId } };
-    const personaDigest = settingsDigest(settings);
+    const personaDigest = settingsDigest(frozen);
     const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
     startedAt.current = Date.now();
@@ -343,18 +343,18 @@ export function App() {
 
   const onCatalog = useCallback((catalog: VoiceCatalog) => {
     voiceCatalogRef.current = catalog;
-    setSettingsModel(prev => applyReconciled(prev.persona, reconcileVoice(prev.voice, catalog)));
+    setSettingsModel(prev => applyReconciled(prev, reconcileVoice(prev.voice, catalog)));
   }, []);
 
-  const saveSettings = useCallback(async (persona: string, voice: VoicePreference) => {
+  const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference) => {
     setSettingsSaving(true);
     setSettingsSaveError(undefined);
     try {
       const store = settingsStoreRef.current ?? await SettingsStore.open();
       settingsStoreRef.current = store;
-      const ok = await store.save({ version: 1, persona, voice });
+      const ok = await store.save({ version: 1, agentName, persona, voice });
       if (!ok) throw new Error('Settings could not be saved on this device.');
-      setSettingsModel(applyReconciled(persona, { voice }));
+      setSettingsModel(applyReconciled({ agentName, persona }, { voice }));
       setSettingsOpen(false);
     } catch (error) {
       setSettingsSaveError(error instanceof Error ? error.message : 'Settings could not be saved.');
@@ -371,7 +371,7 @@ export function App() {
       if (cancelled) return;
       const catalog = voiceCatalogRef.current;
       const reconciled = reconcileVoice(stored?.voice, catalog);
-      setSettingsModel(applyReconciled(stored?.persona ?? DEFAULT_AGENT_PERSONA, reconciled));
+      setSettingsModel(applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA }, reconciled));
     });
     return () => { cancelled = true; };
   }, []);
@@ -409,6 +409,7 @@ export function App() {
   return <div className="session-layout">
     <SessionScreen
       state={view}
+      agentName={settingsModel.agentName}
       elapsedSeconds={elapsed}
       onStop={() => void stop()}
       onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}

@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_AGENT_NAME,
   DEFAULT_AGENT_PERSONA,
   PODCASTER_SYSTEM_PROMPT,
+  AgentNameTooLongError,
   PersonaTooLargeError,
   composePersonaAppend,
   isVoiceInCatalog,
   isValidSessionSettingsSnapshot,
   isValidVoiceCatalog,
   isValidVoicePreference,
+  MAX_AGENT_NAME_BYTES,
   MAX_PERSONA_BYTES,
+  normalizeAgentName,
   normalizePersona,
   utf8ByteLength,
 } from "../src/settings/index.js";
@@ -20,9 +24,18 @@ describe("settings prompt semantics", () => {
     expect(PODCASTER_SYSTEM_PROMPT.toLowerCase()).not.toContain("oliver");
   });
 
-  it("provides the Oliver default persona as editable free-form text", () => {
-    expect(DEFAULT_AGENT_PERSONA).toContain("Oliver");
+  it("keeps the default persona free of the agent name so the prompt stays name-neutral", () => {
+    expect(DEFAULT_AGENT_NAME).toBe("Oliver");
     expect(DEFAULT_AGENT_PERSONA).toContain("late-night radio host");
+    expect(DEFAULT_AGENT_PERSONA).not.toContain("Oliver");
+    expect(DEFAULT_AGENT_PERSONA).not.toMatch(/You are [A-Z][a-z]+/);
+  });
+
+  it("normalizes and bounds the editable agent name", () => {
+    expect(normalizeAgentName("  Ada  ")).toBe("Ada");
+    expect(normalizeAgentName("\uFEFFLin")).toBe("Lin");
+    expect(() => normalizeAgentName("x".repeat(MAX_AGENT_NAME_BYTES + 1))).toThrow(AgentNameTooLongError);
+    expect(normalizeAgentName("x".repeat(MAX_AGENT_NAME_BYTES)).length).toBe(MAX_AGENT_NAME_BYTES);
   });
 
   it("normalizes line endings and BOM", () => {

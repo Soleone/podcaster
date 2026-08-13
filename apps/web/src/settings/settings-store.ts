@@ -2,13 +2,21 @@
 // store (no schema version bump), validated on every read. A failed save
 // preserves the last committed row and reports failure to the caller.
 
-import { DEFAULT_AGENT_PERSONA, MAX_PERSONA_BYTES, type SessionSettingsSnapshot } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, SETTINGS_VERSION, type VoicePreference } from '@app/contracts/settings';
 import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory } from '../storage/schema';
 
 export const SETTINGS_KEY = 'settings:v1';
-export type StoredSettings = SessionSettingsSnapshot;
 
-export const DEFAULT_SETTINGS: StoredSettings = { version: 1, persona: DEFAULT_AGENT_PERSONA, voice: { catalogId: '', voiceId: '' } };
+/** The browser-persisted settings row: the display name plus the frozen session snapshot. */
+export interface StoredSettings {
+  version: typeof SETTINGS_VERSION;
+  /** Editable agent display name used in the conversation bubbles; never sent to the host. */
+  agentName: string;
+  persona: string;
+  voice: VoicePreference;
+}
+
+export const DEFAULT_SETTINGS: StoredSettings = { version: 1, agentName: DEFAULT_AGENT_NAME, persona: DEFAULT_AGENT_PERSONA, voice: { catalogId: '', voiceId: '' } };
 
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -22,7 +30,8 @@ function utf8ByteLength(value: string): number {
 export function isValidStoredSettings(value: unknown): value is StoredSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  if (record.version !== 1 || typeof record.persona !== 'string') return false;
+  if (record.version !== 1 || typeof record.persona !== 'string' || typeof record.agentName !== 'string') return false;
+  if (utf8ByteLength(record.agentName) > MAX_AGENT_NAME_BYTES) return false;
   if (utf8ByteLength(record.persona) > MAX_PERSONA_BYTES) return false;
   const voice = record.voice as Record<string, unknown> | undefined;
   if (!voice || typeof voice !== 'object' || typeof voice.catalogId !== 'string' || typeof voice.voiceId !== 'string') return false;

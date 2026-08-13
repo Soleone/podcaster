@@ -6,6 +6,12 @@ export const SETTINGS_VERSION = 1 as const;
 
 export const MAX_PERSONA_BYTES = 8 * 1024;
 
+/** Upper bound on the editable agent display name, in UTF-8 bytes. */
+export const MAX_AGENT_NAME_BYTES = 64;
+
+/** The first-run editable default agent name shown above the assistant's bubbles. */
+export const DEFAULT_AGENT_NAME = "Oliver";
+
 /** A single advertised voice from a verified TTS backend/model catalog. */
 export interface VoiceInfo {
   /** Stable, authoritative voice identifier used on every tts.open. */

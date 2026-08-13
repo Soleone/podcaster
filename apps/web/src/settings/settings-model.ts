@@ -1,10 +1,11 @@
 // Settings reconciliation against the verified voice catalog. Browser-safe.
 
-import { DEFAULT_AGENT_PERSONA, isVoiceInCatalog, isValidVoicePreference, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, isVoiceInCatalog, isValidVoicePreference, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 
 export type VoiceNoticeReason = 'rebase' | 'defaulted' | 'missing_catalog';
 
 export interface SettingsModel {
+  agentName: string;
   persona: string;
   voice: VoicePreference;
   notice?: VoiceNoticeReason;
@@ -15,12 +16,12 @@ export function defaultVoice(catalog: VoiceCatalog | undefined): VoicePreference
 }
 
 export function defaultSettingsModel(catalog: VoiceCatalog | undefined): SettingsModel {
-  return { persona: DEFAULT_AGENT_PERSONA, voice: defaultVoice(catalog) };
+  return { agentName: DEFAULT_AGENT_NAME, persona: DEFAULT_AGENT_PERSONA, voice: defaultVoice(catalog) };
 }
 
-/** Stable audit digest over the frozen agent settings snapshot (persona + voice). */
-export function settingsDigest(settings: { persona: string; voice: VoicePreference }): string {
-  const source = `${settings.persona}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}`;
+/** Stable audit digest over the frozen agent settings snapshot (name + persona + voice). */
+export function settingsDigest(settings: { agentName: string; persona: string; voice: VoicePreference }): string {
+  const source = `${settings.agentName}\u0000${settings.persona}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}`;
   let hash1 = 0x811c9dc5;
   let hash2 = 0x01000193 ^ 0x3f08;
   for (const byte of new TextEncoder().encode(source)) {
@@ -49,8 +50,8 @@ export function reconcileVoice(preference: VoicePreference | undefined, catalog:
 }
 
 /** Build a SettingsModel honoring exactOptionalPropertyTypes (never sets undefined). */
-export function applyReconciled(persona: string, reconciled: { voice: VoicePreference; notice?: VoiceNoticeReason }): SettingsModel {
+export function applyReconciled(base: { agentName: string; persona: string }, reconciled: { voice: VoicePreference; notice?: VoiceNoticeReason }): SettingsModel {
   return reconciled.notice
-    ? { persona, voice: reconciled.voice, notice: reconciled.notice }
-    : { persona, voice: reconciled.voice };
+    ? { agentName: base.agentName, persona: base.persona, voice: reconciled.voice, notice: reconciled.notice }
+    : { agentName: base.agentName, persona: base.persona, voice: reconciled.voice };
 }

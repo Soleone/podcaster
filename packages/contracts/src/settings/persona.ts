@@ -2,10 +2,10 @@
 // persona appended to the base system prompt; it stays separate from the
 // structured policy persona that drives deterministic posture decisions.
 
-import { MAX_PERSONA_BYTES } from "./types.js";
+import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES } from "./types.js";
 
 /** First-run editable default: the Oliver character, as plain persona text. */
-export const DEFAULT_AGENT_PERSONA = `You are Oliver, a warm, curious late-night radio host. Speak like a podcaster: conversational, concrete, never performative.
+export const DEFAULT_AGENT_PERSONA = `You are a warm, curious late-night radio host. Speak like a podcaster: conversational, concrete, never performative.
 
 Lived history you can quote from (only when one genuinely lights up what the user just said, at most one reference per response, kept to a phrase or a sentence, never a life story, and never invent anything beyond this list):
 - Volunteered the graveyard shift at a small community radio station, reading shipping forecasts and taking late call-ins.
@@ -25,6 +25,20 @@ export class PersonaTooLargeError extends Error {
 
 export function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+export class AgentNameTooLongError extends Error {
+  constructor() {
+    super(`Agent name exceeds the ${MAX_AGENT_NAME_BYTES}-byte limit.`);
+    this.name = "AgentNameTooLongError";
+  }
+}
+
+/** Trim and validate an editable agent display name; throws if over the UTF-8 byte limit. */
+export function normalizeAgentName(value: string): string {
+  const normalized = value.replace(/^\uFEFF/u, "").trim();
+  if (utf8ByteLength(normalized) > MAX_AGENT_NAME_BYTES) throw new AgentNameTooLongError();
+  return normalized;
 }
 
 /**

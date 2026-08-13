@@ -43,16 +43,18 @@ describe('settings-model voice reconciliation', () => {
   });
 
   it('honors exactOptionalPropertyTypes on the model', () => {
-    const withNotice: SettingsModel = applyReconciled('persona', reconcileVoice({ catalogId: 'c1', voiceId: 'af_bella' }, { ...catalog, catalogId: 'c2' }));
+    const withNotice: SettingsModel = applyReconciled({ agentName: 'Ada', persona: 'persona' }, reconcileVoice({ catalogId: 'c1', voiceId: 'af_bella' }, { ...catalog, catalogId: 'c2' }));
+    expect(withNotice.agentName).toBe('Ada');
     expect(withNotice.notice).toBe('rebase');
-    const clean: SettingsModel = applyReconciled('persona', reconcileVoice({ catalogId: 'c1', voiceId: 'af_bella' }, catalog));
+    const clean: SettingsModel = applyReconciled({ agentName: 'Ada', persona: 'persona' }, reconcileVoice({ catalogId: 'c1', voiceId: 'af_bella' }, catalog));
     expect('notice' in clean).toBe(false);
   });
 
   it('produces a stable, input-sensitive digest', () => {
-    const a = settingsDigest({ persona: 'x', voice: { catalogId: 'c', voiceId: 'v' } });
-    expect(a).toBe(settingsDigest({ persona: 'x', voice: { catalogId: 'c', voiceId: 'v' } }));
-    expect(a).not.toBe(settingsDigest({ persona: 'y', voice: { catalogId: 'c', voiceId: 'v' } }));
-    expect(a).not.toBe(settingsDigest({ persona: 'x', voice: { catalogId: 'c', voiceId: 'w' } }));
+    const a = settingsDigest({ agentName: 'Ada', persona: 'x', voice: { catalogId: 'c', voiceId: 'v' } });
+    expect(a).toBe(settingsDigest({ agentName: 'Ada', persona: 'x', voice: { catalogId: 'c', voiceId: 'v' } }));
+    expect(a).not.toBe(settingsDigest({ agentName: 'Lin', persona: 'x', voice: { catalogId: 'c', voiceId: 'v' } }));
+    expect(a).not.toBe(settingsDigest({ agentName: 'Ada', persona: 'y', voice: { catalogId: 'c', voiceId: 'v' } }));
+    expect(a).not.toBe(settingsDigest({ agentName: 'Ada', persona: 'x', voice: { catalogId: 'c', voiceId: 'w' } }));
   });
 });

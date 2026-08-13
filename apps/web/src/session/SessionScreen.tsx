@@ -25,7 +25,7 @@ const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> =
   idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; onOpenSettings: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean> }) {
+export function SessionScreen(props: { state: SessionViewState; agentName: string; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; onOpenSettings: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean> }) {
   const [trimAnnouncement, setTrimAnnouncement] = useState('');
   const handleTrim = useCallback(async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
     const ok = await props.onToggleBubbleTrim(targetId, trimmed);
@@ -45,6 +45,7 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
   }, [props.onCancelAssistant, props.state.dominant, props.settingsOpen]);
 
   const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking';
+  const agentName = props.agentName.trim() || 'Assistant';
   // Keep the "typing" shimmer only until the first reasoning preview arrives; the
   // dimmed tentative row then takes over as the visible progress signal.
   const hasAssistantText = props.state.conversationItems.some(item => item.kind === 'assistant' && item.text.trim() !== '');
@@ -66,8 +67,8 @@ export function SessionScreen(props: { state: SessionViewState; elapsedSeconds: 
             <MessageScrollerViewport aria-label="Conversation transcript">
               <MessageScrollerContent className="conversation-list" aria-busy={props.state.dominant === 'reasoning'}>
                 {props.state.conversationItems.length === 0 && !props.state.tentativeText ? <MessageScrollerItem messageId="conversation-empty"><p className="hint">Your conversation will appear here.</p></MessageScrollerItem> : null}
-                {props.state.conversationItems.filter(item => !(item.kind === 'assistant' && !item.text)).map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} recording={props.recording} onToggleBubbleTrim={handleTrim} /></MessageScrollerItem>)}
-                {showAssistantActivity ? <MessageScrollerItem messageId="assistant-activity"><Marker role="status" className="assistant-activity"><MarkerContent className="shimmer"><span className="font-medium">Assistant</span> {props.state.dominant === 'speaking' ? 'is speaking…' : 'is typing…'}</MarkerContent></Marker></MessageScrollerItem> : null}
+                {props.state.conversationItems.filter(item => !(item.kind === 'assistant' && !item.text)).map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} agentName={agentName} recording={props.recording} onToggleBubbleTrim={handleTrim} /></MessageScrollerItem>)}
+                {showAssistantActivity ? <MessageScrollerItem messageId="assistant-activity"><Marker role="status" className="assistant-activity"><MarkerContent className="shimmer"><span className="font-medium">{agentName}</span> {props.state.dominant === 'speaking' ? 'is speaking…' : 'is typing…'}</MarkerContent></Marker></MessageScrollerItem> : null}
                 {props.state.tentativeText ? <MessageScrollerItem messageId="tentative-transcript"><Message align="end" className="conversation-message user-row"><MessageContent><MessageHeader>You · tentative</MessageHeader><Bubble variant="tinted"><BubbleContent className="conversation-bubble tentative"><p>{props.state.tentativeText}</p></BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
                 {props.state.playbackNotice ? <MessageScrollerItem messageId="playback-notice"><Marker variant="separator" className="continuation-marker"><MarkerContent>{props.state.playbackNotice}</MarkerContent></Marker></MessageScrollerItem> : null}
               </MessageScrollerContent>

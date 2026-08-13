@@ -16,6 +16,11 @@ export interface ConversationTrimProps {
   onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
 }
 
+export interface ConversationRowProps extends ConversationTrimProps {
+  item: ConversationItem;
+  agentName?: string;
+}
+
 interface TrimAction {
   setTrimmed: boolean;
   trimmedNow: boolean;
@@ -73,7 +78,7 @@ function TrimControl({ action, targetId, pending, onToggleBubbleTrim }: {
   >{action.label}</Button>;
 }
 
-export function ConversationRow({ item, recording, onToggleBubbleTrim }: { item: ConversationItem } & ConversationTrimProps) {
+export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim }: ConversationRowProps) {
   if (item.kind === 'continuation') return <Marker variant="separator" className="continuation-marker"><MarkerContent>{item.label}</MarkerContent></Marker>;
   if (item.kind === 'notice') return <Marker className={`conversation-notice ${item.tone}`}><MarkerContent>{item.text}</MarkerContent></Marker>;
   if (item.kind === 'user') {
@@ -97,7 +102,7 @@ export function ConversationRow({ item, recording, onToggleBubbleTrim }: { item:
   const action = trimActionFor(item, target, recording.enabled);
   return <Message className="conversation-message assistant-row">
     <MessageContent>
-      <MessageHeader>Assistant</MessageHeader>
+      <MessageHeader>{(agentName ?? '').trim() || 'Assistant'}</MessageHeader>
       <Bubble variant="secondary"><BubbleContent className={cn('conversation-bubble assistant-bubble', item.tentative && 'tentative', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
         {item.parts && item.parts.length > 1
           ? item.parts.map((part, index) => <p key={index} className={cn(index > 0 && 'assistant-part', part.tentative && 'assistant-part-tentative')}>{part.text}</p>)
