@@ -310,6 +310,32 @@ describe('AudioClient', () => {
     expect(client.readiness()).toBe('failed');
     await client.close();
   });
+
+  it('fails closed when the verified catalog drifts from the session voice selection', async () => {
+    const sidecar = await fakeSidecar();
+    const failures: string[] = [];
+    const client = new AudioClient(sidecar, { failure: code => failures.push(code) }, () => {}, { catalogId: 'other-catalog', voiceId: 'af_heart' });
+    await client.connect();
+    await expect(client.open(7)).rejects.toThrow(/catalog|not ready/);
+    expect(failures).toContain('catalog_mismatch');
+    expect(client.readiness()).toBe('failed');
+    await client.close();
+  });
+
+  it('rejects a stream whose tts.started echoes a different voice than the session selection', async () => {
+    const sidecar = await fakeSidecar();
+    const failures: string[] = [];
+    const client = new AudioClient(sidecar, { failure: code => failures.push(code) }, () => {}, { catalogId: 'sess-catalog', voiceId: 'af_bella' });
+    await client.connect();
+    await client.open(7);
+    const stream = client.begin({ sessionId: streamId, epoch: 0, responseId, signal: new AbortController().signal });
+    stream.append('Paris is the capital of France. ');
+    stream.finish();
+    await expect(stream.started).rejects.toThrow(/protocol/);
+    expect(failures).toContain('invalid_message');
+    expect(client.readiness()).toBe('failed');
+    await client.close();
+  });
 });
 
 async function fakeRecordedSidecar() {

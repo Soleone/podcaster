@@ -93,7 +93,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
               <ChevronDown className={cn('size-4 transition-transform', promptOpen && 'rotate-180')} aria-hidden="true" />
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              <ScrollArea className="max-h-56 rounded-lg border border-border bg-muted/40 p-3">
+              <ScrollArea className="h-56 rounded-lg border border-border bg-muted/40 p-3">
                 <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
               </ScrollArea>
               <p className="mt-2 text-xs text-muted-foreground">Your saved persona is appended to this base prompt when the next session starts.</p>

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { fallbackInterruptionDecision, hasCorrectionIntent, hasLexicalContent, isBareRedirection, parseInterruptionDecision } from '../../src/session/InterruptionIntentClassifier.js';
+import { CLASSIFIER_SYSTEM_PROMPT, fallbackInterruptionDecision, hasCorrectionIntent, hasLexicalContent, isBareRedirection, parseInterruptionDecision, PiInterruptionIntentClassifier } from '../../src/session/InterruptionIntentClassifier.js';
+import type { PiClient, PiEvent, PiRequestInput } from '../../src/pi/PiClient.js';
+
+class FakeClassifierPi implements PiClient {
+  readonly inputs: PiRequestInput[] = [];
+  async probe() { return { status: 'ready' as const, detail: '', correctiveAction: 'None.' }; }
+  async *request(input: PiRequestInput): AsyncIterable<PiEvent> {
+    this.inputs.push(input);
+    yield { type: 'final', text: JSON.stringify({ action: 'resume', intent: 'non_substantive', confidence: 'high', reason: 'No lexical content.' }) };
+  }
+  async shutdown() {}
+}
 
 describe('interruption intent contract', () => {
   it.each([
@@ -103,5 +114,20 @@ describe('interruption intent contract', () => {
     ['', false],
   ])('detects a bare content-bearing redirection for %j', (text, expected) => {
     expect(isBareRedirection(text)).toBe(expected);
+  });
+
+  it('keeps interruption classification persona-neutral with a fixed system prompt', async () => {
+    const pi = new FakeClassifierPi();
+    const classifier = new PiInterruptionIntentClassifier(pi);
+    const decision = await classifier.decide(
+      { interruptedResponseText: 'Some paused answer', deliveredSampleOffset: 10, generatedSamples: 100, transcript: 'uh', boundedContext: '' },
+      new AbortController().signal,
+    );
+    const input = pi.inputs[0]!;
+    expect(Object.keys(input).sort()).toEqual(['boundedContext', 'maxWords', 'posture', 'transcript']);
+    expect(JSON.stringify(input)).not.toContain('persona');
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('Return ONLY compact JSON');
+    expect(CLASSIFIER_SYSTEM_PROMPT.toLowerCase()).not.toContain('persona');
+    expect(decision.action).toBe('resume');
   });
 });

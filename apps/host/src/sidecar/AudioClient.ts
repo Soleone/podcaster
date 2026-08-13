@@ -352,6 +352,7 @@ export class AudioClient implements SpeechOutputPort {
         const voicePresent = Array.isArray(voices) && voices.some(voice => voice.id === selection.voiceId);
         if (!catalogMatches || !voicePresent) {
           this.failed = true;
+          this.readyStatus = 'failed';
           this.events.failure?.('catalog_mismatch');
           this.failAll(new Error('audio sidecar catalog drifted from the session voice selection'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio voice catalog mismatch');

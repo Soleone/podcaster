@@ -20,7 +20,7 @@ test('disclosure precedes secure readiness and explicit microphone permission', 
   await page.goto(server.origin);
   await expect(page.getByRole('heading', { name: 'Before you continue' })).toBeVisible();
   await expect(page.getByText(/current transcript, bounded recent conversation context/)).toBeVisible();
-  await expect(page.getByText(/validated persona interpretation/)).toBeVisible();
+  await expect(page.getByText(/sent as system instructions to the configured cloud model/)).toBeVisible();
   await expect(page.getByRole('link', { name: 'Codex data handling' })).toHaveAttribute('href', /openai\.com/);
   expect(bootstrapCalls).toBe(0);
   expect(await permissionCalls(page)).toBe(0);
