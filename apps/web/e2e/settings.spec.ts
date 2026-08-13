@@ -19,6 +19,7 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   await openSettings(page);
 
   await expect(page.getByText('These apply to the next session you start.')).toBeVisible();
+  const dialog = page.getByRole('dialog');
   const persona = page.getByLabel('Persona');
   await expect(persona).toBeVisible();
   const initial = await page.locator('#settings-persona-counter').innerText();
@@ -39,9 +40,17 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   // Voice tab reflects that no verified catalog exists in fake services.
   await page.getByRole('tab', { name: 'Voice' }).click();
   await expect(page.getByText(/No verified voice catalog is available yet/)).toBeVisible();
+  const voiceDialogBox = await dialog.boundingBox();
+  expect(voiceDialogBox).not.toBeNull();
+
+  // Switching back keeps the fixed dialog height instead of reflowing around the persona.
+  await page.getByRole('tab', { name: 'Agent' }).click();
+  await expect(persona).toBeVisible();
+  const agentDialogBox = await dialog.boundingBox();
+  expect(agentDialogBox).not.toBeNull();
+  expect(agentDialogBox?.height).toBeCloseTo(voiceDialogBox?.height ?? 0, 3);
 
   // Save persists and closes the dialog.
-  await page.getByRole('tab', { name: 'Agent' }).click();
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });

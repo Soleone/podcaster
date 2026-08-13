@@ -55,74 +55,76 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
   };
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="sm:max-w-lg" aria-describedby="settings-description">
+    <DialogContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-lg" aria-describedby="settings-description">
       <DialogHeader>
         <DialogTitle>Settings</DialogTitle>
         <DialogDescription id="settings-description">These apply to the next session you start. The active session is never changed mid-turn.</DialogDescription>
       </DialogHeader>
-      <Tabs defaultValue="agent">
-        <TabsList aria-label="Settings sections">
-          <TabsTrigger value="agent">Agent</TabsTrigger>
-          <TabsTrigger value="voice">Voice</TabsTrigger>
-        </TabsList>
-        <TabsContent value="agent" className="flex flex-col gap-4 pt-4">
-          <FieldGroup>
-            <Field data-invalid={personaInvalid || undefined}>
-              <FieldLabel htmlFor="settings-persona">Persona</FieldLabel>
-              <FieldContent>
-                <Textarea
-                  id="settings-persona"
-                  value={persona}
-                  onChange={event => setPersona(event.target.value)}
-                  aria-invalid={personaInvalid || undefined}
-                  aria-describedby="settings-persona-description settings-persona-counter"
-                  placeholder="Describe how the assistant should behave…"
-                  className="min-h-40"
-                />
-                <FieldDescription id="settings-persona-description">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
-                <p id="settings-persona-counter" className={cn('text-xs text-muted-foreground', personaInvalid && 'text-destructive')} aria-live="polite">
-                  {personaBytes.toLocaleString()} / {MAX_PERSONA_BYTES.toLocaleString()} bytes
-                </p>
-                {personaInvalid ? <FieldError>Persona exceeds the {MAX_PERSONA_BYTES / 1024} KiB limit.</FieldError> : null}
-              </FieldContent>
-            </Field>
-          </FieldGroup>
-          <Collapsible open={promptOpen} onOpenChange={setPromptOpen}>
-            <CollapsibleTrigger render={<Button variant="outline" className="w-full justify-between" />}>
-              View base system prompt
-              <ChevronDown className={cn('size-4 transition-transform', promptOpen && 'rotate-180')} aria-hidden="true" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2">
-              <ScrollArea className="h-56 rounded-lg border border-border bg-muted/40 p-3">
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
-              </ScrollArea>
-              <p className="mt-2 text-xs text-muted-foreground">Your saved persona is appended to this base prompt when the next session starts.</p>
-            </CollapsibleContent>
-          </Collapsible>
-        </TabsContent>
-        <TabsContent value="voice" className="flex flex-col gap-4 pt-4">
-          {model.notice ? <Alert variant={model.notice === 'missing_catalog' ? 'destructive' : 'default'}><p>{VOICE_NOTICE_COPY[model.notice]}</p></Alert> : null}
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="settings-voice">Voice</FieldLabel>
-              <FieldContent>
-                {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) setVoiceId(value); }} disabled={!catalogReady}>
-                  <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
-                    <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>
-                      <span className="flex items-center gap-2"><Sparkles className="size-4" aria-hidden="true" />{voice.label}<span className="font-mono text-xs text-muted-foreground">{voice.id}</span></span>
-                    </SelectItem>)}
-                  </SelectContent>
-                </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the local audio engine reports its verified voices.</p>}
-                {catalog ? <FieldDescription>Backend {catalog.backendId} · model {catalog.modelId} · revision {catalog.revision.slice(0, 8)}</FieldDescription> : null}
-              </FieldContent>
-            </Field>
-          </FieldGroup>
-        </TabsContent>
-      </Tabs>
-      {saveError ? <Alert variant="destructive"><p>{saveError}</p></Alert> : null}
+      <div className="min-h-0 flex flex-col gap-4">
+        <Tabs defaultValue="agent" className="min-h-0 min-w-0 flex-1">
+          <TabsList aria-label="Settings sections" className="w-full shrink-0">
+            <TabsTrigger value="agent" className="min-w-0 px-1.5 text-sm font-semibold">Agent</TabsTrigger>
+            <TabsTrigger value="voice" className="min-w-0 px-1.5 text-sm font-semibold">Voice</TabsTrigger>
+          </TabsList>
+          <TabsContent value="agent" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-4 pr-1">
+            <FieldGroup className="min-h-0 flex-1">
+              <Field data-invalid={personaInvalid || undefined} className="min-h-0 flex-1">
+                <FieldLabel htmlFor="settings-persona">Persona</FieldLabel>
+                <FieldContent className="min-h-0">
+                  <Textarea
+                    id="settings-persona"
+                    value={persona}
+                    onChange={event => setPersona(event.target.value)}
+                    aria-invalid={personaInvalid || undefined}
+                    aria-describedby="settings-persona-description settings-persona-counter"
+                    placeholder="Describe how the assistant should behave…"
+                    className="h-64 min-h-40 flex-1 resize-none"
+                  />
+                  <FieldDescription id="settings-persona-description">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
+                  <p id="settings-persona-counter" className={cn('text-xs text-muted-foreground', personaInvalid && 'text-destructive')} aria-live="polite">
+                    {personaBytes.toLocaleString()} / {MAX_PERSONA_BYTES.toLocaleString()} bytes
+                  </p>
+                  {personaInvalid ? <FieldError>Persona exceeds the {MAX_PERSONA_BYTES / 1024} KiB limit.</FieldError> : null}
+                </FieldContent>
+              </Field>
+            </FieldGroup>
+            <Collapsible open={promptOpen} onOpenChange={setPromptOpen}>
+              <CollapsibleTrigger render={<Button variant="outline" className="w-full justify-between" />}>
+                View base system prompt
+                <ChevronDown className={cn('size-4 transition-transform', promptOpen && 'rotate-180')} aria-hidden="true" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2">
+                <ScrollArea className="h-56 rounded-lg border border-border bg-muted/40 p-3">
+                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
+                </ScrollArea>
+                <p className="mt-2 text-xs text-muted-foreground">Your saved persona is appended to this base prompt when the next session starts.</p>
+              </CollapsibleContent>
+            </Collapsible>
+          </TabsContent>
+          <TabsContent value="voice" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-4 pr-1 sm:justify-center">
+            {model.notice ? <Alert variant={model.notice === 'missing_catalog' ? 'destructive' : 'default'}><p>{VOICE_NOTICE_COPY[model.notice]}</p></Alert> : null}
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="settings-voice">Voice</FieldLabel>
+                <FieldContent>
+                  {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) setVoiceId(value); }} disabled={!catalogReady}>
+                    <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
+                      <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>
+                        <span className="flex items-center gap-2"><Sparkles className="size-4" aria-hidden="true" />{voice.label}<span className="font-mono text-xs text-muted-foreground">{voice.id}</span></span>
+                      </SelectItem>)}
+                    </SelectContent>
+                  </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the local audio engine reports its verified voices.</p>}
+                  {catalog ? <FieldDescription>Backend {catalog.backendId} · model {catalog.modelId} · revision {catalog.revision.slice(0, 8)}</FieldDescription> : null}
+                </FieldContent>
+              </Field>
+            </FieldGroup>
+          </TabsContent>
+        </Tabs>
+        {saveError ? <Alert variant="destructive" className="shrink-0"><p>{saveError}</p></Alert> : null}
+      </div>
       <DialogFooter>
         <DialogClose render={<Button variant="outline" disabled={saving}>Cancel</Button>} />
         <Button onClick={() => void commit()} disabled={!canSave}>
