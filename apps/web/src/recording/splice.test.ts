@@ -4,7 +4,7 @@ import { RecordingStore, type RecordingRole, type StoredRecordingItem } from '..
 import type { StoredTurn } from '../storage/schema';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
 import type { EncodeMp3 } from './encode';
-import { buildRecording, EXPORT_GAP_MS, FINAL_KBPS, FINAL_SAMPLE_RATE, type SpliceDependencies } from './splice';
+import { buildRecording, EXPORT_GAP_MS, FINAL_KBPS, FINAL_SAMPLE_RATE, MAX_NORMALIZATION_GAIN, SILENCE_RMS_FLOOR, TARGET_RMS, type SpliceDependencies } from './splice';
 
 let dbName = '';
 afterEach(async () => {
@@ -32,16 +32,31 @@ function tone(rate: number): Float32Array {
   for (let index = 0; index < data.length; index++) data[index] = 0.1 * Math.sin((2 * Math.PI * 220 * index) / rate);
   return data;
 }
+function sine(amplitude: number, length: number): Float32Array {
+  const data = new Float32Array(length);
+  for (let index = 0; index < length; index++) data[index] = amplitude * Math.sin((2 * Math.PI * 220 * index) / length);
+  return data;
+}
+const identityResample = (data: Float32Array) => data.slice();
+function rmsPcm(pcm: Int16Array, start: number, length: number): number {
+  let sum = 0;
+  for (let index = start; index < start + length; index++) sum += pcm[index]! * pcm[index]!;
+  return Math.sqrt(sum / length);
+}
 
-async function deps(decoded: Array<{ sampleRate: number; channelData: Float32Array }>, storedTurns: StoredTurn[]) {
+async function openStore(): Promise<RecordingStore> {
   dbName = `splice-${Date.now()}-${Math.random()}`;
-  const store = await RecordingStore.open(indexedDB, dbName);
+  return RecordingStore.open(indexedDB, dbName);
+}
+
+async function deps(decoded: Array<{ sampleRate: number; channelData: Float32Array }>, storedTurns: StoredTurn[], options: { resample?: (data: Float32Array, fromRate: number, toRate: number) => Float32Array; store?: RecordingStore } = {}) {
+  const store = options.store ?? (await openStore());
   const decode = vi.fn(async () => decoded.shift()!);
-  const resample = vi.fn((data: Float32Array, fromRate: number, toRate: number) => {
+  const resample = vi.fn(options.resample ?? ((data: Float32Array, fromRate: number, toRate: number) => {
     const out = new Float32Array(Math.round(data.length * toRate / fromRate));
     out.fill(0.5);
     return out;
-  });
+  }));
   const encode = vi.fn<EncodeMp3>(async pcm => new Uint8Array(Math.max(1, Math.ceil(pcm.length / 4))));
   const turns = { getTurns: async () => storedTurns } as Pick<StableTurnWriter, 'getTurns'>;
   return { store, decode, resample, encode, turns };
@@ -164,6 +179,96 @@ describe('buildRecording', () => {
     expect(decode).not.toHaveBeenCalled();
     expect(resample).not.toHaveBeenCalled();
     expect(encode).not.toHaveBeenCalled();
+    store.close();
+  });
+
+  it('normalizes a low-RMS user segment and a high-RMS agent segment to the shared target', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const userLen = 4000;
+    const agentLen = 6000;
+    const store = (await deps([], [turn(T1, 1)])).store;
+    const { decode, resample, encode, turns } = await deps([
+      { sampleRate: 16000, channelData: sine(0.04, userLen) },
+      { sampleRate: 24000, channelData: sine(0.7, agentLen) },
+    ], [turn(T1, 1)], { resample: identityResample });
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    await store.put(item({ itemId: 'b', role: 'agent', recordSeq: 1, sampleRate: 24000, turnId: T1 }));
+    await buildRecording(SESSION, { store, turns, decode, resample, encode, gapMs: 0 });
+    expect(encode).toHaveBeenCalledTimes(1);
+    expect(encode.mock.calls[0]![1]).toBe(FINAL_SAMPLE_RATE);
+    expect(encode.mock.calls[0]![2]).toBe(FINAL_KBPS);
+    const pcm = encode.mock.calls[0]![0];
+    // Normalization must not add or drop samples.
+    expect(pcm.length).toBe(userLen + agentLen);
+    const expected = TARGET_RMS * 32767;
+    expect(Math.abs(rmsPcm(pcm, 0, userLen) - expected)).toBeLessThan(4);
+    expect(Math.abs(rmsPcm(pcm, userLen, agentLen) - expected)).toBeLessThan(4);
+    store.close();
+  });
+
+  it('leaves near-silent segments unchanged instead of amplifying them toward clipping', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const store = await openStore();
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    const turns = [turn(T1, 1)];
+    const signal = sine(SILENCE_RMS_FLOOR / 10, 4000);
+    const first = await deps([{ sampleRate: 16000, channelData: signal }], turns, { store, resample: identityResample });
+    await buildRecording(SESSION, { store, turns: first.turns, decode: first.decode, resample: first.resample, encode: first.encode, gapMs: 0 });
+    const second = await deps([{ sampleRate: 16000, channelData: signal.slice() }], turns, { store, resample: identityResample });
+    await buildRecording(SESSION, { store, turns: second.turns, decode: second.decode, resample: second.resample, encode: second.encode, gapMs: 0, normalizeMode: 'none' });
+    const rmsPcmEncoded = first.encode.mock.calls[0]![0];
+    const nonePcm = second.encode.mock.calls[0]![0];
+    // Default rms mode must not touch sub-floor segments.
+    expect(rmsPcmEncoded).toEqual(nonePcm);
+    expect(Math.max(...Array.from(rmsPcmEncoded).map(Math.abs))).toBeLessThan(10);
+    store.close();
+  });
+
+  it('caps upward gain at MAX_NORMALIZATION_GAIN instead of reaching the target', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const store = await openStore();
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    const signal = new Float32Array(4000).fill(0.001);
+    const { decode, resample, encode, turns } = await deps([{ sampleRate: 16000, channelData: signal }], [turn(T1, 1)], { store, resample: identityResample });
+    await buildRecording(SESSION, { store, turns, decode, resample, encode, gapMs: 0 });
+    const pcm = encode.mock.calls[0]![0];
+    const rms = rmsPcm(pcm, 0, pcm.length);
+    expect(Math.abs(rms - 0.001 * MAX_NORMALIZATION_GAIN * 32767)).toBeLessThan(2);
+    expect(rms).toBeLessThan(TARGET_RMS * 32767 * 0.5);
+    expect(Math.max(...Array.from(pcm).map(Math.abs))).toBeLessThan(0x7fff);
+    store.close();
+  });
+
+  it('passes exact pre-change PCM16 to the encoder in none mode', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const store = await openStore();
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    const fixture = new Float32Array([0.5, -0.5, 0.25, -0.25, 1.0, -1.0, 0.0]);
+    const { decode, resample, encode, turns } = await deps([{ sampleRate: 16000, channelData: fixture }], [turn(T1, 1)], { store, resample: identityResample });
+    await buildRecording(SESSION, { store, turns, decode, resample, encode, gapMs: 0, normalizeMode: 'none' });
+    expect(Array.from(encode.mock.calls[0]![0])).toEqual([16384, -16384, 8192, -8192, 32767, -32768, 0]);
+    store.close();
+  });
+
+  it('saturates over-range normalized samples without wrapping outside Int16 bounds', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const length = 10000;
+    const signal = new Float32Array(length);
+    for (let index = 0; index < 100; index++) {
+      signal[index] = 0.8;
+      signal[length - 1 - index] = -0.8;
+    }
+    const store = await openStore();
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    const { decode, resample, encode, turns } = await deps([{ sampleRate: 16000, channelData: signal }], [turn(T1, 1)], { store, resample: identityResample });
+    await buildRecording(SESSION, { store, turns, decode, resample, encode, gapMs: 0 });
+    const pcm = encode.mock.calls[0]![0];
+    expect(pcm.includes(32767)).toBe(true);
+    expect(pcm.includes(-32768)).toBe(true);
+    for (const value of pcm) {
+      expect(value).toBeGreaterThanOrEqual(-32768);
+      expect(value).toBeLessThanOrEqual(32767);
+    }
     store.close();
   });
 });

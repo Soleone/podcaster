@@ -1,10 +1,34 @@
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
 import type { RecordingStore, StoredRecordingItem } from '../storage/recording-store';
 import type { DecodeMp3, EncodeMp3 } from './encode';
+import { floatToPcm16 } from '../audio/pcm';
 
 export const FINAL_SAMPLE_RATE = 44100;
 export const FINAL_KBPS = 128;
 export const EXPORT_GAP_MS = 300;
+
+export const TARGET_RMS_DBFS = -16;
+export const TARGET_RMS = 10 ** (TARGET_RMS_DBFS / 20);
+export const SILENCE_RMS_FLOOR = 1e-4;
+export const MAX_NORMALIZATION_GAIN = 10;
+
+export type NormalizeMode = 'none' | 'rms';
+
+function normalizeSegment(input: Float32Array, mode: NormalizeMode): Float32Array {
+  if (mode === 'none') return input;
+  let sumSquares = 0;
+  for (let index = 0; index < input.length; index++) {
+    const sample = input[index] ?? 0;
+    sumSquares += sample * sample;
+  }
+  const rms = Math.sqrt(sumSquares / input.length);
+  if (!Number.isFinite(rms) || rms < SILENCE_RMS_FLOOR) return input;
+  const gain = Math.min(MAX_NORMALIZATION_GAIN, TARGET_RMS / rms);
+  if (gain === 1) return input;
+  const normalized = new Float32Array(input.length);
+  for (let index = 0; index < input.length; index++) normalized[index] = (input[index] ?? 0) * gain;
+  return normalized;
+}
 
 export interface SpliceDependencies {
   store: RecordingStore;
@@ -13,6 +37,7 @@ export interface SpliceDependencies {
   resample: (channelData: Float32Array, fromRate: number, toRate: number) => Float32Array;
   encode: EncodeMp3;
   gapMs?: number;
+  normalizeMode?: NormalizeMode;
 }
 
 export function createBrowserDecoder(): DecodeMp3 {
@@ -41,10 +66,12 @@ function orderItems(items: StoredRecordingItem[], turnSequences: Map<string, num
 /**
  * Builds the final export MP3: decode each persisted item, trim interrupted
  * agent items at their delivered extent (clamped to decoded length), resample
- * to 44.1 kHz, concatenate with the configured inter-item gap, and encode.
- * Returns null when the session has no recording items.
+ * to 44.1 kHz, normalize each segment to a shared RMS target, concatenate with
+ * the configured inter-item gap, and encode. Returns null when the session has
+ * no recording items.
  */
 export async function buildRecording(sessionId: string, deps: SpliceDependencies): Promise<Blob | null> {
+  const normalizeMode: NormalizeMode = deps.normalizeMode ?? 'rms';
   const [items, turns] = await Promise.all([deps.store.getSessionItems(sessionId), deps.turns.getTurns(sessionId)]);
   // Trimmed bubbles are excluded before ordering, decoding, resampling, or gap
   // insertion so their Blobs are never touched during export.
@@ -64,9 +91,10 @@ export async function buildRecording(sessionId: string, deps: SpliceDependencies
     if (samples.length === 0) continue;
     const resampled = deps.resample(samples, sampleRate, FINAL_SAMPLE_RATE);
     if (resampled.length === 0) continue;
+    const normalized = normalizeSegment(resampled, normalizeMode);
     if (segments.length > 0) totalSamples += gapSamples;
-    segments.push(resampled);
-    totalSamples += resampled.length;
+    segments.push(normalized);
+    totalSamples += normalized.length;
   }
   if (segments.length === 0) return null;
   const joined = new Float32Array(totalSamples);
@@ -76,11 +104,7 @@ export async function buildRecording(sessionId: string, deps: SpliceDependencies
     joined.set(segments[index]!, offset);
     offset += segments[index]!.length;
   }
-  const pcm16 = new Int16Array(joined.length);
-  for (let index = 0; index < joined.length; index++) {
-    const sample = joined[index]!;
-    pcm16[index] = sample < 0 ? Math.max(-0x8000, Math.round(sample * 0x8000)) : Math.min(0x7fff, Math.round(sample * 0x7fff));
-  }
+  const pcm16 = floatToPcm16(joined);
   const mp3 = await deps.encode(pcm16, FINAL_SAMPLE_RATE, FINAL_KBPS);
   return new Blob([mp3], { type: 'audio/mpeg' });
 }
