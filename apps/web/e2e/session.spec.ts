@@ -5,6 +5,18 @@ let server: DevServer;
 test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
 test.afterAll(async () => { await stopDevServer(server); });
 
+test('pauses and resumes microphone capture without ending the session', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+  await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureRunning)).toBe(true);
+  await page.getByRole('button', { name: 'Pause session' }).click();
+  await expect(page.getByRole('button', { name: 'Resume session' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureRunning)).toBe(false);
+  await page.getByRole('button', { name: 'Resume session' }).click();
+  await expect(page.getByRole('button', { name: 'Pause session' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureRunning)).toBe(true);
+  await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
+});
+
 test('runs stable session states and recovers stable work after refresh', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();

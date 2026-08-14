@@ -63,6 +63,7 @@ export function App() {
   const [sessionId, setSessionId] = useState<string>();
   const [capability, setCapability] = useState<string>();
   const [elapsed, setElapsed] = useState(0);
+  const [sessionPaused, setSessionPaused] = useState(false);
   const writerRef = useRef<StableTurnWriter | undefined>(undefined);
   const controllerRef = useRef<SessionController | undefined>(undefined);
   const transportRef = useRef<SessionTransport | undefined>(undefined);
@@ -257,14 +258,64 @@ export function App() {
     const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
     startedAt.current = Date.now();
+    setSessionPaused(false);
     activityLog.append({ level: 'info', source: 'app', message: `session started (${cap})` });
     const initial = { ...initialSessionState, dominant: 'listening' as const, announcement: 'Listening' };
     if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
     else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
   }
 
+  const togglePause = useCallback(async () => {
+    const transport = transportRef.current;
+    const controller = controllerRef.current;
+    const recorder = recordingRecorderRef.current;
+    if (!transport || !controller || !recorder) return;
+    if (!sessionPaused) {
+      await captureRef.current?.stop();
+      captureRef.current = undefined;
+      const streamId = captureStreamIdRef.current;
+      if (streamId !== undefined) {
+        await transport.stopAudio(streamId);
+        captureStreamIdRef.current = undefined;
+      }
+      activityLog.append({ level: 'info', source: 'app', message: 'session paused by user' });
+      setSessionPaused(true);
+      return;
+    }
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    const streamId = random[0] ?? 0;
+    try {
+      await transport.startAudio(streamId);
+      captureStreamIdRef.current = streamId;
+      const capture = await new BrowserCapture({ streamId: () => streamId, onAudio: audio => recorder.onCaptureAudio(audio) }).start({
+        send: frame => transport.sendCapture(frame),
+        degraded: message => controller.degrade(message),
+      });
+      if (fakeServices) {
+        statsRef.current.captureStarts++;
+        statsRef.current.captureRunning = true;
+        captureRef.current = {
+          stop: async () => {
+            if (!statsRef.current.captureRunning) return;
+            await capture.stop();
+            statsRef.current.captureStops++;
+            statsRef.current.captureRunning = false;
+          },
+        };
+      } else captureRef.current = capture;
+      activityLog.append({ level: 'info', source: 'app', message: 'session resumed by user' });
+      setSessionPaused(false);
+    } catch (error) {
+      await Promise.resolve(transport.stopAudio(streamId)).catch(() => undefined);
+      captureStreamIdRef.current = undefined;
+      controller.degrade(error instanceof Error ? error.message : 'The microphone could not be resumed.');
+    }
+  }, [sessionPaused]);
+
   async function stop() {
     activityLog.append({ level: 'info', source: 'app', message: 'session stopped by user' });
+    setSessionPaused(false);
     await captureRef.current?.stop();
     const streamId = captureStreamIdRef.current;
     if (streamId !== undefined) {
@@ -417,6 +468,8 @@ export function App() {
       state={view}
       agentName={settingsModel.agentName}
       elapsedSeconds={elapsed}
+      sessionPaused={sessionPaused}
+      onTogglePause={() => void togglePause()}
       onStop={() => void stop()}
       onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
       onOpenSettings={() => setSettingsOpen(true)}

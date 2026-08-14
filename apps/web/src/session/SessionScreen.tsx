@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Ear, MessageCircleQuestion, Pause, Trash, Volume2, type LucideIcon } from 'lucide-react';
+import { Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Ear, MessageCircleQuestion, Pause, Play, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
@@ -25,7 +25,7 @@ const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> =
   idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-export function SessionScreen(props: { state: SessionViewState; agentName: string; elapsedSeconds: number; onStop: () => void; onCancelAssistant: () => void; onOpenSettings: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean> }) {
+export function SessionScreen(props: { state: SessionViewState; agentName: string; elapsedSeconds: number; sessionPaused: boolean; onTogglePause: () => void; onStop: () => void; onCancelAssistant: () => void; onOpenSettings: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean> }) {
   const [trimAnnouncement, setTrimAnnouncement] = useState('');
   const handleTrim = useCallback(async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
     const ok = await props.onToggleBubbleTrim(targetId, trimmed);
@@ -52,7 +52,7 @@ export function SessionScreen(props: { state: SessionViewState; agentName: strin
   const showAssistantActivity = props.state.dominant === 'speaking' || (props.state.dominant === 'reasoning' && !hasAssistantText);
   const StateIcon = stateIcons[props.state.dominant];
   return <main className="session-shell">
-    <header className="session-header"><p className="eyebrow">Active voice session</p><div className="session-header-actions"><SettingsButton onClick={props.onOpenSettings} title="Settings · applies next session" /><ButtonGroup aria-label="Session controls" className="session-controls"><Button variant="outline" size="icon" aria-label="Pause session" title="Pause session" onClick={props.onCancelAssistant}><Pause aria-hidden="true" /></Button><Button variant="destructive" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button></ButtonGroup></div></header>
+    <header className="session-header"><p className="eyebrow">Active voice session</p><div className="session-header-actions"><SettingsButton onClick={props.onOpenSettings} title="Settings · applies next session" /><ButtonGroup aria-label="Session controls" className="session-controls"><Button variant="outline" size="icon" aria-label={props.sessionPaused ? 'Resume session' : 'Pause session'} title={props.sessionPaused ? 'Resume session' : 'Pause session'} onClick={props.onTogglePause}>{props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</Button><Button variant="destructive" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button></ButtonGroup></div></header>
     <Card className={`status-bar state-${props.state.dominant}`}>
       <div className="status-label">{StateIcon ? <StateIcon className="state-icon" aria-hidden="true" /> : <Spinner className="state-icon" />}<h1 id="session-status-heading">{headings[props.state.dominant]}</h1></div>
       <div className="status-actions"><Badge className="elapsed-badge" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>{assistantActive ? <Button variant="secondary" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}</div>
