@@ -28,8 +28,10 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
   const [microphoneReady, setMicrophoneReady] = useState(false);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [autoStarting, setAutoStarting] = useState(false);
   const restored = useRef(false);
   const lastReportedMic = useRef<boolean | undefined>(undefined);
+  const autoStartAttempted = useRef(false);
 
   useEffect(() => {
     if (restored.current) return;
@@ -126,8 +128,25 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
   const realSessionReady = audioReady && (reasoningReady || reasoningChecking);
   const transcriptOnlyReady = audioReady && reasoningUnavailable;
   const canStart = props.sessionAvailable || realSessionReady || transcriptOnlyReady;
+  const allChecksReady = Boolean(capability && microphoneReady && snapshot && ['voice_input', 'voice_output', 'cloud_reasoning'].every(id => snapshot.capabilities.find(item => item.id === id)?.state === 'ready'));
 
-  const subhead = !snapshot && loading
+  useEffect(() => {
+    if (!acknowledged || !allChecksReady || autoStartAttempted.current) return;
+    autoStartAttempted.current = true;
+    setAutoStarting(true);
+    void (async () => {
+      try {
+        await props.onStart(capability!, 'full');
+      } catch (cause) {
+        setAutoStarting(false);
+        setError(cause instanceof Error ? cause.message : 'Session could not be started.');
+      }
+    })();
+  }, [acknowledged, allChecksReady, capability, props.onStart]);
+
+  const subhead = autoStarting
+    ? 'All readiness checks passed. Starting your session…'
+    : !snapshot && loading
     ? 'Checking local audio and Pi in the background…'
     : realSessionReady && reasoningChecking
       ? 'Pi is still warming up. You can start now.'
@@ -160,7 +179,7 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
       {!microphoneReady ? <div className="readiness-actions"><Button onClick={() => void enableMicrophone()} disabled={loading}>{loading ? <><Spinner />{snapshot ? 'Requesting microphone…' : 'Checking readiness…'}</> : 'Enable microphone'}</Button></div> : <>
         <Alert role="status" variant="success" className="readiness-note"><CircleCheck className="size-4 mt-0.5 shrink-0 text-success" aria-hidden="true" /><p>Microphone permission is ready. Capture is stopped until the session starts.</p></Alert>
         <div className="readiness-actions">
-          {!transcriptOnlyReady ? <Button onClick={() => capability && props.onStart(capability, 'full')} disabled={!capability || !canStart}>Start session</Button> : null}
+          {!transcriptOnlyReady ? <Button onClick={() => capability && props.onStart(capability, 'full')} disabled={!capability || !canStart || autoStarting}>{autoStarting ? <><Spinner />Starting…</> : 'Start session'}</Button> : null}
           {transcriptOnlyReady ? <Button variant="secondary" onClick={() => capability && props.onStart(capability, 'transcript_only')} disabled={!capability}>Start transcript-only session</Button> : null}
         </div>
         {transcriptOnlyReady ? <p className="text-muted-foreground mt-3 leading-relaxed" role="status">Pi reasoning is unavailable. Transcript-only mode records stable local transcripts and does not generate or speak assistant responses.</p> : null}
