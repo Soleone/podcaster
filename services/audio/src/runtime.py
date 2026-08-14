@@ -585,6 +585,10 @@ class SelectedAudioRuntime:
         with self._lock:
             if state.utterance is not None:
                 self._cancel_utterance(state.utterance)
+            # BrowserCapture creates a fresh AudioFramePacker whenever the
+            # microphone is resumed, so its capture sequence starts at zero
+            # again. A reset is the boundary between those capture lifetimes.
+            state.expected_sequence = 0
             state.utterance = None
             state.pre_roll.clear()
             state.endpointer.reset()

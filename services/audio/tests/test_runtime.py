@@ -459,6 +459,21 @@ def test_capture_queue_overflow_fails_visibly() -> None:
     assert failure is not None and "bound" in str(failure)
 
 
+def test_reset_accepts_a_fresh_capture_sequence_after_pause() -> None:
+    runtime, _, _ = ready_runtime()
+    stream = "018f1f32-7abc-7def-8abc-0123456789ab"
+
+    runtime.accept_audio(stream, frame(0, 0))
+    runtime.accept_audio(stream, frame(1, 0))
+    runtime.reset_stream(stream)
+
+    # The browser creates a new AudioFramePacker after a pause, so the first
+    # frame after resume starts at sequence zero rather than continuing 1.
+    runtime.accept_audio(stream, frame(0, 0))
+    assert runtime.status == "ready"
+    runtime.close_stream(stream)
+
+
 def test_reset_suppresses_late_partial_and_final_without_poisoning_runtime() -> None:
     release = threading.Event()
 
