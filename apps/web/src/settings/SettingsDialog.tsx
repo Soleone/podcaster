@@ -8,7 +8,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field';
 import { Input } from '../components/ui/input';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Spinner } from '../components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Textarea } from '../components/ui/textarea';
@@ -60,7 +60,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
   };
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-lg" aria-describedby="settings-description">
+    <DialogContent className="h-[min(46rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-lg" aria-describedby="settings-description">
       <DialogHeader>
         <DialogTitle>Settings</DialogTitle>
         <DialogDescription id="settings-description">These apply to the next session you start. The active session is never changed mid-turn.</DialogDescription>
@@ -68,11 +68,11 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
       <div className="min-h-0 flex flex-col gap-4">
         <Tabs defaultValue="agent" className="min-h-0 min-w-0 flex-1">
           <TabsList aria-label="Settings sections" className="w-full shrink-0">
-            <TabsTrigger value="agent" className="min-w-0 px-1.5 text-sm font-semibold">Agent</TabsTrigger>
-            <TabsTrigger value="voice" className="min-w-0 px-1.5 text-sm font-semibold">Voice</TabsTrigger>
+            <TabsTrigger value="agent">Agent</TabsTrigger>
+            <TabsTrigger value="voice">Voice</TabsTrigger>
           </TabsList>
           <TabsContent value="agent" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-4 pr-1">
-            <FieldGroup className="min-h-0 flex-1">
+            <FieldGroup>
               <Field data-invalid={agentNameInvalid || undefined}>
                 <FieldLabel htmlFor="settings-agent-name">Agent name</FieldLabel>
                 <FieldContent>
@@ -92,9 +92,9 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                   {agentNameInvalid ? <FieldError>Agent name exceeds the {MAX_AGENT_NAME_BYTES}-byte limit.</FieldError> : null}
                 </FieldContent>
               </Field>
-              <Field data-invalid={personaInvalid || undefined} className="min-h-0 flex-1">
+              <Field data-invalid={personaInvalid || undefined}>
                 <FieldLabel htmlFor="settings-persona">Persona</FieldLabel>
-                <FieldContent className="min-h-0">
+                <FieldContent>
                   <Textarea
                     id="settings-persona"
                     value={persona}
@@ -102,7 +102,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                     aria-invalid={personaInvalid || undefined}
                     aria-describedby="settings-persona-description settings-persona-counter"
                     placeholder="Describe how the assistant should behave…"
-                    className="h-64 min-h-40 flex-1 resize-none"
+                    className="h-48 min-h-40 resize-none"
                   />
                   <FieldDescription id="settings-persona-description">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
                   <p id="settings-persona-counter" className={cn('text-xs text-muted-foreground', personaInvalid && 'text-destructive')} aria-live="polite">
@@ -136,9 +136,11 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                       <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>
-                        <span className="flex items-center gap-2"><Sparkles className="size-4" aria-hidden="true" />{voice.label}<span className="font-mono text-xs text-muted-foreground">{voice.id}</span></span>
-                      </SelectItem>)}
+                      <SelectGroup>
+                        {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>
+                          <span><Sparkles aria-hidden="true" />{voice.label}<span className="font-mono text-xs text-muted-foreground">{voice.id}</span></span>
+                        </SelectItem>)}
+                      </SelectGroup>
                     </SelectContent>
                   </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the local audio engine reports its verified voices.</p>}
                   {catalog ? <FieldDescription>Backend {catalog.backendId} · model {catalog.modelId} · revision {catalog.revision.slice(0, 8)}</FieldDescription> : null}
