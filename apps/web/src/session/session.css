@@ -62,4 +62,10 @@
 .trim-action:disabled{opacity:.8}
 .trim-action-on-primary{color:var(--primary-foreground)}
 .trim-action-on-primary:hover{background:color-mix(in srgb,var(--primary-foreground) 15%,transparent)}
+@media (hover:hover) and (pointer:fine){
+  /* Keep the reserved pr-9 space stable while making the control quiet until needed. */
+  .conversation-bubble:has(.trim-action) .trim-action{opacity:0;pointer-events:none;transition:opacity .15s ease}
+  .conversation-bubble:has(.trim-action):hover .trim-action,
+  .conversation-bubble:has(.trim-action):focus-within .trim-action{opacity:1;pointer-events:auto}
+}
 @media (prefers-reduced-motion: reduce){.conversation-bubble.trimmed{transition:none}}

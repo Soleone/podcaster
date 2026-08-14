@@ -29,6 +29,8 @@ test('trims completed agent output with a compact in-bubble action', async ({ pa
   await expect(page.getByText('A recorded answer')).toBeVisible();
   const remove = page.getByRole('button', { name: "Remove Assistant's response from recording" });
   await expect(remove).toBeVisible();
+  await emit(page, 'tts.started', { responseId: 'response-1', playbackId: 'playback-2', sampleRate: 24000, partIndex: 1 });
+  await expect(remove).toBeEnabled();
   await expect(remove.locator('xpath=ancestor::*[@data-slot="bubble-content"]')).toHaveCount(1);
   await expect(remove).toHaveCSS('height', '24px');
   await remove.click();
@@ -43,16 +45,16 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   await expect(page.getByLabel('Recording status: 0 items')).toBeVisible();
 
   await recordUserTurn(page);
-  await expect(page.getByLabel('Recording status: 1 of 1 included')).toBeVisible();
+  await expect(page.getByLabel('Recording status: 1 of 1 messages included')).toBeVisible();
 
-  // The persisted user bubble exposes a trim control.
+  // The persisted user message exposes a trim control.
   const remove = page.getByRole('button', { name: 'Remove your message from recording' });
   await expect(remove).toBeVisible();
 
-  // Remove the bubble from the recording.
+  // Remove the message from the recording.
   await remove.click();
   await expect(page.getByRole('button', { name: 'Undo removal of your message' })).toBeVisible();
-  // The bubble stays in the transcript.
+  // The message stays in the transcript.
   await expect(page.getByText('Recorded words')).toBeVisible();
   // Trimmed presentation: state text, dimmed/line-through styling, data attribute.
   await expect(page.getByText('Not included in recording')).toBeVisible();
@@ -61,7 +63,7 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   // It was the only included item, so Export is disabled; Delete stays enabled.
   await expect(page.getByRole('button', { name: 'Export' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Delete' })).toBeEnabled();
-  await expect(page.getByLabel('Recording status: 0 of 1 included')).toBeVisible();
+  await expect(page.getByLabel('Recording status: 0 of 1 messages included')).toBeVisible();
 
   // Reload the active fake session: trimmed presentation and Undo are restored
   // from IndexedDB before actions are exposed.
@@ -70,12 +72,12 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   await expect(page.getByRole('button', { name: 'Undo removal of your message' })).toBeVisible();
   await expect(page.getByText('Not included in recording')).toBeVisible();
   await expect(page.locator('.conversation-bubble.user-bubble.trimmed')).toHaveAttribute('data-trimmed', 'true');
-  await expect(page.getByLabel('Recording status: 0 of 1 included')).toBeVisible();
+  await expect(page.getByLabel('Recording status: 0 of 1 messages included')).toBeVisible();
 
-  // Undo restores the bubble and re-enables export.
+  // Undo restores the message and re-enables export.
   await page.getByRole('button', { name: 'Undo removal of your message' }).click();
   await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible();
-  await expect(page.getByLabel('Recording status: 1 of 1 included')).toBeVisible();
+  await expect(page.getByLabel('Recording status: 1 of 1 messages included')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeEnabled();
 
   // Export an MP3 download.

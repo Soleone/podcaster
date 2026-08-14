@@ -31,7 +31,7 @@ export function SessionScreen(props: { state: SessionViewState; agentName: strin
     const ok = await props.onToggleBubbleTrim(targetId, trimmed);
     setTrimAnnouncement(ok
       ? (trimmed ? 'Removed from recording.' : 'Restored to recording.')
-      : 'That bubble could not be updated. Try again.');
+      : 'That message could not be updated. Try again.');
     return ok;
   }, [props.onToggleBubbleTrim]);
   useEffect(() => {

@@ -394,7 +394,7 @@ export function App() {
     try {
       await store.setItemsTrimmed(current, target.itemIds, trimmed);
     } catch (error) {
-      setRecordingView(prev => ({ ...prev, pendingTargetId: null, error: error instanceof Error ? error.message : 'The bubble could not be updated. Try again.' }));
+      setRecordingView(prev => ({ ...prev, pendingTargetId: null, error: error instanceof Error ? error.message : 'The message could not be updated. Try again.' }));
       return false;
     }
     setRecordingView(prev => ({ ...prev, pendingTargetId: null }));

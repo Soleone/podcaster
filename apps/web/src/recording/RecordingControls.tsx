@@ -21,7 +21,7 @@ export function RecordingControls({ sessionId, buildExport, recording, onToggleR
   const { enabled, totalCount, includedCount, bubbleCount, includedBubbleCount, hydrated, pendingTargetId, error } = recording;
   const busy = exporting || pendingTargetId !== null;
   const allTrimmed = enabled && bubbleCount > 0 && includedBubbleCount === 0;
-  const statusLabel = !enabled ? 'off' : totalCount === 0 ? '0 items' : `${includedBubbleCount} of ${bubbleCount} bubbles included`;
+  const statusLabel = !enabled ? 'off' : totalCount === 0 ? '0 items' : `${includedBubbleCount} of ${bubbleCount} messages included`;
 
   const toggle = async () => { await onToggleRecording(!enabled); };
   const exportRecording = async () => {
@@ -49,7 +49,7 @@ export function RecordingControls({ sessionId, buildExport, recording, onToggleR
       <Button variant="secondary" disabled={!hydrated || includedCount === 0 || busy} onClick={() => void exportRecording()}>{exporting ? <><Spinner />Exporting…</> : 'Export'}</Button>
       <Button variant="outline" disabled={totalCount === 0} onClick={() => void remove()}>Delete</Button>
     </div>
-    {allTrimmed ? <p className="hint">Every bubble is removed from the recording. Use Undo on any bubble to include it again.</p> : null}
+    {allTrimmed ? <p className="hint">Every message is removed from the recording. Use Undo on any message to include it again.</p> : null}
     {notice || error ? <p className="hint" role="status">{notice || error}</p> : null}
   </Card>;
 }

@@ -27,7 +27,6 @@ interface TrimAction {
   trimmedNow: boolean;
   label: string;
   accessible: string;
-  disabled: boolean;
 }
 
 function trimTargetId(item: ConversationItem): RecordingTrimTargetId | undefined {
@@ -38,28 +37,26 @@ function trimTargetId(item: ConversationItem): RecordingTrimTargetId | undefined
 
 /**
  * Resolves whether a trim control should appear for a row and which action it
- * performs. Requires a persisted target; never shows for tentative rows; for
- * assistant rows it requires terminal playback so a later part cannot arrive
- * untrimmed after removal. New Remove actions hide while recording is off, but
- * Undo stays available for already-trimmed bubbles. Assistant actions remain
- * visible but disabled until the current playback is terminal.
+ * performs. Requires a persisted target and never shows for tentative rows.
+ * Assistant targets group persisted parts under one response message. New
+ * Remove actions hide while recording is off, but Undo stays available for
+ * already-trimmed messages.
  */
 function trimActionFor(item: ConversationItem, target: RecordingTrimTarget | undefined, enabled: boolean): TrimAction | null {
   if (!target) return null;
   if (item.kind === 'assistant' && item.tentative) return null;
-  const assistantPlaybackPending = item.kind === 'assistant' && item.playback !== 'completed' && item.playback !== 'interrupted';
   const who = item.kind === 'assistant' ? "Assistant's response" : 'your message';
   if (target.state === 'included') {
     if (!enabled) return null;
-    return { setTrimmed: true, trimmedNow: false, label: 'Remove from recording', accessible: `Remove ${who} from recording`, disabled: assistantPlaybackPending };
+    return { setTrimmed: true, trimmedNow: false, label: 'Remove from recording', accessible: `Remove ${who} from recording` };
   }
   if (target.state === 'trimmed') {
-    return { setTrimmed: false, trimmedNow: true, label: 'Undo remove', accessible: `Undo removal of ${who}`, disabled: assistantPlaybackPending };
+    return { setTrimmed: false, trimmedNow: true, label: 'Undo remove', accessible: `Undo removal of ${who}` };
   }
   // Defensive mixed state: normalize every member together rather than leave a
   // partially trimmed bubble.
   if (!enabled) return null;
-  return { setTrimmed: true, trimmedNow: false, label: 'Remove remainder from recording', accessible: `Remove remainder of ${who} from recording`, disabled: assistantPlaybackPending };
+  return { setTrimmed: true, trimmedNow: false, label: 'Remove remainder from recording', accessible: `Remove remainder of ${who} from recording` };
 }
 
 function TrimControl({ action, targetId, pending, onToggleBubbleTrim, onPrimary }: {
@@ -76,7 +73,7 @@ function TrimControl({ action, targetId, pending, onToggleBubbleTrim, onPrimary 
     className={cn('trim-action', onPrimary && 'trim-action-on-primary')}
     data-trimmed={action.trimmedNow || undefined}
     aria-label={action.accessible}
-    disabled={pending || action.disabled}
+    disabled={pending}
     onClick={() => void onToggleBubbleTrim(targetId, action.setTrimmed)}
   ><Icon data-icon="inline-start" aria-hidden="true" /></Button>;
 }
