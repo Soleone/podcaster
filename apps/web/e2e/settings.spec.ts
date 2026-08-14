@@ -41,7 +41,9 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   // Restore a valid persona and inspect the read-only base prompt.
   await persona.fill('You are a terse, curious night-owl host who loves coastal weather.');
   await page.getByRole('button', { name: 'View base system prompt' }).click();
-  await expect(page.getByText('You are the voice of a live podcast companion.')).toBeVisible();
+  const basePrompt = page.getByText('You are the voice of a live podcast companion.');
+  await expect(basePrompt).toBeVisible();
+  await expect(basePrompt.locator('..')).toHaveCSS('overflow-y', 'visible');
 
   // Voice tab reflects that no verified catalog exists in fake services.
   await page.getByRole('tab', { name: 'Voice' }).click();

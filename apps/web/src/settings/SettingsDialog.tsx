@@ -7,7 +7,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../componen
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field';
 import { Input } from '../components/ui/input';
-import { ScrollArea } from '../components/ui/scroll-area';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Spinner } from '../components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -118,9 +117,9 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                 <ChevronDown className={cn('size-4 transition-transform', promptOpen && 'rotate-180')} aria-hidden="true" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2">
-                <ScrollArea className="h-56 rounded-lg border border-border bg-muted/40 p-3">
-                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
-                </ScrollArea>
+                <div className="rounded-lg border border-border bg-muted/40 p-3">
+                  <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
+                </div>
                 <p className="mt-2 text-xs text-muted-foreground">Your saved persona is appended to this base prompt when the next session starts.</p>
               </CollapsibleContent>
             </Collapsible>
