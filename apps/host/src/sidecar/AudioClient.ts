@@ -136,7 +136,17 @@ export class AudioClient implements SpeechOutputPort {
   async open(captureStreamId: number, streamMode: 'capture' | 'preview' = 'capture'): Promise<string> {
     await this.connect();
     await this.waitUntilReady();
-    if (this.streamId || this.failed || this.readyStatus !== 'ready') throw new Error('audio sidecar is not ready for a stream');
+    if (this.failed || this.readyStatus !== 'ready') throw new Error('audio sidecar is not ready for a stream');
+    // The sidecar owns one long-lived stream per AudioClient. Browser pause
+    // stops microphone capture, but must not try to open a second sidecar stream
+    // on resume. Rebind the capture stream id and reset VAD state instead.
+    if (this.streamId && this.streamOpened) {
+      if (streamMode !== 'capture') throw new Error('audio sidecar stream mode cannot change');
+      this.captureStreamId = captureStreamId;
+      this.reset();
+      return this.streamId;
+    }
+    if (this.streamId) throw new Error('audio sidecar stream is still opening');
     const streamId = randomUUID();
     this.streamId = streamId;
     this.captureStreamId = captureStreamId;

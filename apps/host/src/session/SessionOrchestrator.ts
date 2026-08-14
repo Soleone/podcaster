@@ -846,7 +846,15 @@ export class SessionOrchestrator {
     }
     const correction = hasCorrectionIntent(turn.text);
     const redirection = !correction && isBareRedirection(turn.text);
-    const accept = correction || redirection || (decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text));
+    const fallback = fallbackInterruptionDecision(turn.text);
+    const wordCount = turn.text.trim().match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.length ?? 0;
+    // A short transcript is the common shape of a VAD false positive: "uh",
+    // "I", or a clipped backchannel. The classifier is useful for ambiguous
+    // real speech, but must not be allowed to turn those fragments into a
+    // destructive takeover just because it guessed accept with high confidence.
+    // Deterministic corrections and topic fragments remain authoritative.
+    const shortAmbiguousResume = fallback.action === "resume" && wordCount <= 2;
+    const accept = correction || redirection || (!shortAmbiguousResume && decision.action === "accept" && decision.confidence !== "low" && hasLexicalContent(turn.text));
     const disposition = accept ? "accept_takeover" : decision.intent === "continue_previous" ? "resume_requested" : hasLexicalContent(turn.text) ? "resume_fragment" : "resume_noise";
     const rewindMs = accept ? 0 : this.rewindMsFor(provisional);
     this.emit("interruption.decision", {

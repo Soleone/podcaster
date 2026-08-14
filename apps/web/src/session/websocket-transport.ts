@@ -39,20 +39,24 @@ export class WebSocketSessionTransport implements SessionTransport {
       const socket = this.createSocket(`${protocol}//${location.host}/ws`);
       this.socket = socket;
       let settled = false;
-      const fail = () => {
+      const fail = (detail?: string) => {
         if (!settled) {
           settled = true;
-          activityLog.append({ level: 'error', source: 'transport', message: 'session connection could not be established' });
+          activityLog.append({ level: 'error', source: 'transport', message: 'session connection could not be established', ...(detail ? { detail } : {}) });
           reject(new Error('The secure session connection could not be authenticated.'));
         } else if (!this.failureNotified && !this.intentionalDisconnect) {
-          activityLog.append({ level: 'error', source: 'transport', message: 'session connection lost' });
-          this.notifyFailure('The secure session connection was lost. Local playback was stopped.');
+          activityLog.append({ level: 'error', source: 'transport', message: 'session connection lost', ...(detail ? { detail } : {}) });
+          this.notifyFailure(`The secure session connection was lost. Local playback was stopped.${detail ? ` (${detail})` : ''}`);
         }
       };
       socket.binaryType = 'arraybuffer';
       socket.onopen = () => { activityLog.append({ level: 'info', source: 'transport', message: 'session socket opened' }); socket.send(JSON.stringify({ capability })); };
-      socket.onerror = fail;
-      socket.onclose = () => { if (!this.intentionalDisconnect) fail(); };
+      socket.onerror = () => fail();
+      socket.onclose = event => {
+        if (this.intentionalDisconnect) return;
+        const detail = event.code || event.reason ? `code=${event.code}${event.reason ? ` reason=${event.reason}` : ''}` : undefined;
+        fail(detail);
+      };
       socket.onmessage = message => {
         if (typeof message.data !== 'string') { this.handleBinary(message.data); return; }
         let value: unknown;

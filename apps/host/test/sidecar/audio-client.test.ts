@@ -155,6 +155,16 @@ describe('AudioClient', () => {
     await client.close();
   });
 
+  it('reuses the sidecar stream when capture is paused and resumed', async () => {
+    const { sidecar } = await fakeVadSidecar();
+    const client = new AudioClient(sidecar);
+    await client.connect();
+    const openedStream = await client.open(7);
+    await expect(client.open(8)).resolves.toBe(openedStream);
+    expect(client.readiness()).toBe('ready');
+    await client.close();
+  });
+
   it('fails closed when speech_end omits captureEndSequence or inverts the capture range', async () => {
     const first = await fakeVadSidecar();
     const client = new AudioClient(first.sidecar, {});

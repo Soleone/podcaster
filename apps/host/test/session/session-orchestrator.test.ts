@@ -374,6 +374,20 @@ describe("safe session orchestrator", () => {
     expect(events.filter(event => event.type === "barge_in.confirmed")).toHaveLength(1);
   });
 
+  it("does not let a short false-positive transcript cancel playback", async () => {
+    const { session, speech, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "accept", intent: "new_request", confidence: "high", reason: "Noisy guess." }) } });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const playbackId = Object.keys(session.snapshot().deliveredExtent)[0]!;
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 0, generatedSamples: 6400 });
+    await session.handleStableFinal(turn(1, "I"));
+    expect(session.snapshot()).toMatchObject({ epoch: 0, phase: "playing", activeResponseId: responseId });
+    expect(speech.cancelled).toEqual([]);
+    expect(speech.resumed).toEqual([responseId]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "barge_in.rejected", payload: expect.objectContaining({ resumable: true }) }));
+  });
+
   it("resumes after persisted accidental noise without cancelling the response", async () => {
     const { session, speech, events } = setup({ interruptionClassifier: { decide: async () => ({ action: "resume", intent: "non_substantive", confidence: "high", reason: "Noise." }) } });
     await session.handleStableFinal(turn(0));
