@@ -52,17 +52,23 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     void work.finally(() => shutdowns.delete(work));
     return work;
   };
-  // Readiness polls every couple of seconds and each Pi probe is a full provider
-  // round trip serialized behind the client mutex, so share one in-flight probe
-  // and reuse fresh results instead of queueing probes that outlive the request.
+  // Readiness polls every couple of seconds, but a Pi probe is a full provider
+  // round trip. Never make the browser wait for that probe: share one in-flight
+  // probe, return a checking snapshot immediately, and reuse fresh results.
   const PROBE_TTL_MS = 10_000;
+  const piChecking: PiReadiness = { status: 'unavailable', detail: 'Pi is still starting.', correctiveAction: 'You can start now; the first response may take a little longer.' };
   let probeValue: PiReadiness | undefined;
   let probeAt = 0;
   let probePromise: Promise<PiReadiness> | undefined;
   const probePi = (): Promise<PiReadiness> => {
     if (probeValue && now() - probeAt < PROBE_TTL_MS) return Promise.resolve(probeValue);
-    probePromise ??= (options.pi ?? unavailablePi).probe().finally(() => { probePromise = undefined; });
-    return probePromise.then(value => { probeAt = now(); probeValue = value; return value; });
+    if (!probePromise) {
+      probePromise = (options.pi ?? unavailablePi).probe()
+        .catch(() => unavailablePi.probe())
+        .then(value => { probeAt = now(); probeValue = value; return value; })
+        .finally(() => { probePromise = undefined; });
+    }
+    return Promise.resolve(piChecking);
   };
   let origin = '';
   app.decorate('setCanonicalOrigin', (value: string) => { origin = value; });
@@ -119,7 +125,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         },
         { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: audioReady ? 'Your local audio engine is running.' : "Your local audio engine isn't running yet.", action: audioReady ? 'No action needed.' : 'Wait a moment, then check again.' },
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
-      ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi.status,
+      ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi === piChecking ? 'checking' : pi.status,
       ...(snapshot?.voiceCatalog ? { voiceCatalog: snapshot.voiceCatalog } : {}),
     };
   });

@@ -12,7 +12,7 @@ import './readiness.css';
 type Capability = { id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string };
 type VoiceInfo = { id: string; label: string };
 type VoiceCatalog = { catalogId: string; backendId: string; modelId: string; runtimeConfigId: string; revision: string; defaultVoiceId: string; voices: VoiceInfo[] };
-type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: string; voiceCatalog?: VoiceCatalog };
+type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: 'ready' | 'checking' | 'login_required' | 'unavailable' | 'incompatible' | 'rate_limited'; voiceCatalog?: VoiceCatalog };
 
 const DISCLOSURE_KEY = 'podcaster.disclosure';
 const DISCLOSURE_VERSION = 'voice-cloud-boundary-v1';
@@ -35,7 +35,12 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
     if (restored.current) return;
     restored.current = true;
     try {
-      if (localStorage.getItem(DISCLOSURE_KEY) === DISCLOSURE_VERSION) void checkReadiness(false);
+      if (localStorage.getItem(DISCLOSURE_KEY) === DISCLOSURE_VERSION) {
+        // Returning users should not see the disclosure card while the readiness
+        // check is doing network and local-runtime work in the background.
+        setAcknowledged(true);
+        void checkReadiness(false);
+      }
     } catch { /* storage may be unavailable; show disclosure normally */ }
   }, []);
 
@@ -94,7 +99,12 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
         try { localStorage.setItem(DISCLOSURE_KEY, DISCLOSURE_VERSION); } catch { /* session can continue without persistence */ }
       }
       if (granted) setMicrophoneReady(true);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Readiness failed.'); }
+    } catch (cause) {
+      // If a returning user's silent refresh fails, restore the explicit retry
+      // surface instead of leaving them on an unusable status card.
+      setAcknowledged(false);
+      setError(cause instanceof Error ? cause.message : 'Readiness failed.');
+    }
     finally { setLoading(false); }
   }
 
@@ -111,15 +121,21 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
 
   const audioReady = snapshot?.sidecar === 'ready';
   const reasoningReady = snapshot?.capabilities.find(item => item.id === 'cloud_reasoning')?.state === 'ready';
-  const realSessionReady = audioReady && reasoningReady;
-  const transcriptOnlyReady = audioReady && !reasoningReady;
+  const reasoningChecking = snapshot?.reasoning === 'checking';
+  const reasoningUnavailable = Boolean(snapshot?.reasoning && snapshot.reasoning !== 'ready' && !reasoningChecking);
+  const realSessionReady = audioReady && (reasoningReady || reasoningChecking);
+  const transcriptOnlyReady = audioReady && reasoningUnavailable;
   const canStart = props.sessionAvailable || realSessionReady || transcriptOnlyReady;
 
-  const subhead = realSessionReady
-    ? 'Everything is ready on this device.'
-    : transcriptOnlyReady
-      ? 'Transcript-only mode is ready. Assistant responses are unavailable.'
-      : 'A few things need your attention before you can start.';
+  const subhead = !snapshot && loading
+    ? 'Checking local audio and Pi in the background…'
+    : realSessionReady && reasoningChecking
+      ? 'Pi is still warming up. You can start now.'
+      : realSessionReady
+        ? 'Everything is ready on this device.'
+        : transcriptOnlyReady
+          ? 'Transcript-only mode is ready. Assistant responses are unavailable.'
+          : 'A few things need your attention before you can start.';
 
   return <main className="readiness-shell">
     <header className="readiness-header">
@@ -141,7 +157,7 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
         <p role="status" className="readiness-subhead">{subhead}</p>
       </div>
       <ul className="capability-list">{snapshot?.capabilities.map(row => <CapabilityRow key={row.id} row={row} />)}</ul>
-      {!microphoneReady ? <div className="readiness-actions"><Button onClick={() => void enableMicrophone()} disabled={loading}>{loading ? <><Spinner />Requesting microphone…</> : 'Enable microphone'}</Button></div> : <>
+      {!microphoneReady ? <div className="readiness-actions"><Button onClick={() => void enableMicrophone()} disabled={loading}>{loading ? <><Spinner />{snapshot ? 'Requesting microphone…' : 'Checking readiness…'}</> : 'Enable microphone'}</Button></div> : <>
         <Alert role="status" variant="success" className="readiness-note"><CircleCheck className="size-4 mt-0.5 shrink-0 text-success" aria-hidden="true" /><p>Microphone permission is ready. Capture is stopped until the session starts.</p></Alert>
         <div className="readiness-actions">
           {!transcriptOnlyReady ? <Button onClick={() => capability && props.onStart(capability, 'full')} disabled={!capability || !canStart}>Start session</Button> : null}

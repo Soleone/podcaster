@@ -36,7 +36,15 @@ test('disclosure precedes secure readiness and explicit microphone permission', 
   await expect(page.getByRole('button', { name: 'Start session' })).toBeDisabled();
   await expect(page.getByText(/host audio-model integration is ready/)).toBeVisible();
 
+  await page.route('**/api/readiness', async route => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await route.continue();
+  });
   await page.reload();
+  // Returning users see the readiness surface immediately, without waiting for
+  // the local runtime and Pi probe to finish.
+  expect(await page.getByRole('heading', { name: 'Readiness' }).isVisible()).toBe(true);
+  await page.unroute('**/api/readiness');
   await expect(page.getByRole('heading', { name: 'Readiness' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Before you continue' })).toHaveCount(0);
   await expect(page.getByText(/Microphone permission is ready/)).toBeVisible();
