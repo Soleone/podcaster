@@ -110,6 +110,26 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('pauses active playback immediately when VAD speech starts', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'vad.speech_start', { streamId: '018f1f32-7abc-7def-8abc-0123456789ab', utteranceId: '018f1f32-7abd-7def-8abc-0123456789ab', captureStartSequence: 0 }));
+    expect(players[0]!.pause).toHaveBeenCalledOnce();
+    writer.close();
+  });
+
+  it('defers an interruption resume until VAD speech ends', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(event('session', 0, 'barge_in.provisional', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    await transport.emit(event('session', 0, 'vad.speech_start', { streamId: '018f1f32-7abc-7def-8abc-0123456789ab', utteranceId: '018f1f32-7abd-7def-8abc-0123456789ab', captureStartSequence: 0 }));
+    await transport.emit(event('session', 0, 'barge_in.rejected', { responseId: 'response', outputEpoch: 0, resumable: true }));
+    expect(players[0]!.resume).not.toHaveBeenCalled();
+    await transport.emit(event('session', 0, 'vad.speech_end', { streamId: '018f1f32-7abc-7def-8abc-0123456789ab', utteranceId: '018f1f32-7abd-7def-8abc-0123456789ab', captureStartSequence: 0, captureEndSequence: 10 }));
+    expect(players[0]!.resume).toHaveBeenCalledOnce();
+    writer.close();
+  });
+
   it('resumes a rejected provisional only after every local safe-resume guard holds', async () => {
     const { controller, players, transport, writer } = await setup();
     await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));

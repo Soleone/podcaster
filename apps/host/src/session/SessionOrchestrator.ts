@@ -84,6 +84,7 @@ interface ProvisionalState {
   outputEpoch: number;
   echoRecovered: boolean;
   pausedAtMs: number;
+  deadlineAtMs: number;
   pausedSampleOffset?: number;
   generatedSamples?: number;
   deciding?: AbortController;
@@ -164,6 +165,10 @@ export class SessionOrchestrator {
   private provisional: ProvisionalState | undefined;
   private acceptancePendingTerminal: AcceptancePendingTerminal | undefined;
   private timedOutInterruptionEpoch: number | undefined;
+  // VAD speech and TTS start are independent asynchronous streams. Keep the
+  // capture-side speech state so a response that becomes audible after the
+  // user has already started talking is paused before it can overlap them.
+  private userSpeaking = false;
   private stableUserTurnCount = 0;
   private eligibleTurnsSinceChallenge = 3;
   private readonly emitFn: (event: SessionEvent) => void;
@@ -189,7 +194,10 @@ export class SessionOrchestrator {
     this.now = options.now ?? (() => performance.now());
     this.idFactory = options.idFactory ?? (() => defaultUuidV7(Date.now()));
     this.scheduler = options.scheduler ?? { schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return () => clearTimeout(timer); } };
-    this.provisionalTimeoutMs = options.provisionalTimeoutMs ?? 5_000;
+    // Bound the whole interruption recovery window, including the endpoint
+    // delay before speech_end. A five-second UI listening state must never be
+    // extended by the old five-second post-end grace period.
+    this.provisionalTimeoutMs = options.provisionalTimeoutMs ?? 3_000;
     this.classifierTimeoutMs = options.classifierTimeoutMs ?? 2_500;
     this.interruptionClassifier = options.interruptionClassifier ?? new PiInterruptionIntentClassifier(options.pi);
     this.maxContextBytes = options.maxContextBytes ?? 4096;
@@ -303,9 +311,14 @@ export class SessionOrchestrator {
           active.playbackId = meta.playbackId;
           this.playback.set(meta.playbackId, { outputEpoch: active.epoch, generatedSamples: Math.max(active.generatedSamples, meta.generatedSamples ?? 0), delivered: 0, terminal: false });
           this.emit("tts.started", { responseId: active.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate });
-          this.options.speech.release?.(active.responseId);
           this.setUnderlyingPhase(active, "playing");
-          if (this.hasProvisional(active.responseId)) this.options.speech.pause(active.responseId);
+          // Speech can begin while Pi/TTS is still warming up. In that race
+          // there was no provisional barge-in at speech_start, so create one
+          // before releasing buffered PCM. The browser therefore receives the
+          // pause barrier before the first output chunk can be scheduled.
+          if (this.userSpeaking && !this.hasProvisional(active.responseId)) this.beginProvisionalBargeIn(active.responseId);
+          else if (this.hasProvisional(active.responseId)) this.options.speech.pause(active.responseId);
+          this.options.speech.release?.(active.responseId);
           if (meta.completion) {
             void meta.completion.then(
               completed => {
@@ -527,11 +540,14 @@ export class SessionOrchestrator {
     this.emit("tts.started", { responseId: state.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, partIndex: part.partIndex, ...(meta.outputStreamId !== undefined ? { outputStreamId: meta.outputStreamId } : {}) });
     const parent = this.active;
     if (parent && parent.responseId === state.responseId && !parent.playbackId) parent.playbackId = meta.playbackId;
-    this.options.speech.release?.(state.responseId, part.partIndex);
     if (this.multiPart?.responseId === state.responseId) {
       this.phase = "playing";
-      if (this.hasProvisional(state.responseId)) this.options.speech.pause(state.responseId);
+      // Apply the same speech-before-TTS guard to prefetched multipart parts.
+      // The first part may become audible after VAD has already seized the mic.
+      if (this.userSpeaking && !this.hasProvisional(state.responseId)) this.beginProvisionalBargeIn(state.responseId);
+      else if (this.hasProvisional(state.responseId)) this.options.speech.pause(state.responseId);
     }
+    this.options.speech.release?.(state.responseId, part.partIndex);
     if (meta.completion) {
       void meta.completion.then(
         completed => {
@@ -611,6 +627,7 @@ export class SessionOrchestrator {
 
   handleSpeechStart(): number {
     if (this.phase === "stopped") return this.epoch;
+    this.userSpeaking = true;
     this.timedOutInterruptionEpoch = undefined;
     if (this.acceptancePendingTerminal) {
       this.acceptancePendingTerminal.cancelTimer();
@@ -631,6 +648,9 @@ export class SessionOrchestrator {
       delete this.provisional.deciding;
       delete this.provisional.turnId;
       delete this.provisional.pendingTurn;
+      this.provisional.deadlineAtMs = this.now() + this.provisionalTimeoutMs;
+      this.provisional.cancelTimer();
+      this.provisional.cancelTimer = () => {};
       this.phase = "echo_provisional";
       return this.epoch;
     }
@@ -648,15 +668,9 @@ export class SessionOrchestrator {
 
   handleSpeechEnd(): void {
     if (this.phase === "stopped") return;
+    this.userSpeaking = false;
     if (this.provisional) {
-      const provisional = this.provisional;
-      provisional.cancelTimer();
-      provisional.cancelTimer = this.scheduler.schedule(this.provisionalTimeoutMs, () => {
-        if (this.provisional === provisional) {
-          this.timedOutInterruptionEpoch = provisional.outputEpoch;
-          this.resolveProvisional("timed_out");
-        }
-      });
+      this.scheduleProvisionalTimeout(this.provisional);
       return;
     }
     if (!this.active && this.phase === "listening") {
@@ -671,8 +685,13 @@ export class SessionOrchestrator {
     active.phaseBeforeProvisional = this.phase;
     this.options.speech.pause(responseId);
     const ledger = active.playbackId ? this.playback.get(active.playbackId) : undefined;
-    const provisional: ProvisionalState = { responseId, outputEpoch: active.epoch, echoRecovered: false, pausedAtMs: this.now(), cancelTimer: () => {}, ...(ledger ? { generatedSamples: ledger.generatedSamples } : {}) };
+    const pausedAtMs = this.now();
+    const provisional: ProvisionalState = { responseId, outputEpoch: active.epoch, echoRecovered: false, pausedAtMs, deadlineAtMs: pausedAtMs + this.provisionalTimeoutMs, cancelTimer: () => {}, ...(ledger ? { generatedSamples: ledger.generatedSamples } : {}) };
     this.provisional = provisional;
+    // While speech is active, wait for VAD's speech_end before starting the
+    // bounded recovery timer. This avoids spending the recovery window while
+    // the user is still talking and keeps the takeover race deterministic.
+    if (!this.userSpeaking) this.scheduleProvisionalTimeout(provisional);
     this.phase = "echo_provisional";
     this.emit("barge_in.provisional", { responseId, outputEpoch: active.epoch, resumable: true });
     return true;
@@ -794,6 +813,7 @@ export class SessionOrchestrator {
     this.provisional = undefined;
     this.advanceEpochAndCancel();
     if (provisional) this.emit("barge_in.rejected", { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: false });
+    this.userSpeaking = false;
     this.context.length = 0;
     this.recentDecisions.length = 0;
     this.seenTurns.clear();
@@ -924,6 +944,19 @@ export class SessionOrchestrator {
     return true;
   }
 
+  private scheduleProvisionalTimeout(provisional: ProvisionalState): void {
+    provisional.cancelTimer();
+    const delay = Math.max(0, provisional.deadlineAtMs - this.now());
+    provisional.cancelTimer = this.scheduler.schedule(delay, () => {
+      if (this.provisional !== provisional) return;
+      provisional.cancelTimer = () => {};
+      // Never resume while the VAD still considers the user to be speaking.
+      // handleSpeechEnd() owns the next deadline once capture goes quiet.
+      if (this.userSpeaking) return;
+      this.timedOutInterruptionEpoch = provisional.outputEpoch;
+      this.resolveProvisional("timed_out");
+    });
+  }
   private rewindMsFor(provisional: ProvisionalState): number {
     return this.now() - provisional.pausedAtMs > 1_000 ? 500 : 0;
   }

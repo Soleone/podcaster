@@ -1060,6 +1060,25 @@ describe("safe session orchestrator", () => {
     await handling;
   });
 
+  it("pauses playback when speech starts before delayed TTS becomes audible", async () => {
+    let resolveStart!: (meta: { playbackId: string; sampleRate: number; generatedSamples: number }) => void;
+    const speech = new FakeSpeech();
+    speech.begin = input => ({
+      started: new Promise(resolve => { resolveStart = resolve; }),
+      append(): void {},
+      finish(): void {},
+    });
+    const { session, speech: fakeSpeech } = setup({ speech });
+    const handling = session.handleStableFinal(turn(0, "A response that takes time to synthesize"));
+    await Promise.resolve();
+    expect(session.handleSpeechStart()).toBe(0);
+    resolveStart({ playbackId: ids[93]!, sampleRate: 24_000, generatedSamples: 6400 });
+    await handling;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(fakeSpeech.paused).toEqual([session.snapshot().activeResponseId!]);
+    expect(session.snapshot().phase).toBe("echo_provisional");
+  });
+
   it("keeps a superseding utterance eligible when the previous response never became audible", async () => {
     const speech = new FakeSpeech();
     speech.begin = () => ({ started: new Promise(() => {}), append(): void {}, finish(): void {} });

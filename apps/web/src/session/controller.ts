@@ -20,7 +20,7 @@ export interface SessionControllerOptions {
   playbackFactory?: (input: { playbackId: string; outputEpoch: number; sampleRate: number }) => ControlledPlayback;
   schedule?: (delay: number, callback: () => void) => () => void;
 }
-interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean; partIndex?: number; pendingAudio?: Array<{ sampleOffset: number; pcm16: Int16Array }> }
+interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean; partIndex?: number; pendingAudio?: Array<{ sampleOffset: number; pcm16: Int16Array }>; speechPauseGeneration?: number; speechPause?: Promise<PlaybackProgress> | undefined }
 interface ResponsePlaybackGroup { responseId: string; parts: ActivePlayback[]; activeIndex: number; terminal: boolean }
 function resumeRewindMs(payload: Record<string, unknown>): number {
   const rewindMs = payload.rewindMs;
@@ -46,6 +46,10 @@ export class SessionController {
   private readonly playbackByPart = new Map<string, ActivePlayback>();
   private active: ActivePlayback | undefined;
   private provisional: Provisional | undefined;
+  private userSpeaking = false;
+  private speechGeneration = 0;
+  private deferredResume: StableEvent | undefined;
+  private eventQueue: Promise<void> = Promise.resolve();
   private stopped = false;
   private cancelSilence: (() => void) | undefined;
   private readonly schedule: (delay: number, callback: () => void) => () => void;
@@ -61,15 +65,47 @@ export class SessionController {
   snapshot(): SessionViewState { return this.state; }
   subscribe(listener: (state: SessionViewState) => void): () => void { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
 
-  async handleEvent(event: StableEvent): Promise<void> {
+  handleEvent(event: StableEvent): Promise<void> {
+    // VAD and playback events arrive on separate asynchronous paths. Observe a
+    // speech start before queueing any older host resolution so local playback
+    // is silenced immediately and a stale resume cannot win the race.
+    if (event.sessionId === this.options.sessionId && event.epoch >= this.state.epoch) {
+      if (event.type === 'vad.speech_start') {
+        this.userSpeaking = true;
+        this.speechGeneration++;
+        this.pauseActiveForSpeech();
+      } else if (event.type === 'vad.speech_end') {
+        this.userSpeaking = false;
+      }
+    }
+    const run = this.eventQueue.then(() => this.processEvent(event), () => this.processEvent(event));
+    this.eventQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async processEvent(event: StableEvent): Promise<void> {
     if (event.sessionId !== this.options.sessionId || this.seenEvents.has(event.eventId)) return;
     const accountingOnly = event.type === 'playback.progress' || event.type === 'playback.stopped';
     if (event.epoch < this.state.epoch && !accountingOnly) return;
     const isInterruptionResolution = event.type === 'barge_in.confirmed' || event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out' || event.type === 'interruption.decision';
+    const resumesPlayback = (event.type === 'interruption.decision' && event.payload.action === 'resume')
+      || ((event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') && event.payload.resumable === true);
     if (isInterruptionResolution && !this.matchesProvisionalResolution(event)) return;
+    if (resumesPlayback && this.userSpeaking) {
+      // A resolution for an older utterance must not make the agent audible
+      // during a newer utterance. Keep it pending until VAD reports speech end.
+      this.deferredResume = event;
+      return;
+    }
     if (isInterruptionResolution) {
       const provisional = this.provisional!;
       if (!await provisional.checkpointReady || this.provisional !== provisional) return;
+      if (resumesPlayback && this.userSpeaking) {
+        // Speech may seize the mic while the pause checkpoint is being
+        // persisted. Re-check after the await, not only at event arrival.
+        this.deferredResume = event;
+        return;
+      }
       if (event.type === 'interruption.decision' && event.payload.pausedSampleOffset !== provisional.pausedSampleOffset) return;
     }
     this.seenEvents.add(event.eventId);
@@ -85,6 +121,11 @@ export class SessionController {
     }
     if (event.epoch < this.state.epoch) return;
     this.setState(reduceSessionState(this.state, event));
+    if (event.type === 'vad.speech_end') {
+      const deferred = this.deferredResume;
+      this.deferredResume = undefined;
+      if (deferred) await this.processEvent(deferred);
+    }
     if (event.type === 'policy.decision' && event.payload.posture === 'silence') {
       this.cancelSilence?.();
       const silenceEpoch = event.epoch;
@@ -122,6 +163,7 @@ export class SessionController {
         const firstPart = group.parts.length === 0;
         group.parts.push(part);
         if (firstPart) { group.activeIndex = 0; this.active = part; }
+        if (this.userSpeaking && firstPart) this.pauseForSpeech(part);
         // Non-first parts are queued and become audible when their predecessor
         // reports a terminal receipt (see advanceGroup). Their PCM is held in
         // handleAudio until then so it can never overlap the still-speaking
@@ -163,7 +205,9 @@ export class SessionController {
       };
       this.provisional = provisional;
       try {
-        const progress = await active.player.pause();
+        const speechPause = active.speechPause;
+        active.speechPause = undefined;
+        const progress = await (speechPause ?? active.player.pause());
         if (this.provisional !== provisional || this.active !== active || active.terminal) { completeCheckpoint(false); return; }
         provisional.pausedSampleOffset = progress.playedSampleOffset;
         const checkpoint = { responseId: active.responseId, playbackId: active.playbackId, outputEpoch: active.outputEpoch, pausedSampleOffset: progress.playedSampleOffset, generatedSamples: progress.generatedSamples };
@@ -214,7 +258,8 @@ export class SessionController {
       });
       const rewindMs = resumeRewindMs(event.payload);
       this.clearProvisional();
-      if (safe) await active.player.resume(rewindMs);
+      if (safe && !this.userSpeaking) await active.player.resume(rewindMs);
+      else if (safe) this.deferredResume = event;
       else await this.terminalize('cancelled');
     }
   }
@@ -246,6 +291,8 @@ export class SessionController {
   }
 
   async cancelAssistant(): Promise<void> {
+    this.userSpeaking = false;
+    this.deferredResume = undefined;
     await this.options.transport.cancelAssistant();
     await this.terminalize('cancelled');
     this.clearProvisional();
@@ -255,6 +302,8 @@ export class SessionController {
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    this.userSpeaking = false;
+    this.deferredResume = undefined;
     activityLog.append({ level: 'info', source: 'controller', message: 'session stop requested' });
     this.cancelSilence?.();
     this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', playbackNotice: '' });
@@ -345,14 +394,22 @@ export class SessionController {
     }
     group.activeIndex = nextIndex;
     this.active = next;
+    if (this.userSpeaking) this.pauseForSpeech(next);
     const pendingAudio = next.pendingAudio;
     if (pendingAudio) {
       delete next.pendingAudio;
       for (const chunk of pendingAudio) next.player.append(chunk.sampleOffset, chunk.pcm16);
     }
-    void next.player.resume().catch(() => undefined);
+    if (!this.userSpeaking && !this.provisional) void next.player.resume().catch(() => undefined);
   }
   private playbackKey(outputEpoch: number, playbackId: string): string { return `${outputEpoch}:${playbackId}`; }
+  private pauseActiveForSpeech(): void { if (this.active && !this.active.terminal) this.pauseForSpeech(this.active); }
+  private pauseForSpeech(part: ActivePlayback): void {
+    if (part.speechPauseGeneration === this.speechGeneration) return;
+    part.speechPauseGeneration = this.speechGeneration;
+    part.speechPause = part.player.pause();
+    void part.speechPause.catch(() => undefined);
+  }
   private clearProvisional(): void { this.provisional = undefined; }
   private setState(state: SessionViewState): void {
     const previous = this.state;
