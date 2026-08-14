@@ -131,7 +131,7 @@ export class AudioClient implements SpeechOutputPort {
 
   readiness(): 'starting' | 'ready' | 'failed' { return this.readyStatus; }
 
-  async open(captureStreamId: number): Promise<string> {
+  async open(captureStreamId: number, streamMode: 'capture' | 'preview' = 'capture'): Promise<string> {
     await this.connect();
     await this.waitUntilReady();
     if (this.streamId || this.failed || this.readyStatus !== 'ready') throw new Error('audio sidecar is not ready for a stream');
@@ -139,7 +139,7 @@ export class AudioClient implements SpeechOutputPort {
     this.streamId = streamId;
     this.captureStreamId = captureStreamId;
     const opened = new Promise<void>((resolve, reject) => { this.openWaiter = { resolve, reject }; });
-    this.send('stream.open', { streamId, captureStreamId, sampleRate: 16_000, frameSamples: 320 });
+    this.send('stream.open', { streamId, captureStreamId, sampleRate: 16_000, frameSamples: 320, streamMode });
     await opened;
     return streamId;
   }

@@ -36,8 +36,8 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
   const sessionTtlMs = options.sessionTtlMs ?? SESSION_TTL_MS;
-  // One in-flight preview per process; the sidecar allows a single active
-  // stream, and a preview must never compete with a live session.
+  // Keep previews bounded per host process. The sidecar accepts a dedicated
+  // TTS-only preview stream alongside the session capture stream.
   let voicePreviewInFlight = false;
   const voicePreview = options.voicePreview ?? (async (input: { catalogId: string; voiceId: string; phrases: string[] }, signal: AbortSignal) => {
     const result = await synthesizeVoicePreview(options.sidecar, input, { signal });
@@ -142,8 +142,9 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       reply.header('content-type', 'audio/wav').header('cache-control', 'no-store');
       return reply.send(Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength));
     } catch {
-      // The sidecar refuses a second stream while a voice session is streaming,
-      // which surfaces here as a clean 503 without disturbing that session.
+      // A preview is isolated from the session stream. If the local engine is
+      // actually unavailable (or the TTS adapter is poisoned), report that
+      // without disturbing the live session.
       return reply.code(503).send({ error: 'preview_unavailable' });
     } finally {
       request.raw.removeListener('aborted', onAborted);

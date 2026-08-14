@@ -2,10 +2,9 @@
 // its own private sidecar stream (never the session's), sends a single TTS
 // request with the chosen voice, and collects the PCM until tts.ended. It
 // reuses AudioClient wholesale so catalog validation, frame sequencing, and
-// sample reconciliation are identical to session speech.
-//
-// The sidecar runtime allows one active stream, so a preview fails cleanly when
-// a voice session is already streaming; the running session is never disturbed.
+// sample reconciliation are identical to session speech. The preview stream is
+// TTS-only, so it can coexist with session capture; the runtime serializes
+// access to the single synthesis adapter and never disturbs the session.
 
 import { randomUUID } from 'node:crypto';
 import { decodeBinaryAudioFrame, joinPreviewPhrases } from '@app/contracts';
@@ -50,7 +49,9 @@ export async function synthesizeVoicePreview(
   );
   try {
     await client.connect();
-    await client.open(0);
+    // Preview streams are TTS-only and may coexist with the session's capture
+    // stream. The runtime still serializes access to the single TTS adapter.
+    await client.open(0, 'preview');
     const responseId = randomUUID();
     // begin() rather than synthesize(): a signal aborted before admit rejects
     // the start promise inside begin() and then makes append() throw. The

@@ -120,6 +120,7 @@ class StreamState:
     capture_stream_id: int
     emit_json: Callable[[dict[str, object]], None]
     emit_binary: Callable[[bytes], None]
+    stream_mode: str = "capture"
     expected_sequence: int = 0
     endpointer: DeterministicEndpointer = field(
         default_factory=lambda: DeterministicEndpointer(EndpointerConfig())
@@ -161,6 +162,11 @@ class SelectedAudioRuntime:
         self.status = "starting"
         self._streams: dict[str, StreamState] = {}
         self._lock = threading.RLock()
+        # Kokoro is a single-active synthesis adapter. Preview streams are
+        # allowed to coexist with a session, but synthesis itself remains
+        # serialized so a preview can wait for an in-flight response instead
+        # of being rejected just because capture is open.
+        self._tts_lock = threading.Lock()
         self._workers: set[threading.Thread] = set()
         self.last_stt_audio_samples = 0
 
@@ -207,21 +213,24 @@ class SelectedAudioRuntime:
         capture_stream_id: int,
         emit_json: Callable[[dict[str, object]], None],
         emit_binary: Callable[[bytes], None],
+        stream_mode: str = "capture",
     ) -> None:
         if self.status != "ready":
             raise RuntimeError("selected runtime is unavailable")
+        if stream_mode not in {"capture", "preview"}:
+            raise ValueError("invalid stream mode")
         with self._lock:
-            if self._streams:
-                raise RuntimeError("one active stream is allowed")
+            if any(state.stream_mode == stream_mode for state in self._streams.values()):
+                raise RuntimeError(f"one active {stream_mode} stream is allowed")
             self._streams[stream_id] = StreamState(
-                stream_id, capture_stream_id, emit_json, emit_binary
+                stream_id, capture_stream_id, emit_json, emit_binary, stream_mode
             )
         emit_json({"type": "stream.opened", "payload": {"streamId": stream_id}})
 
     def accept_audio(self, stream_id: str, frame: BinaryAudioFrame) -> None:
         state = self._state(stream_id)
         with self._lock:
-            if self.status != "ready" or state.closed or frame.channel != 1 or frame.stream_id != state.capture_stream_id:
+            if self.status != "ready" or state.closed or state.stream_mode != "capture" or frame.channel != 1 or frame.stream_id != state.capture_stream_id:
                 raise ValueError("invalid capture stream")
             if frame.sequence != state.expected_sequence:
                 raise ValueError("capture sequence gap or duplicate")
@@ -428,7 +437,15 @@ class SelectedAudioRuntime:
                         text_stream.generated_samples += len(chunk.pcm16) // 2
                         local_sequence += 1
 
-                    self.tts.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
+                    # A preview can be opened while a session is capturing.
+                    # Wait for the adapter rather than failing with its
+                    # single-active-synthesis guard.
+                    while not self._tts_lock.acquire(timeout=0.05):
+                        text_stream.token.raise_if_cancelled()
+                    try:
+                        self.tts.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
+                    finally:
+                        self._tts_lock.release()
                     text_stream.token.raise_if_cancelled()
 
                 # All chunks synthesized, emit tts.ended

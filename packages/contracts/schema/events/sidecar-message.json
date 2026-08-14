@@ -180,6 +180,12 @@
             },
             "frameSamples": {
               "const": 320
+            },
+            "streamMode": {
+              "enum": [
+                "capture",
+                "preview"
+              ]
             }
           },
           "additionalProperties": false

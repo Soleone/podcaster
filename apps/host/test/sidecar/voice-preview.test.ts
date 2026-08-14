@@ -62,6 +62,7 @@ describe('synthesizeVoicePreview', () => {
   it('synthesizes the joined phrases with the chosen voice and returns contiguous PCM', async () => {
     const { sidecar, requests } = await fakePreviewSidecar();
     const result = await synthesizeVoicePreview(sidecar, { catalogId: 'sess-catalog', voiceId: 'af_bella', phrases: ['Hello there!', 'How are you?'] });
+    expect(requests.some(request => request.type === 'stream.open' && request.payload.streamMode === 'preview')).toBe(true);
     expect(requests.some(request => request.type === 'tts.open' && request.payload.voiceId === 'af_bella')).toBe(true);
     const appends = requests.filter(request => request.type === 'tts.append').map(request => String(request.payload.text));
     expect(appends.join('')).toBe('Hello there! How are you?');

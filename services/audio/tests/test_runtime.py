@@ -90,6 +90,57 @@ def ready_runtime():
     return runtime, events, binary
 
 
+def test_preview_stream_coexists_with_capture_stream_and_synthesizes() -> None:
+    runtime, events, _ = ready_runtime()
+    preview_events = []
+    session = "018f1f32-7abc-7def-8abc-0123456789ab"
+    preview = "018f1f32-7abd-7def-8abc-0123456789ab"
+    runtime.open_stream(preview, 0, preview_events.append, lambda _: None, "preview")
+    with pytest.raises(RuntimeError, match="one active preview"):
+        runtime.open_stream("018f1f32-7abe-7def-8abc-0123456789ab", 0, lambda _: None, lambda _: None, "preview")
+    with pytest.raises(RuntimeError, match="one active capture"):
+        runtime.open_stream("018f1f32-7abf-7def-8abc-0123456789ab", 13, lambda _: None, lambda _: None)
+    runtime.request_tts(preview, "018f1f32-7ab0-7def-8abc-0123456789ab", 0, "response")
+    wait_for(preview_events, "tts.ended")
+    runtime.close_stream(preview)
+    runtime.close_stream(session)
+
+
+def test_preview_waits_for_session_tts_instead_of_poisoning_runtime() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    class SerializedTts(FakeTts):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                release.wait(1)
+            return super().synthesize_stream(text, cancel, on_audio, voice)
+
+    runtime = SelectedAudioRuntime(FakeStt(), SerializedTts())
+    runtime.mark_ready_for_test()
+    session_events = []
+    preview_events = []
+    session = "018f1f32-7abc-7def-8abc-0123456789ab"
+    preview = "018f1f32-7abd-7def-8abc-0123456789ab"
+    first = "018f1f32-7abe-7def-8abc-0123456789ab"
+    second = "018f1f32-7abf-7def-8abc-0123456789ab"
+    runtime.open_stream(session, 12, session_events.append, lambda _: None)
+    runtime.open_stream(preview, 0, preview_events.append, lambda _: None, "preview")
+    runtime.request_tts(session, first, 0, "response")
+    assert entered.wait(1)
+    runtime.request_tts(preview, second, 0, "response")
+    assert not any(event["type"] == "tts.ended" for event in preview_events)
+    release.set()
+    wait_for(preview_events, "tts.ended")
+    assert runtime.status == "ready"
+    runtime.close_stream(preview)
+    runtime.close_stream(session)
+
+
 def test_vad_pre_roll_binding_partial_and_final_order() -> None:
     runtime, events, _ = ready_runtime()
     stream = "018f1f32-7abc-7def-8abc-0123456789ab"

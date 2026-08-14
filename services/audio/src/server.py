@@ -179,6 +179,7 @@ class SidecarServer:
                         int(payload["captureStreamId"]),
                         emit_json,
                         enqueue,
+                        str(payload.get("streamMode", "capture")),
                     )
                 elif opened_stream is None or payload.get("streamId") != opened_stream:
                     raise ValueError("unknown stream")
