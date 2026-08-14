@@ -202,6 +202,8 @@ class SidecarServer:
                         int(payload["epoch"]),
                         int(payload["sequence"]),
                         str(payload["text"]),
+                        part_index=payload.get("partIndex"),
+                        part_id=payload.get("partId"),
                     )
                 elif message_type == "tts.commit":
                     self.runtime.commit_tts(
@@ -210,11 +212,17 @@ class SidecarServer:
                         int(payload["epoch"]),
                         int(payload["nextSequence"]),
                         str(payload["textSha256"]),
+                        part_index=payload.get("partIndex"),
+                        part_id=payload.get("partId"),
                     )
                 elif message_type == "tts.request":
                     self.runtime.request_tts(opened_stream, str(payload["responseId"]), int(payload["epoch"]), str(payload["text"]), voice_id=str(payload["voiceId"]), speed_modifier=payload.get("speedModifier"))
                 elif message_type == "tts.cancel":
-                    self.runtime.cancel_tts(opened_stream, str(payload["responseId"]))
+                    self.runtime.cancel_tts(
+                        opened_stream,
+                        str(payload["responseId"]),
+                        part_index=payload.get("partIndex"),
+                    )
                 elif message_type == "stream.reset":
                     self.runtime.reset_stream(opened_stream)
                 elif message_type == "stream.close":

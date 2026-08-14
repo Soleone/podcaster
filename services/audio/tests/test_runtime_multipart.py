@@ -79,8 +79,8 @@ def ready_runtime():
 def drive_partial(runtime, events, response_id, epoch, part_index=None, part_id=None):
     stream = "018f1f32-7abc-7def-8abc-0123456789ab"
     runtime.open_tts(stream, response_id, epoch, part_index=part_index, part_id=part_id)
-    runtime.append_tts(stream, response_id, epoch, 0, "response")
-    runtime.commit_tts(stream, response_id, epoch, 1, hashlib.sha256(b"response").hexdigest())
+    runtime.append_tts(stream, response_id, epoch, 0, "response", part_index=part_index, part_id=part_id)
+    runtime.commit_tts(stream, response_id, epoch, 1, hashlib.sha256(b"response").hexdigest(), part_index=part_index, part_id=part_id)
     wait_for(events, "tts.ended")
 
 
@@ -194,6 +194,54 @@ def test_committed_stream_allows_one_prefetched_successor() -> None:
     assert len(second_started) == 1
     ended_first = next(e for e in events if e["type"] == "tts.ended" and e["payload"]["responseId"] == first)
     assert events.index(second_started[0]) > events.index(ended_first)
+    runtime.close_stream(stream)
+
+
+def test_prefetched_multipart_siblings_share_parent_response_id() -> None:
+    """Multipart parts use one response identity but retain independent TTS streams."""
+    import threading
+
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls = 0
+
+    class BlockingTts(FakeTts):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_started.set()
+                release_first.wait(timeout=2)
+            cancel.raise_if_cancelled()
+            if on_audio:
+                on_audio(AudioChunk(0, bytes(960), 24_000, 0))
+            return SynthesisResult(24_000, 480, 0.02, 0.01, "a" * 64, 1)
+
+    runtime = SelectedAudioRuntime(FakeStt(), BlockingTts())
+    runtime.mark_ready_for_test()
+    events = []
+    stream = "018f1f32-7abc-7def-8abc-0123456789ab"
+    response = "018f1f32-7abd-7def-8abc-0123456789ab"
+    runtime.open_stream(stream, 12, events.append, lambda _: None)
+
+    runtime.open_tts(stream, response, 0, part_index=0)
+    runtime.append_tts(stream, response, 0, 0, "response", part_index=0)
+    runtime.commit_tts(stream, response, 0, 1, hashlib.sha256(b"response").hexdigest(), part_index=0)
+    assert first_started.wait(1)
+
+    # The second part has the same parent responseId, so routing must include
+    # partIndex or it is incorrectly rejected as a duplicate response.
+    runtime.open_tts(stream, response, 0, part_index=1)
+    runtime.append_tts(stream, response, 0, 0, "response", part_index=1)
+    runtime.commit_tts(stream, response, 0, 1, hashlib.sha256(b"response").hexdigest(), part_index=1)
+    assert not any(event["type"] == "tts.started" and event["payload"].get("partIndex") == 1 for event in events)
+
+    release_first.set()
+    deadline = time.monotonic() + 2
+    while len([event for event in events if event["type"] == "tts.ended"]) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    ended = [event for event in events if event["type"] == "tts.ended"]
+    assert [event["payload"]["partIndex"] for event in ended] == [0, 1]
     runtime.close_stream(stream)
 
 

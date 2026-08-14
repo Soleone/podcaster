@@ -59,6 +59,11 @@ def _uuid7() -> str:
     return str(UUID(bytes=bytes(raw)))
 
 
+def _tts_key(response_id: str, part_index: int | None) -> tuple[str, int | None]:
+    """Identify one TTS stream without collapsing multipart siblings."""
+    return response_id, part_index
+
+
 class CancellationToken:
     def __init__(self) -> None:
         self._event = threading.Event()
@@ -134,8 +139,8 @@ class StreamState:
         default_factory=lambda: deque(maxlen=MAX_PRE_ROLL_FRAMES)
     )
     utterance: Utterance | None = None
-    tts: dict[str, CancellationToken] = field(default_factory=dict)
-    tts_done: dict[str, threading.Event] = field(default_factory=dict)
+    tts: dict[tuple[str, int | None], CancellationToken] = field(default_factory=dict)
+    tts_done: dict[tuple[str, int | None], threading.Event] = field(default_factory=dict)
     tts_stream: TtsTextStream | None = None
     used_output_stream_ids: set[int] = field(default_factory=set)
     closed: bool = False
@@ -346,6 +351,7 @@ class SelectedAudioRuntime:
             speed = float(speed_modifier)
             if not math.isfinite(speed) or speed < MIN_VOICE_SPEED_MODIFIER or speed > MAX_VOICE_SPEED_MODIFIER:
                 raise ValueError("invalid TTS speed modifier")
+        tts_key = _tts_key(response_id, part_index)
         with self._lock:
             if self.status != "ready":
                 raise RuntimeError("selected runtime requires restart")
@@ -354,7 +360,7 @@ class SelectedAudioRuntime:
             existing = state.tts_stream
             if existing is not None and not existing.token.cancelled:
                 raise RuntimeError("a progressive TTS stream is already open")
-            if response_id in state.tts:
+            if tts_key in state.tts:
                 raise ValueError("duplicate TTS response")
             if len(state.tts) >= 2:
                 raise RuntimeError("TTS request queue exceeded bound")
@@ -366,8 +372,8 @@ class SelectedAudioRuntime:
             state.used_output_stream_ids.add(output_stream_id)
             token = CancellationToken()
             done = threading.Event()
-            state.tts[response_id] = token
-            state.tts_done[response_id] = done
+            state.tts[tts_key] = token
+            state.tts_done[tts_key] = done
             text_stream = TtsTextStream(
                 response_id=response_id,
                 epoch=epoch,
@@ -498,8 +504,8 @@ class SelectedAudioRuntime:
                     self._poison()
             finally:
                 with self._lock:
-                    state.tts.pop(response_id, None)
-                    state.tts_done.pop(response_id, None)
+                    state.tts.pop(tts_key, None)
+                    state.tts_done.pop(tts_key, None)
                     if state.tts_stream is text_stream:
                         state.tts_stream = None
                     text_stream.done.set()
@@ -507,8 +513,35 @@ class SelectedAudioRuntime:
 
         self._spawn("selected-tts", work)
 
+    def _progressive_stream(
+        self,
+        state: StreamState,
+        response_id: str,
+        epoch: int,
+        part_index: int | None,
+        part_id: str | None,
+    ) -> TtsTextStream:
+        text_stream = state.tts_stream
+        if text_stream is None:
+            raise ValueError("no progressive TTS stream is open")
+        if (
+            text_stream.response_id != response_id
+            or text_stream.epoch != epoch
+            or text_stream.part_index != part_index
+            or (part_id is not None and text_stream.part_id != part_id)
+        ):
+            raise ValueError("response, epoch, or part identity mismatch")
+        return text_stream
+
     def append_tts(
-        self, stream_id: str, response_id: str, epoch: int, sequence: int, text: str
+        self,
+        stream_id: str,
+        response_id: str,
+        epoch: int,
+        sequence: int,
+        text: str,
+        part_index: int | None = None,
+        part_id: str | None = None,
     ) -> None:
         state = self._state(stream_id)
         with self._lock:
@@ -516,11 +549,7 @@ class SelectedAudioRuntime:
                 raise RuntimeError("selected runtime requires restart")
             if state.closed:
                 raise RuntimeError("audio stream is closing")
-            text_stream = state.tts_stream
-            if text_stream is None:
-                raise ValueError("no progressive TTS stream is open")
-            if text_stream.response_id != response_id or text_stream.epoch != epoch:
-                raise ValueError("response or epoch mismatch")
+            text_stream = self._progressive_stream(state, response_id, epoch, part_index, part_id)
             if text_stream.committed:
                 raise ValueError("TTS stream is already committed")
             if sequence != text_stream.next_sequence:
@@ -544,16 +573,14 @@ class SelectedAudioRuntime:
         epoch: int,
         next_sequence: int,
         text_sha256: str,
+        part_index: int | None = None,
+        part_id: str | None = None,
     ) -> None:
         state = self._state(stream_id)
         with self._lock:
             if self.status != "ready":
                 raise RuntimeError("selected runtime requires restart")
-            text_stream = state.tts_stream
-            if text_stream is None:
-                raise ValueError("no progressive TTS stream is open")
-            if text_stream.response_id != response_id or text_stream.epoch != epoch:
-                raise ValueError("response or epoch mismatch")
+            text_stream = self._progressive_stream(state, response_id, epoch, part_index, part_id)
             if text_stream.committed:
                 raise ValueError("TTS stream is already committed")
             if next_sequence != text_stream.next_sequence:
@@ -573,11 +600,22 @@ class SelectedAudioRuntime:
             with text_stream.condition:
                 text_stream.condition.notify_all()
 
-    def cancel_tts(self, stream_id: str, response_id: str) -> None:
+    def cancel_tts(
+        self,
+        stream_id: str,
+        response_id: str,
+        part_index: int | None = None,
+    ) -> None:
         state = self._state(stream_id)
         with self._lock:
-            token = state.tts.get(response_id)
-            if token is not None:
+            if part_index is None:
+                # A parent cancellation may arrive without a part selector. It
+                # must cut off every admitted sibling, not just the legacy key.
+                tokens = [token for (parent, _), token in state.tts.items() if parent == response_id]
+            else:
+                token = state.tts.get(_tts_key(response_id, part_index))
+                tokens = [token] if token is not None else []
+            for token in tokens:
                 token.cancel()  # local no-more-audio cutoff precedes acknowledgement
 
     def reset_stream(self, stream_id: str) -> None:
