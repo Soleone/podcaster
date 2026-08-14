@@ -117,7 +117,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
             <TabsTrigger value="agent">Agent</TabsTrigger>
             <TabsTrigger value="voice">Voice</TabsTrigger>
           </TabsList>
-          <TabsContent value="agent" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-4 pr-1">
+          <TabsContent value="agent" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1 pt-4 pb-1">
             <FieldGroup>
               <Field data-invalid={agentNameInvalid || undefined}>
                 <FieldLabel htmlFor="settings-agent-name">Agent name</FieldLabel>
@@ -171,7 +171,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
               </CollapsibleContent>
             </Collapsible>
           </TabsContent>
-          <TabsContent value="voice" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-4 pr-1">
+          <TabsContent value="voice" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1 pt-4 pb-1">
             {model.notice ? <Alert variant={model.notice === 'missing_catalog' ? 'destructive' : 'default'}><p>{VOICE_NOTICE_COPY[model.notice]}</p></Alert> : null}
             <FieldGroup>
               <Field>
