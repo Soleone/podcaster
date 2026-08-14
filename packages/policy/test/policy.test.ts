@@ -67,6 +67,7 @@ describe("deterministic posture policy", () => {
   it("lets an explicit short invitation hand the turn to the agent", () => {
     expect(decide(input({ transcript: "Hello, please respond" })).posture).not.toBe("silence");
     expect(decide(input({ transcript: "Please respond" })).posture).not.toBe("silence");
+    expect(decide(input({ transcript: "Respond please" })).posture).not.toBe("silence");
   });
 
   it("never selects challenge until every challenge guard passes", () => {

@@ -228,11 +228,13 @@ export class SessionOrchestrator {
     if (this.provisional) {
       await this.decideInterruption(turn);
       return;
-    } else if (this.active) {
-      this.advanceEpochAndCancel();
     }
-    const operationEpoch = this.epoch;
-    this.phase = "deciding";
+    // Do not cancel a response merely because VAD produced a stable final while
+    // the response is still being generated. Short false positives are common
+    // with background noise (for example, eating), and cancelling here leaves
+    // the user with no answer to their original turn. Evaluate the transcript
+    // first, then supersede only an eligible new turn below.
+    const activeBeforePolicy = this.active;
     const boundedContext = this.boundedContext();
     const policy = this.policyDecide({
       policyVersion: POLICY_VERSION,
@@ -246,13 +248,29 @@ export class SessionOrchestrator {
       recentDecisions: this.recentDecisions,
       eligibleTurnsSinceChallenge: this.eligibleTurnsSinceChallenge,
     });
+    // A silence decision is not a takeover. Keep an in-flight response alive
+    // when the candidate turn was captured before it became audible. This is
+    // the recovery path for accidental VAD/STT finals during reasoning.
+    const keepActiveResponse = Boolean(activeBeforePolicy && policy.posture === "silence");
+    if (!keepActiveResponse && this.active) this.advanceEpochAndCancel();
+    const operationEpoch = this.epoch;
+    if (!keepActiveResponse) this.phase = "deciding";
     this.emit("policy.decision", { turnId: turn.turnId, ...policy });
     this.recentDecisions.push({ turnId: turn.turnId, eligible: policy.eligible, posture: policy.posture });
     if (this.recentDecisions.length > 10) this.recentDecisions.splice(0, this.recentDecisions.length - 10);
     this.stableUserTurnCount++;
     this.addContext({ role: "user", text: turn.text.trim() });
     if (policy.eligible) this.eligibleTurnsSinceChallenge = policy.posture === "challenge" ? 0 : this.eligibleTurnsSinceChallenge + 1;
-    if (policy.posture === "silence" || this.options.transcriptOnly) { this.phase = "listening"; this.emitState(); return; }
+    if (policy.posture === "silence" || this.options.transcriptOnly) {
+      if (keepActiveResponse) {
+        // Leave the host phase untouched. The active response will emit its
+        // normal TTS/playback state, or fail and recover through its usual path.
+        return;
+      }
+      this.phase = "listening";
+      this.emitState();
+      return;
+    }
 
     if (this.multiPartEnabled && this.researchPi) {
       await this.runMultiPartResponse({ epoch: operationEpoch, turnId: turn.turnId, text: turn.text, posture: policy.posture }, boundedContext);
@@ -620,9 +638,11 @@ export class SessionOrchestrator {
       this.beginProvisionalBargeIn(active.responseId);
       return this.epoch;
     }
-    this.advanceEpochAndCancel();
-    this.phase = "listening";
-    this.emitState();
+    // Speech start is only a signal that the user may be speaking. While the
+    // response is still reasoning, wait for its stable final before deciding
+    // whether it is a real takeover. VAD can fire on non-speech noise, and
+    // cancelling here used to orphan the original response before it became
+    // audible.
     return this.epoch;
   }
 

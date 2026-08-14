@@ -206,6 +206,27 @@ describe("safe session orchestrator", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "policy.decision", payload: expect.objectContaining({ posture: "silence" }) }));
   });
 
+  it("does not cancel a still-generating response for a short noise final", async () => {
+    const speech = new FakeSpeech();
+    let resolveStarted!: (meta: { playbackId: string; sampleRate: number; generatedSamples: number }) => void;
+    speech.begin = input => ({
+      started: new Promise(resolve => { resolveStarted = resolve; }),
+      append(): void {},
+      finish(): void {},
+    });
+    const { session } = setup({ speech, policyDecide: decide });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+
+    // VAD may fire on chewing or another brief noise before TTS has started.
+    expect(session.handleSpeechStart()).toBe(0);
+    await session.handleStableFinal(turn(1, "uh"));
+
+    expect(session.snapshot()).toMatchObject({ phase: "reasoning", epoch: 0, activeResponseId: responseId });
+    expect(speech.cancelled).toEqual([]);
+    resolveStarted({ playbackId: ids[99]!, sampleRate: 24_000, generatedSamples: 6400 });
+  });
+
   it.each(["", `${"word ".repeat(46)}`, "Why one? Why two?", "```json bad protocol"])("fails silent for invalid Pi final %j", async text => {
     const pi = new FakePi(async function* () { yield { type: "delta", text: "untrusted" }; yield { type: "final", text }; });
     const { session, speech, events } = setup({ pi });

@@ -276,7 +276,14 @@ describe('browser conversation routing', () => {
     socket.send(JSON.stringify(command('turn.persisted', { turnId: (second.payload as Record<string, unknown>).turnId, finalEventId: second.eventId, persistedEpoch: second.epoch })));
     await waitFor(messages, 'reasoning.final');
     capture(2);
-    await waitForWhere(messages, message => message.type === 'transcript.final' && message.epoch === 1);
+    await waitForWhere(messages, () => messages.filter(candidate => candidate.type === 'transcript.final').length >= 3);
+    const third = messages.filter(message => message.type === 'transcript.final').at(-1)!;
+    // Speech-start no longer cancels a response before we know whether the
+    // utterance is real speech or background noise. Once the stable final is
+    // acknowledged, the meaningful takeover advances the epoch and makes the
+    // older first acknowledgement stale.
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: (third.payload as Record<string, unknown>).turnId, finalEventId: third.eventId, persistedEpoch: third.epoch })));
+    await new Promise<void>(resolve => setImmediate(resolve));
     const closed = new Promise<number>(resolve => socket.once('close', code => resolve(code)));
     socket.send(JSON.stringify(command('turn.persisted', { turnId: (first.payload as Record<string, unknown>).turnId, finalEventId: first.eventId, persistedEpoch: first.epoch }, 0)));
     await expect(closed).resolves.toBe(1008);

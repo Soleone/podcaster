@@ -35,7 +35,7 @@ function lexicalWords(value: string): string[] {
 }
 
 function explicitInvitation(value: string): boolean {
-  return /\b(?:what do you think|what['’]s your take|what is your take|any thoughts|can you|could you|would you|do you agree|please (?:respond|tell me))\b/iu.test(value);
+  return /\b(?:what do you think|what['’]s your take|what is your take|any thoughts|can you|could you|would you|do you agree|please (?:respond|tell me)|(?:respond|reply|answer) please)\b/iu.test(value);
 }
 
 function canonicalize(value: unknown): string {
