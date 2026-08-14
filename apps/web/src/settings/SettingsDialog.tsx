@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Settings, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, Play, Settings, Sparkles, Square } from 'lucide-react';
 import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Textarea } from '../components/ui/textarea';
 import { cn } from '../lib/utils';
 import type { SettingsModel } from './settings-model';
+import { stopVoicePreview, type VoicePreviewHandle } from './voice-preview';
 
 const VOICE_NOTICE_COPY = {
   rebase: 'Your saved voice is still available on the current audio engine. It was moved to the new catalog.',
@@ -28,21 +29,33 @@ export interface SettingsDialogProps {
   saving: boolean;
   saveError: string | undefined;
   onSave: (agentName: string, persona: string, voice: VoicePreference) => Promise<void>;
+  onPreviewVoice?: (voiceId: string) => Promise<VoicePreviewHandle>;
 }
 
-export function SettingsDialog({ open, onOpenChange, model, catalog, saving, saveError, onSave }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, model, catalog, saving, saveError, onSave, onPreviewVoice }: SettingsDialogProps) {
   const [agentName, setAgentName] = useState(model.agentName);
   const [persona, setPersona] = useState(model.persona);
   const [voiceId, setVoiceId] = useState(model.voice.voiceId);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing'>('idle');
+  const [previewError, setPreviewError] = useState<string | undefined>(undefined);
+  const previewHandleRef = useRef<VoicePreviewHandle | undefined>(undefined);
 
   useEffect(() => {
+    // Stop anything audible before the dialog resets or closes; the unmount
+    // cleanup below covers the remaining lifecycles.
+    stopVoicePreview();
+    previewHandleRef.current = undefined;
     if (!open) return;
     setAgentName(model.agentName);
     setPersona(model.persona);
     setVoiceId(model.voice.voiceId);
     setPromptOpen(false);
+    setPreviewState('idle');
+    setPreviewError(undefined);
   }, [open, model.agentName, model.persona, model.voice.voiceId]);
+
+  useEffect(() => () => { previewHandleRef.current?.stop(); }, []);
 
   const agentNameBytes = useMemo(() => utf8ByteLength(agentName), [agentName]);
   const agentNameInvalid = agentNameBytes > MAX_AGENT_NAME_BYTES;
@@ -56,6 +69,36 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
     if (!canSave) return;
     const voice: VoicePreference = { catalogId: catalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '' };
     await onSave(agentName, persona, voice);
+  };
+
+  const togglePreview = async () => {
+    if (previewState === 'playing') {
+      previewHandleRef.current?.stop();
+      previewHandleRef.current = undefined;
+      setPreviewState('idle');
+      return;
+    }
+    if (previewState === 'loading' || !onPreviewVoice || !catalogReady) return;
+    setPreviewError(undefined);
+    setPreviewState('loading');
+    try {
+      const handle = await onPreviewVoice(voiceId);
+      // The dialog may have closed or moved on while the fetch was in flight.
+      previewHandleRef.current = handle;
+      setPreviewState('playing');
+      void handle.finished.then(
+        () => {
+          if (previewHandleRef.current === handle) { previewHandleRef.current = undefined; setPreviewState('idle'); }
+        },
+        () => {
+          if (previewHandleRef.current === handle) { previewHandleRef.current = undefined; setPreviewState('idle'); setPreviewError('The preview stopped before it finished.'); }
+        },
+      );
+    } catch {
+      previewHandleRef.current = undefined;
+      setPreviewState('idle');
+      setPreviewError('Voice preview is unavailable right now. It needs the audio engine free, so try before starting a session.');
+    }
   };
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,18 +173,35 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
               <Field>
                 <FieldLabel htmlFor="settings-voice">Voice</FieldLabel>
                 <FieldContent>
-                  {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) setVoiceId(value); }} disabled={!catalogReady}>
-                    <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
-                      <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>
-                          <span><Sparkles aria-hidden="true" />{voice.label}<span className="font-mono text-xs text-muted-foreground">{voice.id}</span></span>
-                        </SelectItem>)}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the local audio engine reports its verified voices.</p>}
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); if (previewHandleRef.current) { previewHandleRef.current.stop(); previewHandleRef.current = undefined; setPreviewState('idle'); } } }} disabled={!catalogReady}>
+                        <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
+                          <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>
+                              <span><Sparkles aria-hidden="true" />{voice.label}<span className="font-mono text-xs text-muted-foreground">{voice.id}</span></span>
+                            </SelectItem>)}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the local audio engine reports its verified voices.</p>}
+                    </div>
+                    {catalogReady && onPreviewVoice ? <Button
+                      variant="outline"
+                      size="icon"
+                      className="mt-0.5 size-9 shrink-0"
+                      title={previewState === 'playing' ? 'Stop voice preview' : 'Preview voice'}
+                      aria-label={previewState === 'playing' ? 'Stop voice preview' : 'Preview voice'}
+                      disabled={previewState === 'loading'}
+                      onClick={() => void togglePreview()}
+                    >
+                      {previewState === 'loading' ? <Spinner /> : previewState === 'playing' ? <Square className="size-4" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
+                    </Button> : null}
+                  </div>
+                  {previewState === 'playing' ? <p className="text-xs text-muted-foreground" role="status">Previewing the selected voice…</p> : null}
+                  {previewError ? <p className="text-xs text-destructive" role="status">{previewError}</p> : null}
                   {catalog ? <FieldDescription>Backend {catalog.backendId} · model {catalog.modelId} · revision {catalog.revision.slice(0, 8)}</FieldDescription> : null}
                 </FieldContent>
               </Field>

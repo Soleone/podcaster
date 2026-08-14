@@ -14,6 +14,12 @@ import {
   MAX_PERSONA_BYTES,
   normalizeAgentName,
   normalizePersona,
+  randomVoicePreviewPhrases,
+  joinPreviewPhrases,
+  VOICE_PREVIEW_MAX_PHRASE_CHARS,
+  VOICE_PREVIEW_MAX_TEXT_CHARS,
+  VOICE_PREVIEW_PHRASES,
+  VOICE_PREVIEW_PHRASE_COUNT,
   utf8ByteLength,
 } from "../src/settings/index.js";
 
@@ -110,5 +116,35 @@ describe("settings validators", () => {
     expect(isValidSessionSettingsSnapshot({ ...snapshot, version: 2 })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, persona: "x".repeat(MAX_PERSONA_BYTES + 1) })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, voice: { catalogId: "", voiceId: "v" } })).toBe(false);
+  });
+});
+
+describe("voice preview phrases", () => {
+  it("keeps the pool distinct, bounded, and speakable", () => {
+    expect(VOICE_PREVIEW_PHRASES.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(VOICE_PREVIEW_PHRASES).size).toBe(VOICE_PREVIEW_PHRASES.length);
+    for (const phrase of VOICE_PREVIEW_PHRASES) {
+      expect(phrase.trim()).toBe(phrase);
+      expect(phrase.length).toBeGreaterThan(0);
+      expect(phrase.length).toBeLessThanOrEqual(VOICE_PREVIEW_MAX_PHRASE_CHARS);
+    }
+    const total = VOICE_PREVIEW_PHRASES.reduce((sum, phrase) => sum + phrase.length, 0);
+    expect(total).toBeLessThanOrEqual(VOICE_PREVIEW_MAX_TEXT_CHARS);
+  });
+
+  it("picks three distinct phrases that stay under the text bound", () => {
+    for (let draw = 0; draw < 20; draw++) {
+      const phrases = randomVoicePreviewPhrases();
+      expect(phrases).toHaveLength(VOICE_PREVIEW_PHRASE_COUNT);
+      expect(new Set(phrases).size).toBe(VOICE_PREVIEW_PHRASE_COUNT);
+      expect(joinPreviewPhrases(phrases).length).toBeLessThanOrEqual(VOICE_PREVIEW_MAX_TEXT_CHARS);
+    }
+  });
+
+  it("supports a custom count within the pool size and rejects invalid ones", () => {
+    expect(randomVoicePreviewPhrases(1)).toHaveLength(1);
+    expect(randomVoicePreviewPhrases(VOICE_PREVIEW_PHRASES.length)).toHaveLength(VOICE_PREVIEW_PHRASES.length);
+    expect(() => randomVoicePreviewPhrases(VOICE_PREVIEW_PHRASES.length + 1)).toThrow(RangeError);
+    expect(() => randomVoicePreviewPhrases(0)).toThrow(RangeError);
   });
 });

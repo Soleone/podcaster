@@ -23,6 +23,7 @@ import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
 import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
+import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { SettingsDialog } from './settings/SettingsDialog';
 
@@ -346,6 +347,11 @@ export function App() {
     setSettingsModel(prev => applyReconciled(prev, reconcileVoice(prev.voice, catalog)));
   }, []);
 
+  const previewVoice = useCallback(async (voiceId: string) => {
+    if (!capability) throw new Error('The session capability is not ready yet.');
+    return startVoicePreview({ voiceId, capability });
+  }, [capability]);
+
   const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference) => {
     setSettingsSaving(true);
     setSettingsSaveError(undefined);
@@ -403,8 +409,8 @@ export function App() {
   }, [fetchRecordingSummaries]);
 
   if (!view) return <>
-    <Readiness sessionAvailable={fakeServices} onStart={start} onCatalog={onCatalog} onOpenSettings={() => setSettingsOpen(true)} />
-    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} />
+    <Readiness sessionAvailable={fakeServices} onStart={start} onCatalog={onCatalog} onOpenSettings={() => setSettingsOpen(true)} onCapability={setCapability} />
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
   </>;
   return <div className="session-layout">
     <SessionScreen
@@ -418,7 +424,7 @@ export function App() {
       recording={recordingView}
       onToggleBubbleTrim={toggleBubbleTrim}
     />
-    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} />
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
     {sessionId ? <RecordingControls sessionId={sessionId} buildExport={buildExport} recording={recordingView} onToggleRecording={toggleRecording} onDelete={deleteRecording} /> : null}
   </div>;
 }

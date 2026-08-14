@@ -21,7 +21,7 @@ const capabilityIcons: Record<string, LucideIcon> = { voice_input: Mic, voice_ou
 const capabilityBadge: Record<Capability['state'], 'success' | 'warning' | 'destructive'> = { ready: 'success', needs_action: 'warning', unavailable: 'destructive' };
 const capabilityBadgeLabel: Record<Capability['state'], string> = { ready: 'Ready', needs_action: 'Needs attention', unavailable: 'Unavailable' };
 
-export function Readiness(props: { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onOpenSettings: () => void }) {
+export function Readiness(props: { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onOpenSettings: () => void; onCapability?: (capability: string) => void }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const [capability, setCapability] = useState<string>();
   const [snapshot, setSnapshot] = useState<Snapshot>();
@@ -85,6 +85,7 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
       const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-podcaster-capability': boot.capability }, body: JSON.stringify({ microphoneGranted: granted }) });
       if (!response.ok) throw new Error('Readiness check failed. Retry from this page.');
       setCapability(boot.capability);
+      props.onCapability?.(boot.capability);
       const next = await response.json() as Snapshot;
       setSnapshot(next);
       if (next.voiceCatalog) props.onCatalog?.(next.voiceCatalog);

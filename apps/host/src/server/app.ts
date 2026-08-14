@@ -10,6 +10,9 @@ import { createPiClient, type PiClient, type PiReadiness } from '../pi/PiClient.
 import { createPiResearchClient, type PiResearchClient } from '../pi/PiResearchClient.js';
 import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifier.js';
 import { BrowserSession } from './BrowserSession.js';
+import { encodeWav } from '../sidecar/wav.js';
+import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
+import { randomVoicePreviewPhrases } from '@app/contracts';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const COOKIE = 'podcaster_session';
@@ -19,7 +22,7 @@ const unavailablePi: PiClient = {
   async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
   async shutdown() {},
 };
-export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; }
+export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 
@@ -33,6 +36,13 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
   const sessionTtlMs = options.sessionTtlMs ?? SESSION_TTL_MS;
+  // One in-flight preview per process; the sidecar allows a single active
+  // stream, and a preview must never compete with a live session.
+  let voicePreviewInFlight = false;
+  const voicePreview = options.voicePreview ?? (async (input: { catalogId: string; voiceId: string; phrases: string[] }, signal: AbortSignal) => {
+    const result = await synthesizeVoicePreview(options.sidecar, input, { signal });
+    return { pcm16: result.pcm16, sampleRate: result.sampleRate };
+  });
   const shutdowns = new Set<Promise<void>>();
   const stopConversation = (session: Session): Promise<void> => {
     if (session.stopPromise) return session.stopPromise;
@@ -112,6 +122,33 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi.status,
       ...(snapshot?.voiceCatalog ? { voiceCatalog: snapshot.voiceCatalog } : {}),
     };
+  });
+  app.post('/api/voice-preview', { schema: { body: { type: 'object', additionalProperties: false, required: ['voiceId'], properties: { voiceId: { type: 'string', minLength: 1, maxLength: 128 } } } } }, async (request, reply) => {
+    if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
+    const { voiceId } = request.body as { voiceId: string };
+    const snapshot = await sidecarSnapshot(options.sidecar);
+    if (!snapshot || snapshot.status !== 'ready' || !snapshot.voiceCatalog) return reply.code(409).send({ error: 'voice_catalog_unavailable' });
+    if (!snapshot.voiceCatalog.voices.some(voice => voice.id === voiceId)) return reply.code(422).send({ error: 'unknown_voice' });
+    if (voicePreviewInFlight) return reply.code(429).send({ error: 'preview_in_flight' });
+    voicePreviewInFlight = true;
+    // Abort synthesis when the browser disconnects; request.raw.signal is not
+    // available on the current Node types, so wire the stream event directly.
+    const controller = new AbortController();
+    const onAborted = () => controller.abort();
+    request.raw.once('aborted', onAborted);
+    try {
+      const { pcm16, sampleRate } = await voicePreview({ catalogId: snapshot.voiceCatalog.catalogId, voiceId, phrases: randomVoicePreviewPhrases() }, controller.signal);
+      const wav = encodeWav(pcm16, sampleRate);
+      reply.header('content-type', 'audio/wav').header('cache-control', 'no-store');
+      return reply.send(Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength));
+    } catch {
+      // The sidecar refuses a second stream while a voice session is streaming,
+      // which surfaces here as a clean 503 without disturbing that session.
+      return reply.code(503).send({ error: 'preview_unavailable' });
+    } finally {
+      request.raw.removeListener('aborted', onAborted);
+      voicePreviewInFlight = false;
+    }
   });
   app.post('/api/bootstrap', { schema: { body: { type: 'object', additionalProperties: false, required: ['disclosureAcknowledged'], properties: { disclosureAcknowledged: { const: true } } } } }, async (_request, reply) => {
     const id = randomBytes(32).toString('base64url'); const capability = randomBytes(32).toString('base64url');

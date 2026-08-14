@@ -184,6 +184,11 @@ export class AudioClient implements SpeechOutputPort {
     let resolveCompletion!: (value: { generatedSamples: number }) => void;
     let rejectCompletion!: (error: Error) => void;
     const started = new Promise<SpeechSynthesisStart>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; });
+    // Mirror the completion guard: started can be rejected before any caller
+    // attaches a handler (cancel/failAll races, or an aborted signal that makes
+    // synthesize() throw out of append() before returning started). Swallow the
+    // potential unhandled rejection; awaited copies still surface errors.
+    void started.catch(() => undefined);
     const completion = new Promise<{ generatedSamples: number }>((resolve, reject) => { resolveCompletion = resolve; rejectCompletion = reject; });
     void completion.catch(() => undefined);
     const abort = () => this.cancel(input.responseId, input.partIndex);
