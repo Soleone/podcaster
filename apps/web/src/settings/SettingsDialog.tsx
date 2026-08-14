@@ -173,7 +173,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
               <Field>
                 <FieldLabel htmlFor="settings-voice">Voice</FieldLabel>
                 <FieldContent>
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
                       {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); if (previewHandleRef.current) { previewHandleRef.current.stop(); previewHandleRef.current = undefined; setPreviewState('idle'); } } }} disabled={!catalogReady}>
                         <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
@@ -189,7 +189,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                     {catalogReady && onPreviewVoice ? <Button
                       variant="outline"
                       size="icon"
-                      className="mt-0.5 size-9 shrink-0"
+                      className="shrink-0"
                       title={previewState === 'playing' ? 'Stop voice preview' : 'Preview voice'}
                       aria-label={previewState === 'playing' ? 'Stop voice preview' : 'Preview voice'}
                       disabled={previewState === 'loading'}
@@ -198,7 +198,6 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                       {previewState === 'loading' ? <Spinner /> : previewState === 'playing' ? <Square className="size-4" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
                     </Button> : null}
                   </div>
-                  {previewState === 'playing' ? <p className="text-xs text-muted-foreground" role="status">Previewing the selected voice…</p> : null}
                   {previewError ? <p className="text-xs text-destructive" role="status">{previewError}</p> : null}
                   {catalog ? <FieldDescription>Backend {catalog.backendId} · model {catalog.modelId} · revision {catalog.revision.slice(0, 8)}</FieldDescription> : null}
                 </FieldContent>
