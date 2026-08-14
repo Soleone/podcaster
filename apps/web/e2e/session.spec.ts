@@ -17,6 +17,17 @@ test('pauses and resumes microphone capture without ending the session', async (
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
 });
 
+test('keeps a short conversation message on one line at narrow widths', async ({ page }) => {
+  await page.setViewportSize({ width: 238, height: 285 });
+  await enterFakeSession(page, server.origin);
+  await emit(page, 'transcript.final', { turnId: 'turn-short', text: 'Hello', endpointComplete: true });
+  const metrics = await page.locator('.user-bubble p').evaluate(element => {
+    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
+    return { height: element.getBoundingClientRect().height, lineHeight };
+  });
+  expect(metrics.height).toBeLessThanOrEqual(metrics.lineHeight + 0.5);
+});
+
 test('runs stable session states and recovers stable work after refresh', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();

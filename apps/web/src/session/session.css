@@ -15,7 +15,10 @@
 .conversation-scroll{height:min(62vh,38rem);min-height:0}
 .conversation-list{padding:.75rem .75rem 1rem}
 .conversation-message{padding:.1rem 0}
-.conversation-bubble{max-width:min(78%,38rem)}
+/* The width cap belongs on Bubble, not BubbleContent. Capping both creates a
+   percentage-of-a-percentage shrink-to-fit loop that breaks short messages. */
+.conversation-bubble-shell{max-width:min(78%,38rem)}
+.conversation-bubble{max-width:100%}
 .conversation-bubble p{margin:0}
 .user-bubble{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
 .assistant-bubble{background:var(--muted);border-color:var(--border);transition:opacity .45s ease,filter .45s ease}
@@ -27,7 +30,7 @@
 .button-row{display:flex;flex-wrap:wrap;gap:.75rem}
 .hint{color:var(--muted-foreground)}
 .visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media(max-width:36rem){.session-header{align-items:stretch;flex-direction:column}.status-actions{width:100%;justify-content:space-between;margin-left:0}.conversation-bubble{max-width:90%}}
+@media(max-width:36rem){.session-header{align-items:stretch;flex-direction:column}.status-actions{width:100%;justify-content:space-between;margin-left:0}.conversation-bubble-shell{max-width:90%}}
 @media(max-width:22rem){.session-shell{width:min(100% - 1rem,56rem);margin:1rem auto}}
 .session-layout{width:min(56rem,calc(100% - 2rem));margin:2rem auto}
 .recording-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;margin-top:1rem;padding:.75rem 1rem}
@@ -63,9 +66,14 @@
 .trim-action-on-primary{color:var(--primary-foreground)}
 .trim-action-on-primary:hover{background:color-mix(in srgb,var(--primary-foreground) 15%,transparent)}
 @media (hover:hover) and (pointer:fine){
-  /* Keep the reserved pr-9 space stable while making the control quiet until needed. */
-  .conversation-bubble:has(.trim-action) .trim-action{opacity:0;pointer-events:none;transition:opacity .15s ease}
+  /* Keep the reserved pr-9 space stable while making the control quiet until needed.
+     The wrapper is inert until the bubble is hovered; the button remains the
+     pointer target so hover/click can reveal it without an overlay intercept. */
+  .conversation-bubble:has(.trim-action) .trim-action{opacity:0;pointer-events:auto;transition:opacity .15s ease}
+  .conversation-bubble:has(.trim-action) [data-slot="bubble-actions"]{pointer-events:none}
   .conversation-bubble:has(.trim-action):hover .trim-action,
-  .conversation-bubble:has(.trim-action):focus-within .trim-action{opacity:1;pointer-events:auto}
+  .conversation-bubble:has(.trim-action):focus-within .trim-action{opacity:1}
+  .conversation-bubble:has(.trim-action):hover [data-slot="bubble-actions"],
+  .conversation-bubble:has(.trim-action):focus-within [data-slot="bubble-actions"]{pointer-events:auto}
 }
 @media (prefers-reduced-motion: reduce){.conversation-bubble.trimmed{transition:none}}

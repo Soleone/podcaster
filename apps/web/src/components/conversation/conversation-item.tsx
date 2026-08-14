@@ -88,7 +88,7 @@ export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim
     return <Message align="end" className="conversation-message user-row">
       <MessageContent>
         <MessageHeader>You</MessageHeader>
-        <Bubble variant="default">
+        <Bubble variant="default" className="conversation-bubble-shell">
           <BubbleContent className={cn('conversation-bubble user-bubble', action && 'relative pr-9', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
             <p>{item.text}</p>
             {action ? <BubbleActions><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId === target!.targetId} onToggleBubbleTrim={onToggleBubbleTrim} onPrimary /></BubbleActions> : null}
@@ -107,7 +107,7 @@ export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim
   return <Message className="conversation-message assistant-row">
     <MessageContent>
       <MessageHeader>{(agentName ?? '').trim() || 'Assistant'}</MessageHeader>
-      <Bubble variant="secondary">
+      <Bubble variant="secondary" className="conversation-bubble-shell">
         <BubbleContent className={cn('conversation-bubble assistant-bubble', action && 'relative pr-9', item.tentative && 'tentative', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
           {item.parts && item.parts.length > 1
             ? item.parts.map((part, index) => <p key={index} className={cn(index > 0 && 'assistant-part', part.tentative && 'assistant-part-tentative')}>{part.text}</p>)
