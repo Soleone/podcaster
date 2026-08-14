@@ -57,6 +57,9 @@
 .conversation-bubble.trimmed{opacity:.55;filter:saturate(.35)}
 .conversation-bubble.trimmed p{text-decoration:line-through}
 .trim-state-note{color:var(--muted-foreground);font-size:.75rem}
-.trim-action{min-height:2.75rem;font-size:.75rem;line-height:1.1;padding-inline:.5rem}
-.trim-action[aria-disabled="true"]{opacity:.5;pointer-events:none}
+.trim-action{flex:none}
+.trim-action svg{width:.875rem;height:.875rem}
+.trim-action:disabled{opacity:.8}
+.trim-action-on-primary{color:var(--primary-foreground)}
+.trim-action-on-primary:hover{background:color-mix(in srgb,var(--primary-foreground) 15%,transparent)}
 @media (prefers-reduced-motion: reduce){.conversation-bubble.trimmed{transition:none}}

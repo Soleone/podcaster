@@ -16,6 +16,26 @@ async function recordUserTurn(page: import('@playwright/test').Page): Promise<vo
   await emit(page, 'transcript.final', { turnId: UTTERANCE, text: 'Recorded words', endpointComplete: true });
 }
 
+test('trims completed agent output with a compact in-bubble action', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+  await page.getByLabel('Record this session').click();
+
+  await emit(page, 'reasoning.started', { turnId: 'turn-1', responseId: 'response-1', posture: 'question' });
+  await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'A recorded answer' });
+  await emit(page, 'tts.started', { responseId: 'response-1', playbackId: 'playback-1', sampleRate: 24000 });
+  await page.evaluate(() => window.__podcasterTest!.audio('playback-1', 0, 480));
+  await emit(page, 'playback.stopped', { playbackId: 'playback-1', cancelledEpoch: 0, finalPlayedSampleOffset: 480, reason: 'completed' });
+
+  await expect(page.getByText('A recorded answer')).toBeVisible();
+  const remove = page.getByRole('button', { name: "Remove Assistant's response from recording" });
+  await expect(remove).toBeVisible();
+  await expect(remove.locator('xpath=ancestor::*[@data-slot="bubble-content"]')).toHaveCount(1);
+  await expect(remove).toHaveCSS('height', '24px');
+  await remove.click();
+  await expect(page.getByRole('button', { name: "Undo removal of Assistant's response" })).toBeVisible();
+  await expect(page.locator('.conversation-bubble.assistant-bubble.trimmed')).toHaveAttribute('data-trimmed', 'true');
+});
+
 test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   const toggle = page.getByLabel('Record this session');

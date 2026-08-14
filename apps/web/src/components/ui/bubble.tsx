@@ -29,6 +29,10 @@ export function BubbleContent({ className, ...props }: ComponentProps<'div'>) {
   return <div data-slot="bubble-content" className={cn('w-fit max-w-full min-w-0 overflow-hidden rounded-xl border border-transparent px-3 py-2 text-sm leading-relaxed wrap-break-word group-data-[align=end]/bubble:self-end', className)} {...props} />;
 }
 
+export function BubbleActions({ align = 'end', className, ...props }: ComponentProps<'div'> & { align?: 'start' | 'end' }) {
+  return <div data-slot="bubble-actions" data-align={align} className={cn('absolute top-1 z-10 flex items-center gap-1 data-[align=start]:left-1 data-[align=end]:right-1', className)} {...props} />;
+}
+
 export function BubbleReactions({ side = 'bottom', align = 'end', className, ...props }: ComponentProps<'div'> & { side?: 'top' | 'bottom'; align?: 'start' | 'end' }) {
   return <div data-slot="bubble-reactions" data-side={side} data-align={align} className={cn('absolute z-10 flex w-fit items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-sm data-[side=top]:top-0 data-[side=top]:-translate-y-3/4 data-[side=bottom]:bottom-0 data-[side=bottom]:translate-y-3/4 data-[align=start]:left-3 data-[align=end]:right-3', className)} {...props} />;
 }
