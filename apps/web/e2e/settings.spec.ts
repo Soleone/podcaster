@@ -29,8 +29,10 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   await expect(agentName).toBeVisible();
   await expect(agentName).toHaveValue('Oliver');
   await agentName.fill('Ada');
+  await expect(agentName).toHaveCSS('outline-offset', '-1px');
 
   await persona.fill('You are a terse, curious night-owl host who loves coastal weather.');
+  await expect(persona).toHaveCSS('outline-offset', '-1px');
   await expect(page.locator('#settings-persona-counter')).not.toHaveText(initial);
 
   // Oversized persona disables Save with an inline error.
