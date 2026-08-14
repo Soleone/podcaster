@@ -18,10 +18,10 @@ export interface RecordingControlsProps {
 export function RecordingControls({ sessionId, buildExport, recording, onToggleRecording, onDelete }: RecordingControlsProps) {
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState('');
-  const { enabled, totalCount, includedCount, hydrated, pendingTargetId, error } = recording;
+  const { enabled, totalCount, includedCount, bubbleCount, includedBubbleCount, hydrated, pendingTargetId, error } = recording;
   const busy = exporting || pendingTargetId !== null;
-  const allTrimmed = enabled && totalCount > 0 && includedCount === 0;
-  const statusLabel = !enabled ? 'off' : totalCount === 0 ? '0 items' : `${includedCount} of ${totalCount} included`;
+  const allTrimmed = enabled && bubbleCount > 0 && includedBubbleCount === 0;
+  const statusLabel = !enabled ? 'off' : totalCount === 0 ? '0 items' : `${includedBubbleCount} of ${bubbleCount} bubbles included`;
 
   const toggle = async () => { await onToggleRecording(!enabled); };
   const exportRecording = async () => {

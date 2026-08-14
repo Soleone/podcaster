@@ -14,6 +14,10 @@ export interface RecordingSessionViewState {
   enabled: boolean;
   totalCount: number;
   includedCount: number;
+  /** Number of visible bubbles (rows grouped by turn/response), excluding orphans. */
+  bubbleCount: number;
+  /** Number of bubbles with at least some selected audio. */
+  includedBubbleCount: number;
   targets: ReadonlyMap<string, RecordingTrimTarget>;
   pendingTargetId: string | null;
   notice: string;
@@ -21,8 +25,9 @@ export interface RecordingSessionViewState {
 }
 
 export function emptyRecordingSessionView(): RecordingSessionViewState {
-  return { hydrated: false, enabled: false, totalCount: 0, includedCount: 0, targets: new Map(), pendingTargetId: null, notice: '', error: '' };
+  return { hydrated: false, enabled: false, totalCount: 0, includedCount: 0, bubbleCount: 0, includedBubbleCount: 0, targets: new Map(), pendingTargetId: null, notice: '', error: '' };
 }
+
 
 /**
  * Maps a recording row to the visible bubble it belongs to. User rows group by
@@ -62,5 +67,10 @@ export function projectRecordingTrim(
       targets.set(targetId, { targetId, itemIds: [summary.itemId], state: summary.trimmed ? 'trimmed' : 'included' });
     }
   }
-  return { hydrated, enabled, totalCount, includedCount, targets, pendingTargetId: null, notice: '', error: '' };
+  // Bubble-level counts: at least some audio selected counts a bubble as included.
+  let includedBubbleCount = 0;
+  for (const target of targets.values()) {
+    if (target.state !== 'trimmed') includedBubbleCount++;
+  }
+  return { hydrated, enabled, totalCount, includedCount, bubbleCount: targets.size, includedBubbleCount, targets, pendingTargetId: null, notice: '', error: '' };
 }

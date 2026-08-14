@@ -13,6 +13,8 @@ describe('projectRecordingTrim', () => {
     expect(target).toEqual({ targetId: 'user:t1', itemIds: ['a'], state: 'included' });
     expect(state.totalCount).toBe(1);
     expect(state.includedCount).toBe(1);
+    expect(state.bubbleCount).toBe(1);
+    expect(state.includedBubbleCount).toBe(1);
   });
 
   it('groups every agent part sharing a responseId into one assistant target', () => {
@@ -24,6 +26,10 @@ describe('projectRecordingTrim', () => {
     const target = state.targets.get('assistant:r1');
     expect(target).toEqual({ targetId: 'assistant:r1', itemIds: ['p0', 'p1', 'p2'], state: 'included' });
     expect(state.targets.size).toBe(1);
+    // Three segments collapse into one bubble for the status label.
+    expect(state.totalCount).toBe(3);
+    expect(state.bubbleCount).toBe(1);
+    expect(state.includedBubbleCount).toBe(1);
   });
 
   it('keeps same-turn user and assistant targets distinct', () => {
@@ -60,6 +66,9 @@ describe('projectRecordingTrim', () => {
     ], true);
     expect(mixed.targets.get('assistant:r1')!.state).toBe('mixed');
     expect(mixed.includedCount).toBe(1);
+    // A partially trimmed bubble still counts as included (audio remains).
+    expect(mixed.bubbleCount).toBe(1);
+    expect(mixed.includedBubbleCount).toBe(1);
   });
 
   it('reflects the enabled flag and hydration marker', () => {
