@@ -9,6 +9,7 @@ import type {
   VoicePreference,
 } from "./types.js";
 import { normalizePersona } from "./persona.js";
+import { DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER } from "./types.js";
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -46,7 +47,19 @@ export function isValidVoiceCatalog(value: unknown): value is VoiceCatalog {
 export function isValidVoicePreference(value: unknown): value is VoicePreference {
   return isPlainObject(value)
     && isNonEmptyString(value.catalogId)
-    && isNonEmptyString(value.voiceId);
+    && isNonEmptyString(value.voiceId)
+    && typeof value.speedModifier === "number"
+    && Number.isFinite(value.speedModifier)
+    && value.speedModifier >= MIN_VOICE_SPEED_MODIFIER
+    && value.speedModifier <= MAX_VOICE_SPEED_MODIFIER;
+}
+
+/** Normalize a persisted or wire preference, retaining compatibility with pre-speed settings. */
+export function normalizeVoicePreference(value: unknown): VoicePreference | undefined {
+  if (!isPlainObject(value) || !isNonEmptyString(value.catalogId) || !isNonEmptyString(value.voiceId)) return undefined;
+  const speedModifier = value.speedModifier === undefined ? DEFAULT_VOICE_SPEED_MODIFIER : value.speedModifier;
+  const normalized = { catalogId: value.catalogId, voiceId: value.voiceId, speedModifier };
+  return isValidVoicePreference(normalized) ? normalized : undefined;
 }
 
 export function isVoiceInCatalog(catalog: VoiceCatalog, voiceId: string): boolean {
@@ -57,5 +70,5 @@ export function isValidSessionSettingsSnapshot(value: unknown): value is Session
   if (!isPlainObject(value) || value.version !== 1) return false;
   if (typeof value.persona !== "string") return false;
   try { normalizePersona(value.persona); } catch { return false; }
-  return isValidVoicePreference(value.voice);
+  return normalizeVoicePreference(value.voice) !== undefined;
 }

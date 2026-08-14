@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Play, Settings, Square } from 'lucide-react';
-import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../components/ui/collapsible';
@@ -29,13 +29,14 @@ export interface SettingsDialogProps {
   saving: boolean;
   saveError: string | undefined;
   onSave: (agentName: string, persona: string, voice: VoicePreference) => Promise<void>;
-  onPreviewVoice?: (voiceId: string) => Promise<VoicePreviewHandle>;
+  onPreviewVoice?: (voiceId: string, speedModifier: number) => Promise<VoicePreviewHandle>;
 }
 
 export function SettingsDialog({ open, onOpenChange, model, catalog, saving, saveError, onSave, onPreviewVoice }: SettingsDialogProps) {
   const [agentName, setAgentName] = useState(model.agentName);
   const [persona, setPersona] = useState(model.persona);
   const [voiceId, setVoiceId] = useState(model.voice.voiceId);
+  const [speedModifier, setSpeedModifier] = useState(String(model.voice.speedModifier));
   const [promptOpen, setPromptOpen] = useState(false);
   const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing'>('idle');
   const [previewError, setPreviewError] = useState<string | undefined>(undefined);
@@ -50,10 +51,11 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
     setAgentName(model.agentName);
     setPersona(model.persona);
     setVoiceId(model.voice.voiceId);
+    setSpeedModifier(String(model.voice.speedModifier));
     setPromptOpen(false);
     setPreviewState('idle');
     setPreviewError(undefined);
-  }, [open, model.agentName, model.persona, model.voice.voiceId]);
+  }, [open, model.agentName, model.persona, model.voice.voiceId, model.voice.speedModifier]);
 
   useEffect(() => () => { previewHandleRef.current?.stop(); }, []);
 
@@ -61,13 +63,15 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
   const agentNameInvalid = agentNameBytes > MAX_AGENT_NAME_BYTES;
   const personaBytes = useMemo(() => utf8ByteLength(persona), [persona]);
   const personaInvalid = personaBytes > MAX_PERSONA_BYTES;
+  const speedModifierValue = Number(speedModifier);
+  const speedModifierInvalid = !Number.isFinite(speedModifierValue) || speedModifierValue < MIN_VOICE_SPEED_MODIFIER || speedModifierValue > MAX_VOICE_SPEED_MODIFIER;
   const catalogReady = Boolean(catalog && catalog.voices.length > 0);
   const selectedVoice = catalog?.voices.find(voice => voice.id === voiceId);
-  const canSave = !agentNameInvalid && !personaInvalid && !saving;
+  const canSave = !agentNameInvalid && !personaInvalid && !speedModifierInvalid && !saving;
 
   const commit = async () => {
     if (!canSave) return;
-    const voice: VoicePreference = { catalogId: catalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '' };
+    const voice: VoicePreference = { catalogId: catalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '', speedModifier: speedModifierValue };
     await onSave(agentName, persona, voice);
   };
 
@@ -82,7 +86,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
     setPreviewError(undefined);
     setPreviewState('loading');
     try {
-      const handle = await onPreviewVoice(voiceId);
+      const handle = await onPreviewVoice(voiceId, speedModifierValue);
       // The dialog may have closed or moved on while the fetch was in flight.
       previewHandleRef.current = handle;
       setPreviewState('playing');
@@ -200,6 +204,24 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                   </div>
                   {previewError ? <p className="text-xs text-destructive" role="status">{previewError}</p> : null}
                   {catalog ? <FieldDescription>Backend {catalog.backendId} · model {catalog.modelId} · revision {catalog.revision.slice(0, 8)}</FieldDescription> : null}
+                </FieldContent>
+              </Field>
+              <Field data-invalid={speedModifierInvalid || undefined}>
+                <FieldLabel htmlFor="settings-voice-speed">Speed modifier</FieldLabel>
+                <FieldContent>
+                  <Input
+                    id="settings-voice-speed"
+                    type="number"
+                    min={MIN_VOICE_SPEED_MODIFIER}
+                    max={MAX_VOICE_SPEED_MODIFIER}
+                    step="0.05"
+                    value={speedModifier}
+                    onChange={event => setSpeedModifier(event.target.value)}
+                    aria-invalid={speedModifierInvalid || undefined}
+                    aria-describedby="settings-voice-speed-description"
+                  />
+                  <FieldDescription id="settings-voice-speed-description">1.0 is normal speed. Use a value from {MIN_VOICE_SPEED_MODIFIER} to {MAX_VOICE_SPEED_MODIFIER}.</FieldDescription>
+                  {speedModifierInvalid ? <FieldError>Speed modifier must be between {MIN_VOICE_SPEED_MODIFIER} and {MAX_VOICE_SPEED_MODIFIER}.</FieldError> : null}
                 </FieldContent>
               </Field>
             </FieldGroup>

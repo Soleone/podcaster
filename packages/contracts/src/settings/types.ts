@@ -9,6 +9,13 @@ export const MAX_PERSONA_BYTES = 8 * 1024;
 /** Upper bound on the editable agent display name, in UTF-8 bytes. */
 export const MAX_AGENT_NAME_BYTES = 64;
 
+/** Normal conversational playback speed. */
+export const DEFAULT_VOICE_SPEED_MODIFIER = 1.0;
+/** Safe lower bound for the editable playback speed modifier. */
+export const MIN_VOICE_SPEED_MODIFIER = 0.5;
+/** Safe upper bound for the editable playback speed modifier. */
+export const MAX_VOICE_SPEED_MODIFIER = 2.0;
+
 /** The first-run editable default agent name shown above the assistant's bubbles. */
 export const DEFAULT_AGENT_NAME = "Oliver";
 
@@ -41,6 +48,8 @@ export interface VoiceCatalog {
 export interface VoicePreference {
   catalogId: string;
   voiceId: string;
+  /** Multiplier passed to the verified TTS backend; 1.0 is normal speed. */
+  speedModifier: number;
 }
 
 /**

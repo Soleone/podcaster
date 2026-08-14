@@ -60,6 +60,11 @@
                         "voiceId": {
                           "type": "string",
                           "minLength": 1
+                        },
+                        "speedModifier": {
+                          "type": "number",
+                          "minimum": 0.5,
+                          "maximum": 2.0
                         }
                       },
                       "additionalProperties": false

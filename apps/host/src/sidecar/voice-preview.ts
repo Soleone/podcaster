@@ -20,6 +20,7 @@ export const VOICE_PREVIEW_TIMEOUT_MS = 20_000;
 export interface VoicePreviewRequest {
   catalogId: string;
   voiceId: string;
+  speedModifier?: number;
   phrases: string[];
 }
 
@@ -45,7 +46,7 @@ export async function synthesizeVoicePreview(
     sidecar,
     {},
     encoded => { chunks.push(decodeBinaryAudioFrame(encoded, MAX_FRAME_PAYLOAD).pcm16); },
-    { catalogId: input.catalogId, voiceId: input.voiceId },
+    { catalogId: input.catalogId, voiceId: input.voiceId, ...(input.speedModifier !== undefined ? { speedModifier: input.speedModifier } : {}) },
   );
   try {
     await client.connect();

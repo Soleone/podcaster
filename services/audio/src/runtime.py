@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import secrets
 import threading
 from collections import deque
@@ -36,6 +37,9 @@ STT_CHUNK_BYTES = 5_120 * 2
 MAX_STT_CHUNKS = 64
 MAX_PRE_ROLL_FRAMES = 10
 MAX_BINARY_PAYLOAD = 64 * 1024 - 20
+DEFAULT_VOICE_SPEED_MODIFIER = 1.0
+MIN_VOICE_SPEED_MODIFIER = 0.5
+MAX_VOICE_SPEED_MODIFIER = 2.0
 
 
 def _sha256_file(path: Path) -> str:
@@ -98,6 +102,7 @@ class TtsTextStream:
     part_index: int | None = None
     part_id: str | None = None
     voice_id: str = ""
+    speed_modifier: float = DEFAULT_VOICE_SPEED_MODIFIER
 
 
 @dataclass
@@ -299,9 +304,9 @@ class SelectedAudioRuntime:
             utterance.epoch = epoch
             self._maybe_start_stt(state, utterance)
 
-    def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str, *, voice_id: str | None = None) -> None:
+    def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str, *, voice_id: str | None = None, speed_modifier: object = None) -> None:
         """Compatibility wrapper: one-shot TTS through the progressive path."""
-        self.open_tts(stream_id, response_id, epoch, voice_id=voice_id)
+        self.open_tts(stream_id, response_id, epoch, voice_id=voice_id, speed_modifier=speed_modifier)
         self.append_tts(stream_id, response_id, epoch, 0, text)
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         try:
@@ -324,6 +329,7 @@ class SelectedAudioRuntime:
         part_id: str | None = None,
         *,
         voice_id: str | None = None,
+        speed_modifier: object = None,
     ) -> None:
         state = self._state(stream_id)
         voice_catalog = self.tts.voice_catalog()
@@ -332,6 +338,14 @@ class SelectedAudioRuntime:
             voice_id = str(voice_catalog.get("defaultVoiceId", ""))
         if voice_id not in voices:
             raise ValueError("requested voice is absent from the verified catalog")
+        if speed_modifier is None:
+            speed = DEFAULT_VOICE_SPEED_MODIFIER
+        elif isinstance(speed_modifier, bool) or not isinstance(speed_modifier, (int, float)):
+            raise ValueError("invalid TTS speed modifier")
+        else:
+            speed = float(speed_modifier)
+            if not math.isfinite(speed) or speed < MIN_VOICE_SPEED_MODIFIER or speed > MAX_VOICE_SPEED_MODIFIER:
+                raise ValueError("invalid TTS speed modifier")
         with self._lock:
             if self.status != "ready":
                 raise RuntimeError("selected runtime requires restart")
@@ -366,6 +380,7 @@ class SelectedAudioRuntime:
                 part_index=part_index,
                 part_id=part_id,
                 voice_id=voice_id,
+                speed_modifier=speed,
             )
             state.tts_stream = text_stream
 
@@ -442,9 +457,14 @@ class SelectedAudioRuntime:
                     # single-active-synthesis guard.
                     while not self._tts_lock.acquire(timeout=0.05):
                         text_stream.token.raise_if_cancelled()
+                    previous_speed = getattr(self.tts, "speed", None)
+                    if previous_speed is not None:
+                        self.tts.speed = text_stream.speed_modifier
                     try:
                         self.tts.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
                     finally:
+                        if previous_speed is not None:
+                            self.tts.speed = previous_speed
                         self._tts_lock.release()
                     text_stream.token.raise_if_cancelled()
 

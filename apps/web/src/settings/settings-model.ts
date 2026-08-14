@@ -1,6 +1,6 @@
 // Settings reconciliation against the verified voice catalog. Browser-safe.
 
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, isVoiceInCatalog, isValidVoicePreference, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_VOICE_SPEED_MODIFIER, isVoiceInCatalog, isValidVoicePreference, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 
 export type VoiceNoticeReason = 'rebase' | 'defaulted' | 'missing_catalog';
 
@@ -12,7 +12,7 @@ export interface SettingsModel {
 }
 
 export function defaultVoice(catalog: VoiceCatalog | undefined): VoicePreference {
-  return { catalogId: catalog?.catalogId ?? '', voiceId: catalog?.defaultVoiceId ?? '' };
+  return { catalogId: catalog?.catalogId ?? '', voiceId: catalog?.defaultVoiceId ?? '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER };
 }
 
 export function defaultSettingsModel(catalog: VoiceCatalog | undefined): SettingsModel {
@@ -21,7 +21,7 @@ export function defaultSettingsModel(catalog: VoiceCatalog | undefined): Setting
 
 /** Stable audit digest over the frozen agent settings snapshot (name + persona + voice). */
 export function settingsDigest(settings: { agentName: string; persona: string; voice: VoicePreference }): string {
-  const source = `${settings.agentName}\u0000${settings.persona}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}`;
+  const source = `${settings.agentName}\u0000${settings.persona}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}\u0000${settings.voice.speedModifier}`;
   let hash1 = 0x811c9dc5;
   let hash2 = 0x01000193 ^ 0x3f08;
   for (const byte of new TextEncoder().encode(source)) {
@@ -44,16 +44,16 @@ export function reconcileVoice(preference: VoicePreference | undefined, catalog:
   // here would make a saved voice impossible to reconcile when the catalog
   // arrives later.
   if (!catalog) {
-    if (preference && isValidVoicePreference(preference)) return { voice: preference, notice: 'missing_catalog' };
-    return { voice: { catalogId: '', voiceId: '' }, notice: 'missing_catalog' };
+    if (preference && Number.isFinite(preference.speedModifier)) return { voice: preference, notice: 'missing_catalog' };
+    return { voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER }, notice: 'missing_catalog' };
   }
   if (preference && isValidVoicePreference(preference) && preference.catalogId === catalog.catalogId && isVoiceInCatalog(catalog, preference.voiceId)) {
     return { voice: preference };
   }
   if (preference && isValidVoicePreference(preference) && isVoiceInCatalog(catalog, preference.voiceId)) {
-    return { voice: { catalogId: catalog.catalogId, voiceId: preference.voiceId }, notice: 'rebase' };
+    return { voice: { catalogId: catalog.catalogId, voiceId: preference.voiceId, speedModifier: preference.speedModifier }, notice: 'rebase' };
   }
-  return { voice: { catalogId: catalog.catalogId, voiceId: catalog.defaultVoiceId }, notice: 'defaulted' };
+  return { voice: { catalogId: catalog.catalogId, voiceId: catalog.defaultVoiceId, speedModifier: preference?.speedModifier ?? DEFAULT_VOICE_SPEED_MODIFIER }, notice: 'defaulted' };
 }
 
 /** Build a SettingsModel honoring exactOptionalPropertyTypes (never sets undefined). */

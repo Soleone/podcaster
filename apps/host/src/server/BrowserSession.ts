@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { composePersonaAppend, CONTRACT_VALIDATORS, decodeBinaryAudioFrame, isValidSessionSettingsSnapshot, type SessionSettingsSnapshot } from '@app/contracts';
+import { composePersonaAppend, CONTRACT_VALIDATORS, decodeBinaryAudioFrame, isValidSessionSettingsSnapshot, normalizeVoicePreference, type SessionSettingsSnapshot } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
 import type { PiResearchClient } from '../pi/PiResearchClient.js';
@@ -119,6 +119,8 @@ export class BrowserSession {
     if (this.orchestrator || command.epoch !== 0) return this.protocolError('second_start');
     const settings = command.payload.settings as SessionSettingsSnapshot | undefined;
     if (!isValidSessionSettingsSnapshot(settings)) return this.protocolError('invalid_settings');
+    const voice = normalizeVoicePreference(settings.voice);
+    if (!voice) return this.protocolError('invalid_settings');
     this.sessionId = command.sessionId;
     const reasoningMode = command.payload.reasoningMode;
     const personaAppend = composePersonaAppend(settings.persona);
@@ -136,7 +138,7 @@ export class BrowserSession {
       failure: code => this.failure(code),
     }, frame => {
       if (!this.stopped && this.socket.readyState === this.socket.OPEN) this.socket.send(frame, { binary: true });
-    }, settings.voice);
+    }, voice);
     this.orchestrator = new SessionOrchestrator({
       sessionId: command.sessionId,
       sessionSeed: String(command.payload.sessionSeed),

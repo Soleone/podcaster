@@ -68,7 +68,7 @@ describe('startVoicePreview', () => {
     expect(init!.method).toBe('POST');
     expect(init!.credentials).toBe('same-origin');
     expect((init!.headers as Record<string, string>)['x-podcaster-capability']).toBe('cap-1');
-    expect(init!.body).toBe(JSON.stringify({ voiceId: 'af_bella' }));
+    expect(init!.body).toBe(JSON.stringify({ voiceId: 'af_bella', speedModifier: 1.0 }));
 
     expect(context.decodeAudioData).toHaveBeenCalledTimes(1);
     expect(sources).toHaveLength(1);

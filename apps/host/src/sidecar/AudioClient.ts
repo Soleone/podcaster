@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { decodeBinaryAudioFrame, CONTRACT_VALIDATORS } from '@app/contracts';
+import { decodeBinaryAudioFrame, CONTRACT_VALIDATORS, DEFAULT_VOICE_SPEED_MODIFIER } from '@app/contracts';
 import WebSocket, { type RawData } from 'ws';
 import type { SidecarProcess } from './process.js';
 import type { SpeechOutputPort, SpeechOutputStream, SpeechSynthesisStart } from '../session/SessionOrchestrator.js';
@@ -26,7 +26,7 @@ export interface VadStartEvent { streamId: string; utteranceId: string; captureS
 export interface VadEndEvent { streamId: string; utteranceId: string; captureStartSequence: number; captureEndSequence: number }
 export interface SttPartial { streamId: string; utteranceId: string; epoch: number; sequence: number; text: string; replacedCharacters: number }
 export interface SttFinal { streamId: string; utteranceId: string; epoch: number; text: string; endpointComplete: true }
-export interface AudioClientVoiceSelection { catalogId: string; voiceId: string }
+export interface AudioClientVoiceSelection { catalogId: string; voiceId: string; speedModifier?: number }
 export interface AudioClientEvents {
   speechStart?(event: VadStartEvent): void;
   speechEnd?(event: VadEndEvent): void;
@@ -96,6 +96,7 @@ export class AudioClient implements SpeechOutputPort {
   private readonly binarySink: (frame: Uint8Array) => void;
   private readonly selection: AudioClientVoiceSelection | undefined;
   private readonly voiceId: string;
+  private readonly speedModifier: number;
 
   constructor(
     sidecar: SidecarProcess,
@@ -108,6 +109,7 @@ export class AudioClient implements SpeechOutputPort {
     this.binarySink = binarySink;
     this.selection = selection;
     this.voiceId = selection?.voiceId ?? 'af_heart';
+    this.speedModifier = selection?.speedModifier ?? DEFAULT_VOICE_SPEED_MODIFIER;
   }
 
   connect(): Promise<void> {
@@ -251,7 +253,7 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   private ttsFields(input: { responseId: string; epoch: number; partIndex?: number; partId?: string }): Record<string, unknown> {
-    return { responseId: input.responseId, epoch: input.epoch, voiceId: this.voiceId, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
+    return { responseId: input.responseId, epoch: input.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
   }
 
   private removeAdmitted(pending: PendingTts): void {
@@ -264,7 +266,7 @@ export class AudioClient implements SpeechOutputPort {
       const pending = this.queued.shift()!;
       pending.queued = false;
       this.admitted.push(pending);
-      this.sendForStream('tts.open', { responseId: pending.responseId, epoch: pending.epoch, voiceId: this.voiceId, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+      this.sendForStream('tts.open', { responseId: pending.responseId, epoch: pending.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
       for (let index = 0; index < pending.bufferedAppends.length; index++) {
         this.sendForStream('tts.append', { responseId: pending.responseId, epoch: pending.epoch, sequence: index, text: pending.bufferedAppends[index]!, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
       }

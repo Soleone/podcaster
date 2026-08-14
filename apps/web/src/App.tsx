@@ -21,14 +21,14 @@ import { RecordingStore, type RecordingItemSummary } from './storage/recording-s
 import { StableTurnWriter } from './storage/stable-turn-writer';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_VOICE_SPEED_MODIFIER, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { SettingsDialog } from './settings/SettingsDialog';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
-type SessionStartSettings = { version: 1; persona: string; voice: { catalogId: string; voiceId: string } };
+type SessionStartSettings = { version: 1; persona: string; voice: VoicePreference };
 
 interface FakeRuntimeStats {
   captureStarts: number;
@@ -217,7 +217,7 @@ export function App() {
         conversationItems: conversationFromStoredTurns(turns),
       };
       startedAt.current = new Date(active.startedAt).getTime();
-      await composeFakeSession(opened, active.sessionId, restored, 'fake-recovered', { version: 1, persona: DEFAULT_AGENT_PERSONA, voice: { catalogId: '', voiceId: '' } });
+      await composeFakeSession(opened, active.sessionId, restored, 'fake-recovered', { version: 1, persona: DEFAULT_AGENT_PERSONA, voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER } });
     });
     return () => { cancelled = true; };
   }, [composeFakeSession]);
@@ -251,9 +251,9 @@ export function App() {
     writerRef.current = opened;
     const id = uuidV7();
     const seed = uuidV7();
-    const frozen: SettingsModel = { agentName: settingsModel.agentName, persona: settingsModel.persona, voice: { catalogId: settingsModel.voice.catalogId, voiceId: settingsModel.voice.voiceId } };
+    const frozen: SettingsModel = { agentName: settingsModel.agentName, persona: settingsModel.persona, voice: { ...settingsModel.voice } };
     settingsFrozenRef.current = frozen;
-    const settings: SessionStartSettings = { version: 1, persona: frozen.persona, voice: { catalogId: frozen.voice.catalogId, voiceId: frozen.voice.voiceId } };
+    const settings: SessionStartSettings = { version: 1, persona: frozen.persona, voice: { ...frozen.voice } };
     const personaDigest = settingsDigest(frozen);
     const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
@@ -398,9 +398,9 @@ export function App() {
     setSettingsModel(prev => applyReconciled(prev, reconcileVoice(prev.voice, catalog)));
   }, []);
 
-  const previewVoice = useCallback(async (voiceId: string) => {
+  const previewVoice = useCallback(async (voiceId: string, speedModifier: number) => {
     if (!capability) throw new Error('The session capability is not ready yet.');
-    return startVoicePreview({ voiceId, capability });
+    return startVoicePreview({ voiceId, speedModifier, capability });
   }, [capability]);
 
   const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference) => {

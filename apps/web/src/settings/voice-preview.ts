@@ -26,7 +26,7 @@ export function stopVoicePreview(): void {
  * Fetches and plays a preview for one voice. Starting a new preview stops any
  * preview still playing.
  */
-export async function startVoicePreview(input: { voiceId: string; capability: string }): Promise<VoicePreviewHandle> {
+export async function startVoicePreview(input: { voiceId: string; speedModifier?: number; capability: string }): Promise<VoicePreviewHandle> {
   stopVoicePreview();
   context ??= new AudioContext();
   if (context.state === 'suspended') await context.resume();
@@ -34,7 +34,7 @@ export async function startVoicePreview(input: { voiceId: string; capability: st
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json', 'x-podcaster-capability': input.capability },
-    body: JSON.stringify({ voiceId: input.voiceId }),
+    body: JSON.stringify({ voiceId: input.voiceId, speedModifier: input.speedModifier ?? 1.0 }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) {

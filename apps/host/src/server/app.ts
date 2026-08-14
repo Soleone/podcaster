@@ -12,7 +12,7 @@ import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifie
 import { BrowserSession } from './BrowserSession.js';
 import { encodeWav } from '../sidecar/wav.js';
 import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
-import { randomVoicePreviewPhrases } from '@app/contracts';
+import { DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, randomVoicePreviewPhrases } from '@app/contracts';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const COOKIE = 'podcaster_session';
@@ -22,7 +22,7 @@ const unavailablePi: PiClient = {
   async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
   async shutdown() {},
 };
-export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
+export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 
@@ -39,7 +39,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   // Keep previews bounded per host process. The sidecar accepts a dedicated
   // TTS-only preview stream alongside the session capture stream.
   let voicePreviewInFlight = false;
-  const voicePreview = options.voicePreview ?? (async (input: { catalogId: string; voiceId: string; phrases: string[] }, signal: AbortSignal) => {
+  const voicePreview = options.voicePreview ?? (async (input: { catalogId: string; voiceId: string; speedModifier?: number; phrases: string[] }, signal: AbortSignal) => {
     const result = await synthesizeVoicePreview(options.sidecar, input, { signal });
     return { pcm16: result.pcm16, sampleRate: result.sampleRate };
   });
@@ -129,9 +129,9 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       ...(snapshot?.voiceCatalog ? { voiceCatalog: snapshot.voiceCatalog } : {}),
     };
   });
-  app.post('/api/voice-preview', { schema: { body: { type: 'object', additionalProperties: false, required: ['voiceId'], properties: { voiceId: { type: 'string', minLength: 1, maxLength: 128 } } } } }, async (request, reply) => {
+  app.post('/api/voice-preview', { schema: { body: { type: 'object', additionalProperties: false, required: ['voiceId'], properties: { voiceId: { type: 'string', minLength: 1, maxLength: 128 }, speedModifier: { type: 'number', minimum: MIN_VOICE_SPEED_MODIFIER, maximum: MAX_VOICE_SPEED_MODIFIER } } } } }, async (request, reply) => {
     if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
-    const { voiceId } = request.body as { voiceId: string };
+    const { voiceId, speedModifier = DEFAULT_VOICE_SPEED_MODIFIER } = request.body as { voiceId: string; speedModifier?: number };
     const snapshot = await sidecarSnapshot(options.sidecar);
     if (!snapshot || snapshot.status !== 'ready' || !snapshot.voiceCatalog) return reply.code(409).send({ error: 'voice_catalog_unavailable' });
     if (!snapshot.voiceCatalog.voices.some(voice => voice.id === voiceId)) return reply.code(422).send({ error: 'unknown_voice' });
@@ -143,7 +143,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     const onAborted = () => controller.abort();
     request.raw.once('aborted', onAborted);
     try {
-      const { pcm16, sampleRate } = await voicePreview({ catalogId: snapshot.voiceCatalog.catalogId, voiceId, phrases: randomVoicePreviewPhrases() }, controller.signal);
+      const { pcm16, sampleRate } = await voicePreview({ catalogId: snapshot.voiceCatalog.catalogId, voiceId, speedModifier, phrases: randomVoicePreviewPhrases() }, controller.signal);
       const wav = encodeWav(pcm16, sampleRate);
       reply.header('content-type', 'audio/wav').header('cache-control', 'no-store');
       return reply.send(Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength));

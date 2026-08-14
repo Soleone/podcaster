@@ -4,7 +4,7 @@ import hashlib
 import json
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 
 import pytest
@@ -36,10 +36,13 @@ class FakeStt:
 class FakeTts:
     closed: bool = False
     default_voice: str = "af_heart"
+    speed: float = 1.0
+    speeds: list[float] = dataclass_field(default_factory=list)
 
     def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
         assert text == "response"
         assert voice in (None, self.default_voice)
+        self.speeds.append(getattr(self, "speed", 1.0))
         for sequence in range(2):
             cancel.raise_if_cancelled()
             if on_audio:
@@ -88,6 +91,19 @@ def ready_runtime():
     binary = []
     runtime.open_stream("018f1f32-7abc-7def-8abc-0123456789ab", 12, events.append, binary.append)
     return runtime, events, binary
+
+
+def test_speed_modifier_is_applied_to_each_tts_stream() -> None:
+    tts = FakeTts()
+    runtime = SelectedAudioRuntime(FakeStt(), tts)
+    runtime.mark_ready_for_test()
+    stream = "018f1f32-7abc-7def-8abc-0123456789ab"
+    events = []
+    runtime.open_stream(stream, 12, events.append, lambda _: None)
+    runtime.request_tts(stream, "018f1f32-7abd-7def-8abc-0123456789ab", 0, "response", speed_modifier=1.25)
+    wait_for(events, "tts.ended")
+    assert tts.speeds == [1.25]
+    assert getattr(tts, "speed", 1.0) == 1.0
 
 
 def test_preview_stream_coexists_with_capture_stream_and_synthesizes() -> None:

@@ -11,7 +11,7 @@ afterEach(async () => {
   }
 });
 
-const settings = () => ({ version: 1 as const, agentName: 'Ada', persona: 'You are a sharp skeptic.', voice: { catalogId: 'c1', voiceId: 'af_heart' } });
+const settings = () => ({ version: 1 as const, agentName: 'Ada', persona: 'You are a sharp skeptic.', voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 } });
 
 describe('SettingsStore', () => {
   it('persists and reloads settings across store opens on the same database', async () => {
@@ -37,7 +37,7 @@ describe('SettingsStore', () => {
     dbName = 'settings-test-c';
     const store = await SettingsStore.open(indexedDB, dbName);
     expect(await store.save(settings())).toBe(true);
-    const oversized = { version: 1 as const, agentName: 'Ada', persona: 'x'.repeat(9000), voice: { catalogId: 'c1', voiceId: 'af_heart' } };
+    const oversized = { version: 1 as const, agentName: 'Ada', persona: 'x'.repeat(9000), voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 } };
     expect(await store.save(oversized)).toBe(false);
     expect(await store.load()).toEqual(settings());
   });
@@ -45,7 +45,7 @@ describe('SettingsStore', () => {
   it('rejects an agent name over the byte limit', async () => {
     dbName = 'settings-test-d';
     const store = await SettingsStore.open(indexedDB, dbName);
-    const longName = { version: 1 as const, agentName: 'x'.repeat(65), persona: 'You are a sharp skeptic.', voice: { catalogId: 'c1', voiceId: 'af_heart' } };
+    const longName = { version: 1 as const, agentName: 'x'.repeat(65), persona: 'You are a sharp skeptic.', voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 } };
     expect(await store.save(longName)).toBe(false);
     expect(await store.load()).toBeUndefined();
   });

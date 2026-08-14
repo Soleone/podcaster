@@ -10,6 +10,7 @@ import {
   isValidSessionSettingsSnapshot,
   isValidVoiceCatalog,
   isValidVoicePreference,
+  normalizeVoicePreference,
   MAX_AGENT_NAME_BYTES,
   MAX_PERSONA_BYTES,
   normalizeAgentName,
@@ -105,13 +106,14 @@ describe("settings validators", () => {
   });
 
   it("accepts a valid voice preference and rejects malformed ones", () => {
-    expect(isValidVoicePreference({ catalogId: "c", voiceId: "v" })).toBe(true);
-    expect(isValidVoicePreference({ catalogId: "", voiceId: "v" })).toBe(false);
-    expect(isValidVoicePreference({ catalogId: "c" })).toBe(false);
+    expect(isValidVoicePreference({ catalogId: "c", voiceId: "v", speedModifier: 1.0 })).toBe(true);
+    expect(normalizeVoicePreference({ catalogId: "c", voiceId: "v" })).toEqual({ catalogId: "c", voiceId: "v", speedModifier: 1.0 });
+    expect(isValidVoicePreference({ catalogId: "", voiceId: "v", speedModifier: 1.0 })).toBe(false);
+    expect(isValidVoicePreference({ catalogId: "c", speedModifier: 1.0 })).toBe(false);
   });
 
   it("validates a full settings snapshot including the persona bound", () => {
-    const snapshot = { version: 1, persona: "You are Oliver.", voice: { catalogId: "c", voiceId: "v" } };
+    const snapshot = { version: 1, persona: "You are Oliver.", voice: { catalogId: "c", voiceId: "v", speedModifier: 1.0 } };
     expect(isValidSessionSettingsSnapshot(snapshot)).toBe(true);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, version: 2 })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, persona: "x".repeat(MAX_PERSONA_BYTES + 1) })).toBe(false);

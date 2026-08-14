@@ -50,6 +50,7 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   // Voice tab reflects that no verified catalog exists in fake services.
   await page.getByRole('tab', { name: 'Voice' }).click();
   await expect(page.getByText(/No verified voice catalog is available yet/)).toBeVisible();
+  await expect(page.getByLabel('Speed modifier')).toHaveValue('1');
   const voiceDialogBox = await dialog.boundingBox();
   expect(voiceDialogBox).not.toBeNull();
 
@@ -70,6 +71,8 @@ test('settings survive a reload on the same browser', async ({ page }) => {
   await openSettings(page);
   await page.getByLabel('Agent name').fill('Lin');
   await page.getByLabel('Persona').fill('You are a gentle storyteller.');
+  await page.getByRole('tab', { name: 'Voice' }).click();
+  await page.getByLabel('Speed modifier').fill('1.25');
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
@@ -77,4 +80,6 @@ test('settings survive a reload on the same browser', async ({ page }) => {
   await page.getByRole('button', { name: /Open settings/ }).first().click();
   await expect(page.getByLabel('Agent name')).toHaveValue('Lin');
   await expect(page.getByLabel('Persona')).toHaveValue('You are a gentle storyteller.');
+  await page.getByRole('tab', { name: 'Voice' }).click();
+  await expect(page.getByLabel('Speed modifier')).toHaveValue('1.25');
 });

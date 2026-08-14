@@ -1,4 +1,5 @@
 import { decodeBinaryAudioFrame } from '@app/contracts/binary';
+import type { VoicePreference } from '@app/contracts/settings';
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
 import type { StableEvent } from '../storage/stable-turn-writer';
 import { activityLog } from './activity-log';
@@ -140,7 +141,7 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.socket?.close(1000, 'session ended');
     this.socket = undefined;
   }
-  startSession(input: { sessionSeed: string; reasoningMode: 'full' | 'transcript_only'; settings: { version: 1; persona: string; voice: { catalogId: string; voiceId: string } } }): void { this.sendCommand('session.start', { sessionSeed: input.sessionSeed, reasoningMode: input.reasoningMode, settings: input.settings }); }
+  startSession(input: { sessionSeed: string; reasoningMode: 'full' | 'transcript_only'; settings: { version: 1; persona: string; voice: VoicePreference } }): void { this.sendCommand('session.start', { sessionSeed: input.sessionSeed, reasoningMode: input.reasoningMode, settings: input.settings }); }
   startAudio(streamId: number): void { this.sendCommand('audio.start', { streamId, sampleRate: 16_000, channels: 1, frameSamples: 320 }); }
   stopAudio(streamId: number): void { this.sendCommand('audio.stop', { streamId }); }
   acknowledgePersisted(event: StableEvent): void {
