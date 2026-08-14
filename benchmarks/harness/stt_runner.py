@@ -390,7 +390,11 @@ def run_stt(
         raise ValueError("STT requires paced timing and a supported cumulative partial contract")
     dataset_path = dataset_path.resolve()
     dataset, dataset_hash = verify_dataset(dataset_path, ROOT)
-    model_entries = verify_models(ROOT / "docs/model-manifest.json", ROOT)
+    model_entries = verify_models(
+        ROOT / "docs/model-manifest.json",
+        ROOT,
+        model_ids={config["candidate"]["modelId"]},
+    )
     matches = [entry for entry in model_entries if entry["id"] == config["candidate"]["modelId"]]
     if len(matches) != 1:
         raise ValueError("model manifest/config identity mismatch")

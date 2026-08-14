@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -73,15 +74,26 @@ def verify_dataset(path: Path, root: Path) -> tuple[dict[str, Any], str]:
     return manifest, manifest_digest(manifest)
 
 
-def verify_models(path: Path, root: Path) -> list[dict[str, Any]]:
+def verify_models(
+    path: Path, root: Path, *, model_ids: Collection[str] | None = None
+) -> list[dict[str, Any]]:
+    """Verify model files, optionally limiting byte checks to selected model IDs.
+
+    The public verifier checks every model by default. Candidate runners only load
+    one model, so they can verify that model without re-hashing unrelated multi-GB
+    weights in the same manifest.
+    """
     manifest = load_manifest(path)
     models = manifest.get("models")
     if not isinstance(models, list):
         raise ChecksumError(f"{path}: models must be an array")
+    selected_ids = set(model_ids) if model_ids is not None else None
     verified: list[dict[str, Any]] = []
     for model in models:
         if not isinstance(model, dict):
             raise ChecksumError(f"{path}: invalid model entry")
+        if selected_ids is not None and model.get("id") not in selected_ids:
+            continue
         relative = model.get("path")
         expected = model.get("sha256")
         if not isinstance(relative, str) or not isinstance(expected, str):

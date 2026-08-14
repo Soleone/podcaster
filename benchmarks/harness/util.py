@@ -91,7 +91,12 @@ def _mem_total() -> int:
 
 
 def deterministic_source_manifest(root: Path) -> list[dict[str, str]]:
-    """Return the deterministic non-Git source snapshot committed by new runs."""
+    """Return the deterministic non-Git source snapshot committed by new runs.
+
+    Dataset manifests are source, but their ignored payloads are not. Hashing the
+    LibriSpeech media/source tree here made every synthetic run reread hundreds of
+    megabytes even though datasetSha256 already identifies and verifies the payload.
+    """
     manifest: list[tuple[str, str]] = []
     roots = [
         root / "benchmarks/harness",
@@ -117,15 +122,26 @@ def deterministic_source_manifest(root: Path) -> list[dict[str, str]]:
     ]
     for directory in roots:
         if directory.is_dir():
-            files.extend(path for path in directory.rglob("*") if path.is_file())
+            for path in directory.rglob("*"):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(root)
+                if (
+                    relative.parts[:2] == ("benchmarks", "datasets")
+                    and ("media" in relative.parts or "source" in relative.parts)
+                ) or path.name.endswith(".tar.gz"):
+                    continue
+                files.append(path)
     for path in sorted(set(files)):
         if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
             manifest.append((str(path.relative_to(root)), sha256_file(path)))
     return [{"path": path, "sha256": digest} for path, digest in manifest]
 
 
-def source_state(root: Path) -> tuple[str, bool]:
-    manifest = deterministic_source_manifest(root)
+def source_state(
+    root: Path, manifest: list[dict[str, str]] | None = None
+) -> tuple[str, bool]:
+    manifest = manifest if manifest is not None else deterministic_source_manifest(root)
     source_id = f"source-{sha256_bytes(canonical_json(manifest))[:16]}"
     git = shutil.which("git")
     if git and (root / ".git").exists():

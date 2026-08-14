@@ -133,7 +133,11 @@ def _verified_tts_config(
     }
     if not required_categories.issubset(categories):
         raise ValueError("TTS prompt manifest lacks required coverage categories")
-    models = verify_models(ROOT / "docs/model-manifest.json", ROOT)
+    models = verify_models(
+        ROOT / "docs/model-manifest.json",
+        ROOT,
+        model_ids={config["candidate"]["modelId"]},
+    )
     matches = [entry for entry in models if entry.get("id") == config["candidate"]["modelId"]]
     if len(matches) != 1:
         raise ValueError("TTS model manifest/config identity mismatch")
@@ -400,8 +404,8 @@ def run_tts(
     )
     config_path = config_path.resolve()
     prompts_path = prompts_path.resolve()
-    source_id, dirty = source_state(ROOT)
     source_manifest = deterministic_source_manifest(ROOT)
+    source_id, dirty = source_state(ROOT, source_manifest)
     source_manifest_sha256 = sha256_bytes(canonical_json(source_manifest))
     run_id = str(uuid.uuid4())
     stamp = utc_now().replace(":", "").replace(".", "")

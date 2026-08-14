@@ -44,7 +44,7 @@ def test_tracked_result_schemas_match_canonical_contracts() -> None:
 
 def test_source_state_reproduces_the_committed_source_manifest() -> None:
     manifest = deterministic_source_manifest(ROOT)
-    source_id, _dirty = source_state(ROOT)
+    source_id, _dirty = source_state(ROOT, manifest)
     assert source_id == f"source-{sha256_bytes(canonical_json(manifest))[:16]}"
 
 

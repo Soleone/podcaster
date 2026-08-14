@@ -16,16 +16,33 @@ if [[ -n "$before_ts" && "$before_ts" != "$after_ts" ]] || [[ -n "$before_py" &&
   echo "Generated contracts were stale; run generators and commit their output" >&2
   exit 1
 fi
-corepack pnpm --filter @app/contracts typecheck
-corepack pnpm --filter @app/policy typecheck
-corepack pnpm --filter @app/host typecheck
-corepack pnpm --filter @app/web typecheck
-corepack pnpm test --filter @app/contracts
-corepack pnpm test --filter @app/policy
-"$UV" run pytest services/audio/tests/test_contracts.py services/audio/tests/test_server_security.py
-"$UV" run pytest services/audio/tests/stt
-"$UV" run pytest benchmarks/harness/tests
-"$UV" run ruff check scripts/generate_contracts.py scripts/verify-models.py services/audio/src services/audio/tests benchmarks/harness packages/test-fixtures/audio/generate.py
+# Every job below reads the generated contracts after the freshness check. The
+# host test builds its own web/contract artifacts, so the independent test jobs can
+# run together instead of paying each toolchain's startup cost serially.
+run_parallel() {
+  local -a pids=()
+  local command
+  for command in "$@"; do
+    bash -c "$command" & pids+=("$!")
+  done
+  local status=0 pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=$?
+  done
+  return "$status"
+}
+
+run_parallel \
+  'corepack pnpm --filter @app/contracts typecheck' \
+  'corepack pnpm --filter @app/policy typecheck' \
+  'corepack pnpm --filter @app/host typecheck' \
+  'corepack pnpm --filter @app/web typecheck' \
+  'corepack pnpm test --filter @app/contracts' \
+  'corepack pnpm test --filter @app/policy' \
+  "$UV run pytest services/audio/tests/test_contracts.py services/audio/tests/test_server_security.py" \
+  "$UV run pytest services/audio/tests/stt" \
+  "$UV run pytest benchmarks/harness/tests" \
+  "$UV run ruff check scripts/generate_contracts.py scripts/verify-models.py services/audio/src services/audio/tests benchmarks/harness packages/test-fixtures/audio/generate.py"
 corepack pnpm test --filter @app/host
 corepack pnpm test:dev-cleanup
 for pattern in '.env' '*.pem' '*.safetensors' '*.onnx' '*.gguf' '*.wav' 'benchmarks/datasets/**/source/' 'benchmarks/datasets/**/*.tar.gz' 'benchmarks/results/*/'; do
