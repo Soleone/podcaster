@@ -35,6 +35,13 @@ describe('settings-model voice reconciliation', () => {
     expect(result.notice).toBe('defaulted');
   });
 
+  it('keeps a saved voice while the verified catalog is still loading', () => {
+    const preference = { catalogId: 'c1', voiceId: 'af_bella' };
+    const result = reconcileVoice(preference, undefined);
+    expect(result.voice).toEqual(preference);
+    expect(result.notice).toBe('missing_catalog');
+  });
+
   it('disables voice when no verified catalog exists', () => {
     const result = reconcileVoice(undefined, undefined);
     expect(result.voice.catalogId).toBe('');

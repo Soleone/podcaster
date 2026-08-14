@@ -39,7 +39,14 @@ export function settingsDigest(settings: { agentName: string; persona: string; v
  * 4. No verified catalog -> no options; voice-session start is disabled.
  */
 export function reconcileVoice(preference: VoicePreference | undefined, catalog: VoiceCatalog | undefined): { voice: VoicePreference; notice?: VoiceNoticeReason } {
-  if (!catalog) return { voice: { catalogId: '', voiceId: '' }, notice: 'missing_catalog' };
+  // Keep a valid persisted preference while the verified catalog is still
+  // loading. Readiness and settings initialize independently, so clearing it
+  // here would make a saved voice impossible to reconcile when the catalog
+  // arrives later.
+  if (!catalog) {
+    if (preference && isValidVoicePreference(preference)) return { voice: preference, notice: 'missing_catalog' };
+    return { voice: { catalogId: '', voiceId: '' }, notice: 'missing_catalog' };
+  }
   if (preference && isValidVoicePreference(preference) && preference.catalogId === catalog.catalogId && isVoiceInCatalog(catalog, preference.voiceId)) {
     return { voice: preference };
   }
