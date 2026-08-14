@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Play, Settings, Sparkles, Square } from 'lucide-react';
+import { ChevronDown, Play, Settings, Square } from 'lucide-react';
 import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
@@ -181,9 +181,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                         </SelectTrigger>
                         <SelectContent>
                           <SelectGroup>
-                            {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>
-                              <span><Sparkles aria-hidden="true" />{voice.label}<span className="font-mono text-xs text-muted-foreground">{voice.id}</span></span>
-                            </SelectItem>)}
+                            {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>{voice.label}</SelectItem>)}
                           </SelectGroup>
                         </SelectContent>
                       </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the local audio engine reports its verified voices.</p>}
