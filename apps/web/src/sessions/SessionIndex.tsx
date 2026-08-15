@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, Clock, History, Mic2, Play, Plus, Radio } from 'lucide-react';
+import { ArrowRight, Clock, History, Mic2, Play, Radio } from 'lucide-react';
 import { Link } from 'react-router';
 import type { VoiceCatalog } from '@app/contracts/settings';
 import { Badge } from '../components/ui/badge';
 import { Button, buttonVariants } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
+import { ExportPopover } from '../components/ExportPopover';
+import type { ExportOnProgress } from '../recording/splice';
 import { Readiness } from '../readiness/Readiness';
 import { RecordingStore } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
@@ -43,8 +45,6 @@ export interface SessionIndexProps {
 
 export function SessionIndex(props: SessionIndexProps) {
   const [summaries, setSummaries] = useState<SessionSummary[] | undefined>(undefined);
-  const [exportingId, setExportingId] = useState<string | undefined>(undefined);
-  const [exportError, setExportError] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,17 +62,8 @@ export function SessionIndex(props: SessionIndexProps) {
     return () => { cancelled = true; };
   }, [props.writer, props.liveSessionId]);
 
-  const exportRecording = useCallback(async (sessionId: string) => {
-    setExportingId(sessionId);
-    setExportError(undefined);
-    try {
-      await exportSessionRecording(sessionId, props.writer);
-    } catch (error) {
-      setExportError(error instanceof Error ? error.message : 'The recording could not be exported.');
-    } finally {
-      setExportingId(undefined);
-    }
-  }, [props.writer]);
+  const buildExport = useCallback((sessionId: string) => (onProgress?: ExportOnProgress) =>
+    exportSessionRecording(sessionId, props.writer, onProgress), [props.writer]);
 
   const rows = summaries ?? [];
   return <main className="index-shell">
@@ -104,14 +95,13 @@ export function SessionIndex(props: SessionIndexProps) {
         {summaries === undefined ? <p className="hint"><Spinner className="size-4" />Loading sessions…</p> : <p className="hint">No sessions yet. Start one above and it will appear here.</p>}
       </Card> : null}
       {rows.length > 0 ? <ul className="session-list-rows">
-        {rows.map(row => <SessionRow key={row.session.sessionId} row={row} live={row.session.sessionId === props.liveSessionId} exporting={exportingId === row.session.sessionId} onContinue={() => props.onContinueSession(row.session.sessionId)} onExport={() => void exportRecording(row.session.sessionId)} />)}
+        {rows.map(row => <SessionRow key={row.session.sessionId} row={row} live={row.session.sessionId === props.liveSessionId} buildExport={buildExport} onContinue={() => props.onContinueSession(row.session.sessionId)} />)}
       </ul> : null}
-      {exportError ? <p className="hint" role="status">{exportError}</p> : null}
     </section>
   </main>;
 }
 
-function SessionRow(props: { row: SessionSummary; live: boolean; exporting: boolean; onContinue: () => void; onExport: () => void }) {
+function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (sessionId: string) => (onProgress?: ExportOnProgress) => Promise<Blob>; onContinue: () => void }) {
   const { session, preview, turnCount, recordingItemCount, recordingEnabled } = props.row;
   const stopped = session.state === 'stopped';
   const recordingLabel = !recordingEnabled ? 'Recording off' : recordingItemCount === 0 ? 'No recording' : `${recordingItemCount} message${recordingItemCount === 1 ? '' : 's'} recorded`;
@@ -137,7 +127,7 @@ function SessionRow(props: { row: SessionSummary; live: boolean; exporting: bool
           <Button variant="secondary" size="sm" onClick={props.onContinue}><Mic2 aria-hidden="true" />Continue</Button>
           <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><ArrowRight aria-hidden="true" />Open</Link>
         </> : <Button variant="secondary" size="sm" onClick={props.onContinue}><Play aria-hidden="true" />Resume</Button>}
-      <Button variant="outline" size="sm" disabled={props.exporting || recordingItemCount === 0} onClick={props.onExport}>{props.exporting ? <><Spinner className="size-3.5" />Exporting…</> : <><Plus aria-hidden="true" />Export</>}</Button>
+      <ExportPopover sessionId={session.sessionId} buildExport={props.buildExport(session.sessionId)} disabled={recordingItemCount === 0} variant="outline" size="sm" />
     </div>
   </li>;
 }

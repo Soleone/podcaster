@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Download, Mic2, Trash } from 'lucide-react';
+import { ArrowLeft, Mic2, Trash } from 'lucide-react';
 import { Alert } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
+import { ExportPopover } from '../components/ExportPopover';
+import type { ExportOnProgress } from '../recording/splice';
 import { SessionScreen } from '../session/SessionScreen';
 import type { SessionViewState } from '../session/state';
 import type { RecordingTrimTargetId } from '../recording/trim-state';
@@ -34,7 +36,6 @@ export function StoppedSession(props: StoppedSessionProps) {
   const [view, setView] = useState<SessionViewState | undefined>();
   const [recording, setRecording] = useState<RecordingSessionViewState | undefined>(undefined);
   const [recordingError, setRecordingError] = useState<string | undefined>(undefined);
-  const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const storeRef = useRef<RecordingStore | undefined>(undefined);
@@ -86,17 +87,8 @@ export function StoppedSession(props: StoppedSessionProps) {
     return true;
   }, [props.sessionId, recording, loadRecording]);
 
-  const exportRecording = useCallback(async () => {
-    setExporting(true);
-    setNotice(undefined);
-    try {
-      await exportSessionRecording(props.sessionId, props.writer);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'The recording could not be exported.');
-    } finally {
-      setExporting(false);
-    }
-  }, [props.sessionId, props.writer]);
+  const buildExport = useCallback((onProgress?: ExportOnProgress) =>
+    exportSessionRecording(props.sessionId, props.writer, onProgress), [props.sessionId, props.writer]);
 
   const deleteRecording = useCallback(async () => {
     const store = storeRef.current;
@@ -149,7 +141,7 @@ export function StoppedSession(props: StoppedSessionProps) {
       </div>
       <div className="button-row">
         <Button onClick={props.onContinue}><Mic2 aria-hidden="true" />Continue session</Button>
-        <Button variant="secondary" disabled={exporting || recording.includedCount === 0} onClick={() => void exportRecording()}>{exporting ? <><Spinner className="size-4" />Exporting…</> : <><Download aria-hidden="true" />Export recording</>}</Button>
+        <ExportPopover sessionId={props.sessionId} buildExport={buildExport} disabled={recording.includedCount === 0} label="Export recording" variant="secondary" />
         <Button variant="outline" disabled={deleting || recording.totalCount === 0} onClick={() => void deleteRecording()}><Trash aria-hidden="true" />Delete recording</Button>
       </div>
       {recordingError ? <Alert variant="destructive">{recordingError}</Alert> : null}

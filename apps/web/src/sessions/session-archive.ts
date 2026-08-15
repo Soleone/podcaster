@@ -1,5 +1,4 @@
-import { createBrowserDecoder, buildRecording } from '../recording/splice';
-import { downloadRecording } from '../recording/export';
+import { createBrowserDecoder, buildRecording, type ExportOnProgress } from '../recording/splice';
 import { createEncoderClient } from '../recording/encoder-client';
 import { offlineResample } from '../recording/resample';
 import { conversationFromStoredTurns } from '../session/conversation';
@@ -44,10 +43,12 @@ export async function loadSessionArchive(writer: StableTurnWriter, recordingStor
 }
 
 /**
- * Builds and downloads the final recording for any stored session, without
- * needing that session to be live. Throws when nothing can be exported.
+ * Builds the final recording for any stored session, without needing that
+ * session to be live. Reports phase progress through {@link onProgress} and
+ * returns the finished blob so the caller decides how to deliver it. Throws
+ * when nothing can be exported.
  */
-export async function exportSessionRecording(sessionId: string, writer: StableTurnWriter): Promise<void> {
+export async function exportSessionRecording(sessionId: string, writer: StableTurnWriter, onProgress?: ExportOnProgress): Promise<Blob> {
   const store = await RecordingStore.open();
   try {
     const blob = await buildRecording(sessionId, {
@@ -56,9 +57,10 @@ export async function exportSessionRecording(sessionId: string, writer: StableTu
       decode: createBrowserDecoder(),
       resample: offlineResample,
       encode: createEncoderClient(),
+      ...(onProgress ? { onProgress } : {}),
     });
     if (!blob) throw new Error('This session has no recorded messages to export.');
-    downloadRecording(blob, sessionId);
+    return blob;
   } finally {
     store.close();
   }
