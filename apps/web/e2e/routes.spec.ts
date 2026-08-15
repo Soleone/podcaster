@@ -52,6 +52,23 @@ test('a stopped session opens read-only with its conversation and can be continu
   await expect(page.getByText('Carried on here')).toBeVisible();
 });
 
+test('resuming an active session from the index restores its conversation', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+  const sessionUrl = page.url();
+  await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
+  await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
+
+  await page.goto(server.origin);
+  const row = page.getByRole('listitem').filter({ hasText: 'A stable thought' }).first();
+  await expect(row.getByRole('button', { name: 'Resume' })).toBeVisible();
+  await row.getByRole('button', { name: 'Resume' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
+  expect(page.url()).toBe(sessionUrl);
+  await expect(page.getByText('A stable thought')).toBeVisible();
+  await expect(page.getByText('What matters most?')).toBeVisible();
+});
+
 test('the index shows a running session and returning to it keeps it live', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   const sessionUrl = page.url();

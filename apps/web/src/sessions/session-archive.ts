@@ -68,16 +68,16 @@ export async function exportSessionRecording(sessionId: string, writer: StableTu
 }
 
 /**
- * Rebuilds the conversation view for a session that is not currently running.
- * Assistant responses keep their stored playback disposition (completed,
- * interrupted, paused) so the transcript reads like it ended.
+ * Rebuilds the conversation view from durable turns. Assistant responses keep
+ * their stored playback disposition (completed, interrupted, paused) so the
+ * transcript survives both read-only inspection and a later resume.
  */
-export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string): Promise<SessionViewState> {
+export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string, mode: 'stopped' | 'active' = 'stopped'): Promise<SessionViewState> {
   const turns = await writer.getTurns(sessionId);
   return {
     ...initialSessionState,
-    dominant: 'idle',
-    announcement: 'Session stopped',
+    dominant: mode === 'active' ? 'listening' : 'idle',
+    announcement: mode === 'active' ? 'Listening' : 'Session stopped',
     stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
     conversationItems: conversationFromStoredTurns(turns),
   };

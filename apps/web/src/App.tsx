@@ -9,7 +9,7 @@ import { buildRecording, createBrowserDecoder, type ExportOnProgress } from './r
 import { SessionScreen } from './session/SessionScreen';
 import { activityLog } from './session/activity-log';
 import { SessionController, type ControlledPlayback } from './session/controller';
-import { conversationFromStoredTurns } from './session/conversation';
+import { sessionViewStateFromTurns } from './sessions/session-archive';
 import { createEnvelope, uuidV7 } from './session/envelope';
 import { FakeSessionTransport } from './session/fake-transport';
 import type { SessionTransport } from './session/transport';
@@ -257,14 +257,7 @@ export function App() {
           setResuming(true);
           setWriter(opened);
           try {
-            const turns = await opened.getTurns(target);
-            const restored: SessionViewState = {
-              ...initialSessionState,
-              dominant: 'listening',
-              announcement: 'Listening',
-              stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
-              conversationItems: conversationFromStoredTurns(turns),
-            };
+            const restored = await sessionViewStateFromTurns(opened, target, 'active');
             startedAt.current = new Date(stored.startedAt).getTime();
             const { settings, digest } = currentStartSettings();
             const reopened = await opened.beginSession({ sessionId: target, sessionSeed: uuidV7(), personaDigest: digest });
@@ -324,7 +317,9 @@ export function App() {
     startedAt.current = Date.now();
     setSessionPaused(false);
     activityLog.append({ level: 'info', source: 'app', message: `session started (${cap})` });
-    const initial = { ...initialSessionState, dominant: 'listening' as const, announcement: 'Listening' };
+    const initial: SessionViewState = existingId
+      ? await sessionViewStateFromTurns(opened, id, 'active')
+      : { ...initialSessionState, dominant: 'listening', announcement: 'Listening' };
     if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
     else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
     navigate(`/session/${id}`);

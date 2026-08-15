@@ -131,7 +131,12 @@ export class StableTurnWriter {
       } else if (event.type === 'reasoning.final' && turn) {
         if (responseId) turn.responseId = responseId;
         const text = stringValue(event.payload.text);
-        if (text !== undefined) turn.assistantText = text;
+        if (text !== undefined) {
+          const partIndex = numberValue(event.payload.partIndex);
+          turn.assistantText = partIndex === undefined || !turn.assistantText
+            ? text
+            : `${turn.assistantText}\n\n${text}`;
+        }
       } else if (event.type === 'response.failed' && turn) {
         // Scope the failure to the matching turn instead of session-level storage.
         const code = stringValue(event.payload.reasonCode) ?? 'response_failed';

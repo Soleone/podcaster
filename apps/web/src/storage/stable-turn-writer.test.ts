@@ -69,6 +69,15 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  it('preserves every finalized part of a multipart response for reloads', async () => {
+    const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
+    await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));
+    await writer.apply(event('s', 'reasoning.final', { turnId: 't', responseId: 'r', partIndex: 0, text: 'First part.' }));
+    await writer.apply(event('s', 'reasoning.final', { turnId: 't', responseId: 'r', partIndex: 1, text: 'Second part.' }));
+    expect(await writer.getTurns('s')).toMatchObject([{ assistantText: 'First part.\n\nSecond part.' }]);
+    writer.close();
+  });
+
   it('does not mark a rejected provisional interruption as delivered history', async () => {
     const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
     await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));
