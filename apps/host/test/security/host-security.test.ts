@@ -79,7 +79,7 @@ describe('WebSocket authentication', () => {
     const { body, cookie } = await bootstrap();
     const wrong = connect(cookie); wrong.once('open',()=>wrong.send('{"capability":"wrong"}')); expect(await closed(wrong)).toBe(1008);
     const first = connect(cookie); await new Promise<void>(resolve => { first.once('message',()=>resolve()); first.once('open',()=>first.send(JSON.stringify({capability:body.capability}))); }); const firstClosed = closed(first); first.close(); await firstClosed;
-    const replay = connect(cookie); replay.once('open',()=>replay.send(JSON.stringify({capability:body.capability}))); expect(await closed(replay)).toBe(1008);
+    const replay = connect(cookie); const replayMessage = new Promise<string>(resolve => replay.once('message', value => resolve(value.toString()))); replay.once('open',()=>replay.send(JSON.stringify({capability:body.capability}))); expect(await replayMessage).toContain('authenticated'); const replayClosed = closed(replay); replay.close(); await replayClosed;
   });
   async function authenticatedSocket(body: { capability: string }, cookie: string) {
     const ws = connect(cookie);

@@ -72,6 +72,8 @@ export function App() {
   const [capability, setCapability] = useState<string>();
   const [elapsed, setElapsed] = useState(0);
   const [sessionPaused, setSessionPaused] = useState(false);
+  const sessionPausedRef = useRef(false);
+  sessionPausedRef.current = sessionPaused;
   const [writer, setWriter] = useState<StableTurnWriter | undefined>(undefined);
   const [resuming, setResuming] = useState(false);
   const stoppedRef = useRef(false);
@@ -81,6 +83,10 @@ export function App() {
   const fakeTransportRef = useRef<FakeSessionTransport | undefined>(undefined);
   const captureRef = useRef<CaptureHandle | undefined>(undefined);
   const captureStreamIdRef = useRef<number | undefined>(undefined);
+  const captureRecoveryRef = useRef<Promise<void> | undefined>(undefined);
+  const captureGenerationRef = useRef(0);
+  const reconnectUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
+  const transportFailureUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const recordingStoreRef = useRef<RecordingStore | undefined>(undefined);
   const recordingRecorderRef = useRef<RecordingRecorder | undefined>(undefined);
@@ -119,6 +125,12 @@ export function App() {
   }, []);
 
   const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, settings: SessionStartSettings) => {
+    reconnectUnsubscribeRef.current?.();
+    reconnectUnsubscribeRef.current = undefined;
+    transportFailureUnsubscribeRef.current?.();
+    transportFailureUnsubscribeRef.current = undefined;
+    captureGenerationRef.current++;
+    captureRecoveryRef.current = undefined;
     const transport = new FakeSessionTransport();
     await transport.connect(cap);
     recordingStoreRef.current?.close();
@@ -178,6 +190,12 @@ export function App() {
   }, []);
 
   const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings) => {
+    reconnectUnsubscribeRef.current?.();
+    reconnectUnsubscribeRef.current = undefined;
+    transportFailureUnsubscribeRef.current?.();
+    transportFailureUnsubscribeRef.current = undefined;
+    captureGenerationRef.current++;
+    captureRecoveryRef.current = undefined;
     recordingStoreRef.current?.close();
     const recordingStore = await RecordingStore.open();
     recordingStoreRef.current = recordingStore;
@@ -208,6 +226,56 @@ export function App() {
     unsubscribeRef.current = controller.subscribe(setView);
     controllerRef.current = controller;
     transportRef.current = transport;
+    transportFailureUnsubscribeRef.current = transport.onFailure(() => {
+      captureGenerationRef.current++;
+      const capture = captureRef.current;
+      captureRef.current = undefined;
+      captureStreamIdRef.current = undefined;
+      void capture?.stop().catch(() => undefined);
+    });
+    reconnectUnsubscribeRef.current = transport.onReconnect(() => {
+      if (captureRecoveryRef.current) return captureRecoveryRef.current;
+      let recovery!: Promise<void>;
+      recovery = (async () => {
+        if (stoppedRef.current || sessionPausedRef.current) return;
+        const generation = ++captureGenerationRef.current;
+        const capture = captureRef.current;
+        const oldStreamId = captureStreamIdRef.current;
+        captureRef.current = undefined;
+        captureStreamIdRef.current = undefined;
+        await capture?.stop().catch(() => undefined);
+        if (oldStreamId !== undefined) {
+          try { await transport.stopAudio(oldStreamId); } catch { /* reconnect may have failed again */ }
+        }
+        if (stoppedRef.current || sessionPausedRef.current) return;
+        const random = new Uint32Array(1);
+        crypto.getRandomValues(random);
+        const streamId = random[0] ?? 0;
+        try {
+          await transport.startAudio(streamId);
+          captureStreamIdRef.current = streamId;
+          const recovered = await new BrowserCapture({ streamId: () => streamId, onAudio: audio => recorder.onCaptureAudio(audio) }).start({
+            send: frame => transport.sendCapture(frame),
+            degraded: message => controller.degrade(message),
+          });
+          if (generation !== captureGenerationRef.current || stoppedRef.current || sessionPausedRef.current) {
+            await recovered.stop();
+            try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
+            if (generation === captureGenerationRef.current) captureStreamIdRef.current = undefined;
+            return;
+          }
+          captureRef.current = recovered;
+          activityLog.append({ level: 'info', source: 'app', message: 'microphone capture recovered after transport reconnect' });
+        } catch (error) {
+          try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
+          if (generation !== captureGenerationRef.current || stoppedRef.current) return;
+          captureStreamIdRef.current = undefined;
+          controller.degrade(error instanceof Error ? error.message : 'The microphone could not be recovered after reconnecting.');
+        }
+      })().finally(() => { if (captureRecoveryRef.current === recovery) captureRecoveryRef.current = undefined; });
+      captureRecoveryRef.current = recovery;
+      return recovery;
+    });
     await transport.startSession({ sessionSeed: seed, reasoningMode, settings });
     const random = new Uint32Array(1); crypto.getRandomValues(random);
     const streamId = random[0] ?? 0;
@@ -322,6 +390,7 @@ export function App() {
     const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
     startedAt.current = Date.now();
+    sessionPausedRef.current = false;
     setSessionPaused(false);
     activityLog.append({ level: 'info', source: 'app', message: `session started (${cap})` });
     const initial: SessionViewState = existingId
@@ -333,9 +402,18 @@ export function App() {
   }
 
   const stop = useCallback(async () => {
+    captureGenerationRef.current++;
+    captureRecoveryRef.current = undefined;
+    stoppedRef.current = true;
+    sessionPausedRef.current = false;
     activityLog.append({ level: 'info', source: 'app', message: 'session stopped by user' });
+    reconnectUnsubscribeRef.current?.();
+    reconnectUnsubscribeRef.current = undefined;
+    transportFailureUnsubscribeRef.current?.();
+    transportFailureUnsubscribeRef.current = undefined;
     setSessionPaused(false);
     await captureRef.current?.stop();
+    captureRef.current = undefined;
     const streamId = captureStreamIdRef.current;
     if (streamId !== undefined) {
       await transportRef.current?.stopAudio(streamId);
@@ -389,6 +467,7 @@ export function App() {
     const recorder = recordingRecorderRef.current;
     if (!transport || !controller || !recorder) return;
     if (!sessionPaused) {
+      captureGenerationRef.current++;
       await captureRef.current?.stop();
       captureRef.current = undefined;
       const streamId = captureStreamIdRef.current;
@@ -397,12 +476,14 @@ export function App() {
         captureStreamIdRef.current = undefined;
       }
       activityLog.append({ level: 'info', source: 'app', message: 'session paused by user' });
+      sessionPausedRef.current = true;
       setSessionPaused(true);
       return;
     }
     const random = new Uint32Array(1);
     crypto.getRandomValues(random);
     const streamId = random[0] ?? 0;
+    const generation = ++captureGenerationRef.current;
     try {
       await transport.startAudio(streamId);
       captureStreamIdRef.current = streamId;
@@ -410,6 +491,11 @@ export function App() {
         send: frame => transport.sendCapture(frame),
         degraded: message => controller.degrade(message),
       });
+      if (generation !== captureGenerationRef.current || stoppedRef.current) {
+        await capture.stop();
+        try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
+        return;
+      }
       if (fakeServices) {
         statsRef.current.captureStarts++;
         statsRef.current.captureRunning = true;
@@ -423,9 +509,11 @@ export function App() {
         };
       } else captureRef.current = capture;
       activityLog.append({ level: 'info', source: 'app', message: 'session resumed by user' });
+      sessionPausedRef.current = false;
       setSessionPaused(false);
     } catch (error) {
-      await Promise.resolve(transport.stopAudio(streamId)).catch(() => undefined);
+      try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
+      if (generation !== captureGenerationRef.current || stoppedRef.current) return;
       captureStreamIdRef.current = undefined;
       controller.degrade(error instanceof Error ? error.message : 'The microphone could not be resumed.');
     }

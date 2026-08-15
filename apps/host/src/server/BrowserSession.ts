@@ -10,6 +10,9 @@ import type { SidecarProcess } from '../sidecar/process.js';
 
 const MAX_PENDING_FINALS = 8;
 const MAX_COMPLETED_PERSISTENCE_ACKS = 64;
+const MAX_RECONNECT_QUEUE_MESSAGES = 4_096;
+const MAX_RECONNECT_QUEUE_BYTES = 8 * 1024 * 1024;
+interface OutboundFrame { value: string | Buffer; bytes: number; binary: boolean }
 export interface BrowserSessionOptions {
   multiPartEnabled?: boolean;
   /** Session-owned response Pi client; receives the frozen persona append. */
@@ -42,8 +45,10 @@ function event(sessionId: string, epoch: number, type: string, payload: Record<s
 }
 
 export class BrowserSession {
-  private readonly socket: WebSocket;
+  private socket: WebSocket | undefined;
   private readonly sidecar: SidecarProcess;
+  private readonly outboundQueue: OutboundFrame[] = [];
+  private outboundQueueBytes = 0;
   private readonly options: BrowserSessionOptions;
   private sessionId: string | undefined;
   private orchestrator: SessionOrchestrator | undefined;
@@ -63,12 +68,26 @@ export class BrowserSession {
     this.options = options;
   }
 
+  isStopped(): boolean { return this.stopped; }
+
+  attachSocket(socket: WebSocket): void {
+    if (this.stopped) { socket.close(1008, 'session already stopped'); return; }
+    this.socket = socket;
+    this.flushOutbound();
+  }
+
+  detachSocket(socket: WebSocket): void {
+    if (this.socket === socket) this.socket = undefined;
+  }
+
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
     this.orchestrator?.stop();
     this.pending.clear();
     this.completedPersistenceAcks.clear();
+    this.outboundQueue.length = 0;
+    this.outboundQueueBytes = 0;
     await this.audio?.close();
     for (const client of this.ownedPis) {
       try { await client.shutdown(); } catch { /* best-effort child teardown */ }
@@ -80,7 +99,7 @@ export class BrowserSession {
   }
 
   async handle(raw: RawData, binary: boolean): Promise<void> {
-    if (this.stopped) { this.socket.close(1008, 'session already stopped'); return; }
+    if (this.stopped) { this.socket?.close(1008, 'session already stopped'); return; }
     if (binary) {
       if (!this.orchestrator || this.captureStreamId === undefined) return this.protocolError('binary_before_audio_start');
       const bytes = rawBytes(raw);
@@ -137,7 +156,7 @@ export class BrowserSession {
       final: value => this.final(value),
       failure: code => this.failure(code),
     }, frame => {
-      if (!this.stopped && this.socket.readyState === this.socket.OPEN) this.socket.send(frame, { binary: true });
+      if (!this.stopped) this.sendFrame(Buffer.from(frame), true);
     }, voice);
     this.orchestrator = new SessionOrchestrator({
       sessionId: command.sessionId,
@@ -155,12 +174,19 @@ export class BrowserSession {
   }
 
   private async startAudio(payload: Record<string, unknown>): Promise<void> {
-    if (this.captureStreamId !== undefined) return this.protocolError('second_audio_start');
-    this.captureStreamId = Number(payload.streamId);
-    await this.audio!.open(this.captureStreamId);
+    const streamId = Number(payload.streamId);
+    if (this.captureStreamId === streamId) return;
+    // A reconnect can race with the last audio.stop command from the old
+    // socket. Rebinding through AudioClient is safe and resets the sidecar VAD
+    // boundary, so a fresh browser capture stream can always take ownership.
+    this.captureStreamId = streamId;
+    try { await this.audio!.open(streamId); } catch (error) { this.captureStreamId = undefined; throw error; }
   }
   private stopAudio(payload: Record<string, unknown>): void {
-    if (this.captureStreamId === undefined || Number(payload.streamId) !== this.captureStreamId) return this.protocolError('audio_stream_mismatch');
+    // Duplicate or late stops are expected when a reconnect races the last
+    // command from the old socket. Treat them as idempotent instead of killing
+    // the newly attached conversation.
+    if (this.captureStreamId === undefined || Number(payload.streamId) !== this.captureStreamId) return;
     this.audio!.reset();
     this.captureStreamId = undefined;
   }
@@ -229,6 +255,35 @@ export class BrowserSession {
     if (!this.sessionId || !this.orchestrator || this.stopped) return;
     this.send(event(this.sessionId, this.orchestrator.snapshot().epoch, 'failure', { code, detail: 'The local audio conversation could not continue this turn.', correctiveAction: 'Continue listening, retry, or stop the session.', recoverable: true }));
   }
-  private protocolError(code: string): void { this.failure(code); this.socket.close(1008, 'invalid conversation protocol'); }
-  private send(value: SessionEvent): void { if (!this.stopped && this.socket.readyState === this.socket.OPEN) this.socket.send(JSON.stringify(value)); }
+  private protocolError(code: string): void { this.failure(code); this.socket?.close(1008, 'invalid conversation protocol'); }
+  private send(value: SessionEvent): void { if (!this.stopped) this.sendFrame(JSON.stringify(value), false); }
+  private sendFrame(value: string | Buffer, binary: boolean): void {
+    const bytes = typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength;
+    const socket = this.socket;
+    if (socket && socket.readyState === socket.OPEN) {
+      try { socket.send(value, { binary }); } catch { this.queueFrame(value, bytes, binary); }
+      return;
+    }
+    this.queueFrame(value, bytes, binary);
+  }
+  private queueFrame(value: string | Buffer, bytes: number, binary: boolean): void {
+    if (bytes > MAX_RECONNECT_QUEUE_BYTES) return;
+    while (this.outboundQueue.length >= MAX_RECONNECT_QUEUE_MESSAGES || this.outboundQueueBytes + bytes > MAX_RECONNECT_QUEUE_BYTES) {
+      const oldest = this.outboundQueue.shift();
+      if (!oldest) break;
+      this.outboundQueueBytes -= oldest.bytes;
+    }
+    this.outboundQueue.push({ value, bytes, binary });
+    this.outboundQueueBytes += bytes;
+  }
+  private flushOutbound(): void {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== socket.OPEN) return;
+    while (this.outboundQueue.length > 0 && this.socket === socket && socket.readyState === socket.OPEN) {
+      const frame = this.outboundQueue[0]!;
+      try { socket.send(frame.value, { binary: frame.binary }); } catch { return; }
+      this.outboundQueue.shift();
+      this.outboundQueueBytes -= frame.bytes;
+    }
+  }
 }

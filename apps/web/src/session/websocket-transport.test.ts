@@ -13,7 +13,8 @@ describe('WebSocketSessionTransport terminal retries', () => {
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('session', () => 9);
-    (transport as unknown as { socket: FakeWebSocket }).socket = socket;
+    (transport as unknown as { socket: FakeWebSocket; connected: boolean }).socket = socket;
+    (transport as unknown as { connected: boolean }).connected = true;
     const event: StableEvent = { protocolVersion: 1, sessionId: 'session', epoch: 3, eventId: 'terminal-event', monotonicMs: 42, type: 'playback.stopped', payload: {} } as StableEvent & { protocolVersion: 1 };
     const first = { playbackId: 'playback', cancelledEpoch: 3, finalPlayedSampleOffset: 120, reason: 'cancelled' as const };
     transport.sendTerminal(first, event);
@@ -75,7 +76,8 @@ describe('WebSocketSessionTransport output binding', () => {
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 3);
-    (transport as unknown as { socket: FakeWebSocket }).socket = socket;
+    (transport as unknown as { socket: FakeWebSocket; connected: boolean }).socket = socket;
+    (transport as unknown as { connected: boolean }).connected = true;
     (transport as unknown as { outputs: { single: unknown } }).outputs.single = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: false };
     (transport as unknown as { usedOutputStreams: Set<number> }).usedOutputStreams.add(77);
     transport.sendTerminal({ playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', cancelledEpoch: 2, finalPlayedSampleOffset: 240, reason: 'cancelled' });
@@ -90,7 +92,8 @@ describe('WebSocketSessionTransport output binding', () => {
 
     const lateSocket = new FakeWebSocket();
     const lateTransport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 3);
-    (lateTransport as unknown as { socket: FakeWebSocket }).socket = lateSocket;
+    (lateTransport as unknown as { socket: FakeWebSocket; connected: boolean }).socket = lateSocket;
+    (lateTransport as unknown as { connected: boolean }).connected = true;
     (lateTransport as unknown as { outputs: { single: unknown } }).outputs.single = { playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', outputEpoch: 2, streamId: 77, expectedSequence: 1, sampleOffset: 480, terminal: false };
     lateTransport.sendTerminal({ playbackId: '018f1f32-7abf-7def-8abc-0123456789ab', cancelledEpoch: 2, finalPlayedSampleOffset: 240, reason: 'cancelled' });
     const late = encodeBinaryAudioFrame({ channel: 2, streamId: 77, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(240) }, 64 * 1024).buffer;
@@ -125,7 +128,7 @@ class EventSocket {
   onopen: (() => void) | undefined;
   onmessage: ((message: { data: unknown }) => void) | undefined;
   onerror: (() => void) | undefined;
-  onclose: (() => void) | undefined;
+  onclose: ((event?: { code?: number; reason?: string }) => void) | undefined;
   sent: unknown[] = [];
   send(value: unknown) { this.sent.push(value); }
   close(code: number) { this.closed = code; }
@@ -146,6 +149,50 @@ function emitBinary(socket: EventSocket, streamId: number, sequence: number, sam
   const frame = encodeBinaryAudioFrame({ channel: 2, streamId, sequence, monotonicUs: 1n, pcm16: new Int16Array(samples) }, 64 * 1024);
   socket.onmessage?.({ data: frame.buffer });
 }
+
+describe('WebSocketSessionTransport recovery', () => {
+  it('reconnects within the grace window, queues commands, and avoids a failure notification', async () => {
+    vi.useFakeTimers();
+    try {
+      (globalThis as Record<string, unknown>).location = { protocol: 'http:', host: 'test' };
+      const sockets = [new EventSocket()];
+      let firstSocket = true;
+      const transport = new WebSocketSessionTransport(SESSION, () => 0, () => {
+        if (firstSocket) { firstSocket = false; return sockets[0] as unknown as WebSocket; }
+        const socket = new EventSocket();
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      }, { reconnectWindowMs: 100, reconnectDelaysMs: [10] });
+      const failures: string[] = [];
+      let reconnects = 0;
+      transport.onFailure(message => failures.push(message));
+      transport.onReconnect(() => { reconnects++; });
+      const connected = transport.connect('capability');
+      sockets[0]!.onopen?.();
+      sockets[0]!.onmessage?.({ data: JSON.stringify({ type: 'authenticated' }) });
+      await connected;
+
+      sockets[0]!.onclose?.({ code: 1006, reason: 'network' });
+      transport.stopAudio(7);
+      transport.sendProgress({ playbackId: '018f1f32-7ac3-7def-8abc-0123456789ab', outputEpoch: 0, playedSampleOffset: 10, generatedSamples: 20 });
+      transport.sendProgress({ playbackId: '018f1f32-7ac3-7def-8abc-0123456789ab', outputEpoch: 0, playedSampleOffset: 15, generatedSamples: 20 });
+      await vi.advanceTimersByTimeAsync(10);
+      const replacement = sockets[1]!;
+      replacement.onopen?.();
+      replacement.onmessage?.({ data: JSON.stringify({ type: 'authenticated' }) });
+      await Promise.resolve();
+
+      expect(reconnects).toBe(1);
+      expect(failures).toEqual([]);
+      expect(replacement.sent).toHaveLength(3);
+      expect(JSON.parse(String(replacement.sent[1]))).toMatchObject({ type: 'audio.stop', payload: { streamId: 7 } });
+      expect(JSON.parse(String(replacement.sent[2]))).toMatchObject({ type: 'playback.progress', payload: { playedSampleOffset: 15 } });
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 const REASONING = (responseId: string) => hostEvent('reasoning.started', { turnId: '018f1f32-7abe-7def-8abc-0123456789ab', responseId, posture: 'riff' });
 const FINAL = (responseId: string, text = 'First sentence. Second sentence.') => hostEvent('reasoning.final', { turnId: '018f1f32-7abe-7def-8abc-0123456789ab', responseId, posture: 'riff', text });

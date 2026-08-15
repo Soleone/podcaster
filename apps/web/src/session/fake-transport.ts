@@ -12,6 +12,7 @@ export class FakeSessionTransport implements SessionTransport {
   private readonly eventListeners = new Set<(event: StableEvent) => void | Promise<void>>();
   private readonly audioListeners = new Set<(chunk: OutputAudioChunk) => void>();
   private readonly failureListeners = new Set<(message: string) => void>();
+  private readonly reconnectListeners = new Set<() => void | Promise<void>>();
   connected = false;
 
   async connect(_capability: string): Promise<void> { this.connected = true; }
@@ -37,6 +38,7 @@ export class FakeSessionTransport implements SessionTransport {
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void { this.eventListeners.add(listener); return () => this.eventListeners.delete(listener); }
   onAudio(listener: (chunk: OutputAudioChunk) => void): () => void { this.audioListeners.add(listener); return () => this.audioListeners.delete(listener); }
   onFailure(listener: (message: string) => void): () => void { this.failureListeners.add(listener); return () => this.failureListeners.delete(listener); }
+  onReconnect(listener: () => void | Promise<void>): () => void { this.reconnectListeners.add(listener); return () => this.reconnectListeners.delete(listener); }
   async emit(event: StableEvent): Promise<void> { await Promise.all([...this.eventListeners].map(listener => listener(event))); }
   emitFailure(message: string): void { for (const listener of this.failureListeners) listener(message); }
   emitAudio(chunk: OutputAudioChunk): void { for (const listener of this.audioListeners) listener(chunk); }

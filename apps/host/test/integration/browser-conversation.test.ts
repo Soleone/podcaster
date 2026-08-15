@@ -191,6 +191,33 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
 }
 
 describe('browser conversation routing', () => {
+  it('reattaches a live conversation after a transient browser disconnect', async () => {
+    const sidecar = await fakeAudio();
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const url = origin.replace('http', 'ws') + '/ws';
+    const first = new WebSocket(url, { headers: { Origin: origin, Cookie: cookie } });
+    await new Promise<void>(resolve => { first.once('open', () => first.send(JSON.stringify({ capability: body.capability }))); first.once('message', () => resolve()); });
+    first.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
+    first.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const firstClosed = new Promise<void>(resolve => first.once('close', () => resolve()));
+    first.close();
+    await firstClosed;
+
+    const second = new WebSocket(url, { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    second.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { second.once('open', () => second.send(JSON.stringify({ capability: body.capability }))); second.once('message', () => resolve()); });
+    second.send(JSON.stringify(command('audio.stop', { streamId: 7 })));
+    second.send(JSON.stringify(command('audio.start', { streamId: 8, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    second.send(encodeBinaryAudioFrame({ channel: 1, streamId: 8, sequence: 0, monotonicUs: 2n, pcm16: new Int16Array(320) }, 64 * 1024));
+    await expect(waitFor(messages, 'vad.speech_start')).resolves.toMatchObject({ type: 'vad.speech_start' });
+    second.close();
+  });
+
   it('completes fake Pi through streaming TTS and authoritative browser terminal accounting', async () => {
     const sidecar = await fakeAudio({ tts: true });
     const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
@@ -293,7 +320,7 @@ describe('browser conversation routing', () => {
     let resolveClosed!: () => void;
     const sidecarClosed = new Promise<void>(resolve => { resolveClosed = resolve; });
     const sidecar = await fakeAudio({ onStreamClose: resolveClosed });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, sessionDisconnectGraceMs: 0, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);

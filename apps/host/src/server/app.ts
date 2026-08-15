@@ -15,14 +15,16 @@ import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
 import { DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, randomVoicePreviewPhrases } from '@app/contracts';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const SESSION_DISCONNECT_GRACE_MS = 30_000;
+const SOCKET_HEARTBEAT_MS = 15_000;
 const COOKIE = 'podcaster_session';
-interface Session { capability: string; expiresAt: number; wsAuthenticated: boolean; sockets: Set<WebSocket>; conversation?: BrowserSession; stopPromise?: Promise<void>; }
+interface Session { capability: string; expiresAt: number; wsAuthenticated: boolean; sockets: Set<WebSocket>; activeSocket: WebSocket | undefined; lastPongAt: number; messageChain: Promise<void>; conversation: BrowserSession | undefined; stopPromise: Promise<void> | undefined; disconnectTimer: NodeJS.Timeout | undefined; }
 const unavailablePi: PiClient = {
   async probe() { return { status: 'unavailable', detail: 'Pi is unavailable.', correctiveAction: 'Retry, or use transcript-only mode.' }; },
   async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
   async shutdown() {},
 };
-export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
+export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; sessionDisconnectGraceMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 
@@ -36,6 +38,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
   const sessionTtlMs = options.sessionTtlMs ?? SESSION_TTL_MS;
+  const sessionDisconnectGraceMs = options.sessionDisconnectGraceMs ?? SESSION_DISCONNECT_GRACE_MS;
   // Keep previews bounded per host process. The sidecar accepts a dedicated
   // TTS-only preview stream alongside the session capture stream.
   let voicePreviewInFlight = false;
@@ -45,12 +48,25 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   });
   const shutdowns = new Set<Promise<void>>();
   const stopConversation = (session: Session): Promise<void> => {
+    if (session.disconnectTimer) { clearTimeout(session.disconnectTimer); session.disconnectTimer = undefined; }
     if (session.stopPromise) return session.stopPromise;
-    const work = (async () => { await session.conversation?.stop(); })();
+    const conversation = session.conversation;
+    const work = (async () => { await conversation?.stop(); })();
     session.stopPromise = work;
     shutdowns.add(work);
-    void work.finally(() => shutdowns.delete(work));
+    void work.finally(() => {
+      shutdowns.delete(work);
+      if (session.stopPromise === work) session.stopPromise = undefined;
+    });
     return work;
+  };
+  const scheduleConversationStop = (session: Session): void => {
+    if (session.disconnectTimer || session.stopPromise || session.wsAuthenticated || !session.conversation) return;
+    session.disconnectTimer = setTimeout(() => {
+      session.disconnectTimer = undefined;
+      if (!session.wsAuthenticated) void stopConversation(session);
+    }, Math.max(0, sessionDisconnectGraceMs));
+    session.disconnectTimer.unref?.();
   };
   // Readiness polls every couple of seconds, but a Pi probe is a full provider
   // round trip. Never make the browser wait for that probe: share one in-flight
@@ -159,7 +175,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   });
   app.post('/api/bootstrap', { schema: { body: { type: 'object', additionalProperties: false, required: ['disclosureAcknowledged'], properties: { disclosureAcknowledged: { const: true } } } } }, async (_request, reply) => {
     const id = randomBytes(32).toString('base64url'); const capability = randomBytes(32).toString('base64url');
-    sessions.set(id, { capability, expiresAt: now() + sessionTtlMs, wsAuthenticated: false, sockets: new Set() });
+    sessions.set(id, { capability, expiresAt: now() + sessionTtlMs, wsAuthenticated: false, sockets: new Set(), activeSocket: undefined, lastPongAt: 0, messageChain: Promise.resolve(), conversation: undefined, stopPromise: undefined, disconnectTimer: undefined });
     reply.header('set-cookie', `${COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict`);
     return { capability, expiresInSeconds: sessionTtlMs / 1000 };
   });
@@ -173,9 +189,42 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   });
   app.get('/ws', { websocket: true }, (socket, request) => {
     const id = cookieValue(request.headers.cookie); const session = id ? sessions.get(id) : undefined;
-    let pending = true; let expiryTimer: NodeJS.Timeout | undefined; let messageChain = Promise.resolve();
+    let pending = true; let expiryTimer: NodeJS.Timeout | undefined;
+    let heartbeatAlive = true;
+    const heartbeatTimer = setInterval(() => {
+      if (socket.readyState !== socket.OPEN) return;
+      if (!heartbeatAlive) { socket.terminate(); return; }
+      heartbeatAlive = false;
+      // Hold host output while this ping is outstanding. If the path is dead,
+      // frames generated during the missed-heartbeat window are queued for the
+      // replacement socket instead of being written into a black hole.
+      if (session?.activeSocket === socket) session.conversation?.detachSocket(socket);
+      socket.ping();
+    }, SOCKET_HEARTBEAT_MS);
+    heartbeatTimer.unref?.();
+    socket.on('pong', () => {
+      heartbeatAlive = true;
+      if (session?.activeSocket === socket) {
+        session.lastPongAt = Date.now();
+        session.conversation?.attachSocket(socket);
+      }
+    });
     const timer = setTimeout(() => socket.close(1008, 'authentication required'), 1000);
-    socket.on('close', () => { clearTimeout(timer); if (expiryTimer) clearTimeout(expiryTimer); session?.sockets.delete(socket); if (session) void stopConversation(session); });
+    socket.on('close', () => {
+      clearTimeout(timer);
+      clearTimeout(heartbeatTimer);
+      if (expiryTimer) clearTimeout(expiryTimer);
+      session?.sockets.delete(socket);
+      if (session?.activeSocket === socket) {
+        session.activeSocket = undefined;
+        session.lastPongAt = 0;
+      }
+      if (session && session.sockets.size === 0) {
+        session.wsAuthenticated = false;
+        session.conversation?.detachSocket(socket);
+        scheduleConversationStop(session);
+      }
+    });
     socket.on('message', (raw, binary) => {
       if (!pending) {
         if (!session || session.expiresAt <= now() || !id || sessions.get(id) !== session) { socket.close(1008, 'session expired'); return; }
@@ -183,23 +232,43 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         if (size > 64 * 1024) { socket.close(1009, 'frame too large'); return; }
         const conversation = session.conversation;
         if (!conversation) { socket.close(1011, 'session composition missing'); return; }
-        messageChain = messageChain.then(() => conversation.handle(raw, binary)).catch(() => socket.close(1011, 'conversation failure'));
+        session.messageChain = session.messageChain.then(() => conversation.handle(raw, binary)).catch(() => socket.close(1011, 'conversation failure'));
         return;
       }
       pending = false; clearTimeout(timer);
       if (binary) { socket.close(1008, 'invalid authentication'); return; }
       let value: unknown; try { value = JSON.parse(raw.toString()); } catch { socket.close(1008, 'invalid authentication'); return; }
       const cap = typeof value === 'object' && value !== null ? (value as { capability?: unknown }).capability : undefined;
-      if (!session || session.expiresAt <= now() || session.wsAuthenticated || typeof cap !== 'string' || !sameSecret(cap, session.capability)) { socket.close(1008, 'invalid authentication'); return; }
-      session.wsAuthenticated = true; session.sockets.add(socket);
-      session.conversation = new BrowserSession(socket, options.sidecar, {
-        multiPartEnabled: options.multiPartEnabled !== false,
-        createResponseClient,
-        createResearchClient,
-        createClassifierClient,
-      });
+      if (!session || session.expiresAt <= now() || typeof cap !== 'string' || !sameSecret(cap, session.capability)) { socket.close(1008, 'invalid authentication'); return; }
+      // A dead TCP path can leave the old ws object OPEN until the heartbeat
+      // timeout. Once it has missed a full heartbeat interval, let the same
+      // capability take over instead of making the browser wait for that stale
+      // object to be terminated.
+      if (session.wsAuthenticated && session.activeSocket && Date.now() - session.lastPongAt > SOCKET_HEARTBEAT_MS) {
+        const stale = session.activeSocket;
+        stale.terminate();
+        session.sockets.delete(stale);
+        session.conversation?.detachSocket(stale);
+        session.activeSocket = undefined;
+        session.lastPongAt = 0;
+        session.wsAuthenticated = false;
+      }
+      if (session.wsAuthenticated || session.sockets.size > 0) { socket.close(1008, 'invalid authentication'); return; }
+      if (session.disconnectTimer) { clearTimeout(session.disconnectTimer); session.disconnectTimer = undefined; }
+      session.wsAuthenticated = true; session.sockets.add(socket); session.activeSocket = socket; session.lastPongAt = Date.now();
+      if (!session.conversation || session.conversation.isStopped()) {
+        session.stopPromise = undefined;
+        session.conversation = new BrowserSession(socket, options.sidecar, {
+          multiPartEnabled: options.multiPartEnabled !== false,
+          createResponseClient,
+          createResearchClient,
+          createClassifierClient,
+        });
+      }
       expiryTimer = setTimeout(() => socket.close(1008, 'session expired'), Math.max(0, session.expiresAt - now()));
+      expiryTimer.unref?.();
       socket.send(JSON.stringify({ type: 'authenticated' }));
+      session.conversation.attachSocket(socket);
     });
   });
   await app.register(fastifyStatic, { root: resolve(options.webRoot ?? 'apps/web/dist'), wildcard: false });

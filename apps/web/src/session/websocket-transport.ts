@@ -11,7 +11,15 @@ const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
 // WebSocket *client* to send. 1008/1011 are server-only and a browser client
 // that tries to send them throws InvalidAccessError inside onmessage.
 const CLOSE_PROTOCOL_VIOLATION = 4000;
+const DEFAULT_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 10_000] as const;
+const DEFAULT_RECONNECT_WINDOW_MS = 25_000;
+const MAX_QUEUED_COMMANDS = 128;
+export interface WebSocketTransportOptions {
+  reconnectWindowMs?: number;
+  reconnectDelaysMs?: readonly number[];
+}
 interface OutputBinding { playbackId: string; responseId: string; outputEpoch: number; streamId?: number; partIndex?: number; expectedSequence: number; sampleOffset: number; terminal: boolean; receivedAt: number }
+interface QueuedCommand { message: string; type: string; key?: string }
 
 interface OutputCollection {
   // Multi-part responses key bindings by the sidecar outputStreamId; the legacy
@@ -22,128 +30,240 @@ interface OutputCollection {
 
 export class WebSocketSessionTransport implements SessionTransport {
   private socket: WebSocket | undefined;
+  private capability: string | undefined;
+  private connectPromise: Promise<void> | undefined;
+  private initialConnectionSettled = false;
+  private connected = false;
+  private reconnecting = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnectStartedAt = 0;
+  private reconnectAttempt = 0;
+  private permanentFailure = false;
+  private readonly queuedCommands: QueuedCommand[] = [];
   private readonly eventListeners = new Set<(event: StableEvent) => void | Promise<void>>();
   private readonly audioListeners = new Set<(chunk: OutputAudioChunk) => void>();
   private readonly failureListeners = new Set<(message: string) => void>();
+  private readonly reconnectListeners = new Set<() => void | Promise<void>>();
   private readonly terminalEnvelopes = new Map<string, Envelope>();
   private readonly usedOutputStreams = new Set<number>();
   private readonly outputs: OutputCollection = { byStream: new Map(), single: undefined };
   private intentionalDisconnect = false;
   private failureNotified = false;
 
-  constructor(private readonly sessionId: string, private readonly epoch: () => number, private readonly createSocket: (url: string) => WebSocket = url => new WebSocket(url)) {}
+  constructor(
+    private readonly sessionId: string,
+    private readonly epoch: () => number,
+    private readonly createSocket: (url: string) => WebSocket = url => new WebSocket(url),
+    private readonly options: WebSocketTransportOptions = {},
+  ) {}
 
   connect(capability: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = this.createSocket(`${protocol}//${location.host}/ws`);
-      this.socket = socket;
-      let settled = false;
-      const fail = (detail?: string) => {
-        if (!settled) {
-          settled = true;
-          activityLog.append({ level: 'error', source: 'transport', message: 'session connection could not be established', ...(detail ? { detail } : {}) });
-          reject(new Error('The secure session connection could not be authenticated.'));
-        } else if (!this.failureNotified && !this.intentionalDisconnect) {
-          activityLog.append({ level: 'error', source: 'transport', message: 'session connection lost', ...(detail ? { detail } : {}) });
-          this.notifyFailure(`The secure session connection was lost. Local playback was stopped.${detail ? ` (${detail})` : ''}`);
+    this.capability = capability;
+    this.intentionalDisconnect = false;
+    this.permanentFailure = false;
+    this.failureNotified = false;
+    this.reconnecting = false;
+    this.reconnectAttempt = 0;
+    this.reconnectStartedAt = 0;
+    if (this.connectPromise) return this.connectPromise;
+    this.connectPromise = new Promise((resolve, reject) => {
+      this.initialConnectionSettled = false;
+      this.initialResolve = resolve;
+      this.initialReject = reject;
+      this.openSocket();
+    });
+    return this.connectPromise;
+  }
+
+  private initialResolve: (() => void) | undefined;
+  private initialReject: ((error: Error) => void) | undefined;
+
+  private openSocket(): void {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let socket: WebSocket;
+    try {
+      socket = this.createSocket(`${protocol}//${location.host}/ws`);
+    } catch (error) {
+      this.handleSocketFailure(undefined, error instanceof Error ? error.message : 'socket creation failed');
+      return;
+    }
+    this.socket = socket;
+    let authenticated = false;
+    const fail = (detail?: string) => this.handleSocketFailure(socket, detail);
+    socket.binaryType = 'arraybuffer';
+    socket.onopen = () => {
+      if (this.socket !== socket || this.intentionalDisconnect) return;
+      activityLog.append({ level: 'info', source: 'transport', message: this.reconnecting ? 'session socket reconnecting' : 'session socket opened' });
+      try { socket.send(JSON.stringify({ capability: this.capability })); } catch { fail('authentication send failed'); }
+    };
+    socket.onerror = () => fail();
+    socket.onclose = event => {
+      const detail = event.code || event.reason ? `code=${event.code}${event.reason ? ` reason=${event.reason}` : ''}` : undefined;
+      fail(detail);
+    };
+    socket.onmessage = message => {
+      if (this.socket !== socket || this.intentionalDisconnect) return;
+      if (typeof message.data !== 'string') { this.handleBinary(message.data); return; }
+      let value: unknown;
+      try { value = JSON.parse(message.data); } catch { this.protocolFailure('the message was not valid JSON.'); return; }
+      if (typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'authenticated') {
+        authenticated = true;
+        this.connected = true;
+        if (!this.initialConnectionSettled) {
+          this.initialConnectionSettled = true;
+          this.initialResolve?.();
+          this.initialResolve = undefined;
+          this.initialReject = undefined;
+        } else if (this.reconnecting) {
+          this.reconnecting = false;
+          this.reconnectStartedAt = 0;
+          this.reconnectAttempt = 0;
+          activityLog.append({ level: 'info', source: 'transport', message: 'session socket reconnected' });
+          this.flushQueuedCommands();
+          if (!this.connected) return;
+          for (const listener of this.reconnectListeners) void listener();
         }
-      };
-      socket.binaryType = 'arraybuffer';
-      socket.onopen = () => { activityLog.append({ level: 'info', source: 'transport', message: 'session socket opened' }); socket.send(JSON.stringify({ capability })); };
-      socket.onerror = () => fail();
-      socket.onclose = event => {
-        if (this.intentionalDisconnect) return;
-        const detail = event.code || event.reason ? `code=${event.code}${event.reason ? ` reason=${event.reason}` : ''}` : undefined;
-        fail(detail);
-      };
-      socket.onmessage = message => {
-        if (typeof message.data !== 'string') { this.handleBinary(message.data); return; }
-        let value: unknown;
-        try { value = JSON.parse(message.data); } catch { this.protocolFailure('the message was not valid JSON.'); return; }
-        if (typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'authenticated') { if (!settled) { settled = true; resolve(); } return; }
-        if (!isStrictHostEvent(value)) {
-          const type = typeof value === 'object' && value !== null ? String((value as { type?: unknown }).type ?? 'unknown') : 'unknown';
-          this.protocolFailure(`the "${type}" event failed validation.`);
-          return;
-        }
-        const hostEvent = value as StableEvent;
-        if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure('the event sessionId did not match this session.'); return; }
-        if (hostEvent.type === 'reasoning.started') {
-          const responseId = String(hostEvent.payload.responseId);
-          const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
-          if (this.latestResponseId !== undefined) {
-            // A duplicate reasoning.started for the SAME response is a protocol anomaly
-            // unless it starts a new part of a multi-part response.
-            if (responseId === this.latestResponseId && partIndex === undefined) { this.protocolFailure('a duplicate reasoning.started was received for the current response.'); return; }
-            // A different response superseded the previous one before it terminalized
-            // (e.g. rapid re-engagement while the old response was still generating).
-            // The previous output bindings are dead and their late PCM must be rejected.
-            if (responseId !== this.latestResponseId) {
-              for (const binding of this.outputs.byStream.values()) binding.terminal = true;
-              if (this.outputs.single) this.outputs.single.terminal = true;
-            }
-          }
-          if (responseId !== this.latestResponseId) this.latestResponseId = responseId;
-        } else if (hostEvent.type === 'reasoning.delta') {
-          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.delta did not match the established response.'); return; }
-        } else if (hostEvent.type === 'reasoning.final') {
-          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.final did not match the established response.'); return; }
-        } else if (hostEvent.type === 'response.part_started') {
-          const responseId = String(hostEvent.payload.responseId);
-          activityLog.append({ level: 'info', source: 'transport', message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} started` });
-          // A part_started may be the FIRST event of a new response (the host emits
-          // it before reasoning.started). If it belongs to a different response
-          // than the one currently established, the previous response was
-          // superseded before it terminalized and its output bindings are dead.
-          if (this.latestResponseId !== undefined && responseId !== this.latestResponseId) {
+        return;
+      }
+      if (!authenticated) { this.protocolFailure('the session socket sent data before authentication.'); return; }
+      if (!isStrictHostEvent(value)) {
+        const type = typeof value === 'object' && value !== null ? String((value as { type?: unknown }).type ?? 'unknown') : 'unknown';
+        this.protocolFailure(`the "${type}" event failed validation.`);
+        return;
+      }
+      const hostEvent = value as StableEvent;
+      if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure('the event sessionId did not match this session.'); return; }
+      if (hostEvent.type === 'reasoning.started') {
+        const responseId = String(hostEvent.payload.responseId);
+        const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
+        if (this.latestResponseId !== undefined) {
+          // A duplicate reasoning.started for the SAME response is a protocol anomaly
+          // unless it starts a new part of a multi-part response.
+          if (responseId === this.latestResponseId && partIndex === undefined) { this.protocolFailure('a duplicate reasoning.started was received for the current response.'); return; }
+          // A different response superseded the previous one before it terminalized
+          // (e.g. rapid re-engagement while the old response was still generating).
+          // The previous output bindings are dead and their late PCM must be rejected.
+          if (responseId !== this.latestResponseId) {
             for (const binding of this.outputs.byStream.values()) binding.terminal = true;
             if (this.outputs.single) this.outputs.single.terminal = true;
           }
-          this.latestResponseId = responseId;
-        } else if (hostEvent.type === 'response.part_final') {
-          // A part_final must follow that part's reasoning.started/final, so keep strict matching.
-          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.part_final did not match the established response.'); return; }
-          activityLog.append({ level: 'info', source: 'transport', message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} final` });
-        } else if (hostEvent.type === 'tts.started') {
-          if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('tts.started did not match the established response identity.'); return; }
-          const outputStreamId = typeof hostEvent.payload.outputStreamId === 'number' ? hostEvent.payload.outputStreamId : undefined;
-          const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
-          const binding: OutputBinding = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false, receivedAt: Date.now(), ...(outputStreamId !== undefined ? { streamId: outputStreamId } : {}), ...(partIndex !== undefined ? { partIndex } : {}) };
-          if (outputStreamId !== undefined) {
-            if (this.outputs.byStream.has(outputStreamId) || this.usedOutputStreams.has(outputStreamId)) { this.protocolFailure('tts.started reused an output stream id.'); return; }
-            this.outputs.byStream.set(outputStreamId, binding);
-            this.usedOutputStreams.add(outputStreamId);
-          } else {
-            if (this.outputs.single && !this.outputs.single.terminal) { this.protocolFailure('tts.started collided with the active output stream.'); return; }
-            this.outputs.single = binding;
-          }
-        } else if (hostEvent.type === 'response.failed') {
-          if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.failed did not match the established response.'); return; }
-          for (const binding of this.outputs.byStream.values()) if (binding.responseId === hostEvent.payload.responseId && !binding.terminal) binding.terminal = true;
-          if (this.outputs.single && this.outputs.single.responseId === hostEvent.payload.responseId && !this.outputs.single.terminal) this.outputs.single.terminal = true;
-          this.latestResponseId = undefined;
-        } else if (hostEvent.type === 'tts.ended') {
-          const binding = this.findOutput(String(hostEvent.payload.playbackId));
-          if (!binding || binding.outputEpoch !== hostEvent.epoch) { this.protocolFailure('tts.ended did not match the active output stream.'); return; }
-          binding.terminal = true;
-          const generated = Number(hostEvent.payload.generatedSamples);
-          if (generated !== binding.sampleOffset) { this.protocolFailure('tts.ended reported a sample count that does not match the streamed audio.'); return; }
-          // For a single-part response the response is fully delivered. For a
-          // multi-part response the parent identity persists until the last part.
-          const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
-          if (partIndex === undefined) this.latestResponseId = undefined;
         }
-        for (const listener of this.eventListeners) void listener(hostEvent);
-      };
-    });
+        if (responseId !== this.latestResponseId) this.latestResponseId = responseId;
+      } else if (hostEvent.type === 'reasoning.delta') {
+        if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.delta did not match the established response.'); return; }
+      } else if (hostEvent.type === 'reasoning.final') {
+        if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('reasoning.final did not match the established response.'); return; }
+      } else if (hostEvent.type === 'response.part_started') {
+        const responseId = String(hostEvent.payload.responseId);
+        activityLog.append({ level: 'info', source: 'transport', message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} started` });
+        // A part_started may be the FIRST event of a new response (the host emits
+        // it before reasoning.started). If it belongs to a different response
+        // than the one currently established, the previous response was
+        // superseded before it terminalized and its output bindings are dead.
+        if (this.latestResponseId !== undefined && responseId !== this.latestResponseId) {
+          for (const binding of this.outputs.byStream.values()) binding.terminal = true;
+          if (this.outputs.single) this.outputs.single.terminal = true;
+        }
+        this.latestResponseId = responseId;
+      } else if (hostEvent.type === 'response.part_final') {
+        // A part_final must follow that part's reasoning.started/final, so keep strict matching.
+        if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.part_final did not match the established response.'); return; }
+        activityLog.append({ level: 'info', source: 'transport', message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} final` });
+      } else if (hostEvent.type === 'tts.started') {
+        if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('tts.started did not match the established response identity.'); return; }
+        const outputStreamId = typeof hostEvent.payload.outputStreamId === 'number' ? hostEvent.payload.outputStreamId : undefined;
+        const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
+        const binding: OutputBinding = { playbackId: String(hostEvent.payload.playbackId), responseId: String(hostEvent.payload.responseId), outputEpoch: hostEvent.epoch, expectedSequence: 0, sampleOffset: 0, terminal: false, receivedAt: Date.now(), ...(outputStreamId !== undefined ? { streamId: outputStreamId } : {}), ...(partIndex !== undefined ? { partIndex } : {}) };
+        if (outputStreamId !== undefined) {
+          if (this.outputs.byStream.has(outputStreamId) || this.usedOutputStreams.has(outputStreamId)) { this.protocolFailure('tts.started reused an output stream id.'); return; }
+          this.outputs.byStream.set(outputStreamId, binding);
+          this.usedOutputStreams.add(outputStreamId);
+        } else {
+          if (this.outputs.single && !this.outputs.single.terminal) { this.protocolFailure('tts.started collided with the active output stream.'); return; }
+          this.outputs.single = binding;
+        }
+      } else if (hostEvent.type === 'response.failed') {
+        if (hostEvent.payload.responseId !== this.latestResponseId) { this.protocolFailure('response.failed did not match the established response.'); return; }
+        for (const binding of this.outputs.byStream.values()) if (binding.responseId === hostEvent.payload.responseId && !binding.terminal) binding.terminal = true;
+        if (this.outputs.single && this.outputs.single.responseId === hostEvent.payload.responseId && !this.outputs.single.terminal) this.outputs.single.terminal = true;
+        this.latestResponseId = undefined;
+      } else if (hostEvent.type === 'tts.ended') {
+        const binding = this.findOutput(String(hostEvent.payload.playbackId));
+        if (!binding || binding.outputEpoch !== hostEvent.epoch) { this.protocolFailure('tts.ended did not match the active output stream.'); return; }
+        binding.terminal = true;
+        const generated = Number(hostEvent.payload.generatedSamples);
+        if (generated !== binding.sampleOffset) { this.protocolFailure('tts.ended reported a sample count that does not match the streamed audio.'); return; }
+        // For a single-part response the response is fully delivered. For a
+        // multi-part response the parent identity persists until the last part.
+        const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
+        if (partIndex === undefined) this.latestResponseId = undefined;
+      }
+      for (const listener of this.eventListeners) void listener(hostEvent);
+    };
+  }
+
+  private handleSocketFailure(socket: WebSocket | undefined, detail?: string): void {
+    if (socket && this.socket !== socket) return;
+    if (socket && this.socket === socket) this.socket = undefined;
+    this.connected = false;
+    if (this.intentionalDisconnect) return;
+    if (!this.initialConnectionSettled) {
+      this.initialConnectionSettled = true;
+      this.initialReject?.(new Error('The secure session connection could not be authenticated.'));
+      this.initialResolve = undefined;
+      this.initialReject = undefined;
+      activityLog.append({ level: 'error', source: 'transport', message: 'session connection could not be established', ...(detail ? { detail } : {}) });
+      return;
+    }
+    if (this.permanentFailure) {
+      this.notifyFailure(`The secure session connection was lost. Local playback was stopped.${detail ? ` (${detail})` : ''}`);
+      return;
+    }
+    if (!this.reconnecting) {
+      this.reconnecting = true;
+      this.reconnectStartedAt = Date.now();
+      this.reconnectAttempt = 0;
+      activityLog.append({ level: 'warn', source: 'transport', message: 'session connection lost; reconnecting', ...(detail ? { detail } : {}) });
+    }
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer || this.intentionalDisconnect || this.failureNotified) return;
+    const windowMs = this.options.reconnectWindowMs ?? DEFAULT_RECONNECT_WINDOW_MS;
+    const elapsed = Date.now() - this.reconnectStartedAt;
+    if (elapsed >= windowMs) {
+      this.reconnecting = false;
+      this.notifyFailure('The secure session connection could not be restored. Local playback was stopped.');
+      return;
+    }
+    const delays = this.options.reconnectDelaysMs ?? DEFAULT_RECONNECT_DELAYS_MS;
+    const delay = Math.min(delays[Math.min(this.reconnectAttempt, delays.length - 1)] ?? 1_000, windowMs - elapsed);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      this.reconnectAttempt++;
+      this.openSocket();
+    }, Math.max(0, delay));
+  }
+
+  private flushQueuedCommands(): void {
+    while (this.queuedCommands.length > 0 && this.connected) {
+      const command = this.queuedCommands[0]!;
+      try { this.readySocket().send(command.message); } catch { this.handleSocketFailure(this.socket, 'command send failed'); return; }
+      this.queuedCommands.shift();
+    }
   }
 
   disconnect(): void {
     this.intentionalDisconnect = true;
+    this.connected = false;
+    this.reconnecting = false;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
+    this.queuedCommands.length = 0;
     activityLog.append({ level: 'info', source: 'transport', message: 'session socket closed intentionally' });
-    this.socket?.close(1000, 'session ended');
+    const socket = this.socket;
     this.socket = undefined;
+    socket?.close(1000, 'session ended');
   }
   startSession(input: { sessionSeed: string; reasoningMode: 'full' | 'transcript_only'; settings: { version: 1; persona: string; voice: VoicePreference } }): void { this.sendCommand('session.start', { sessionSeed: input.sessionSeed, reasoningMode: input.reasoningMode, settings: input.settings }); }
   startAudio(streamId: number): void { this.sendCommand('audio.start', { streamId, sampleRate: 16_000, channels: 1, frameSamples: 320 }); }
@@ -155,7 +275,14 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.sendCommand('turn.persistence_failed', { turnId: event.payload.turnId, finalEventId: event.eventId, persistedEpoch: event.epoch, reasonCode }, event.epoch);
   }
   stopSession(reason: 'user' | 'expired' | 'disconnect'): void { this.sendCommand('session.stop', { reason }); }
-  sendCapture(frame: Uint8Array): void { this.readySocket().send(frame); }
+  sendCapture(frame: Uint8Array): void {
+    // Capture is intentionally dropped while the transport is reconnecting. The
+    // app restarts the capture stream after onReconnect so sequence numbers never
+    // resume in the middle of a sidecar stream.
+    const socket = this.socket;
+    if (!this.connected || !socket || socket.readyState !== WebSocket.OPEN) return;
+    try { socket.send(frame); } catch { this.handleSocketFailure(socket, 'capture send failed'); }
+  }
   sendProgress(progress: PlaybackProgress): void { this.sendCommand('playback.progress', { ...progress }); }
   sendPaused(checkpoint: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void { this.sendCommand('playback.paused', checkpoint, checkpoint.outputEpoch); }
   sendTerminal(receipt: PlaybackTerminal, persistedEvent?: StableEvent): void {
@@ -169,7 +296,7 @@ export class WebSocketSessionTransport implements SessionTransport {
         : createEnvelope({ sessionId: this.sessionId, epoch: this.epoch(), type: 'playback.stopped', payload: { ...receipt } });
       this.terminalEnvelopes.set(terminalKey, envelope);
     }
-    this.readySocket().send(JSON.stringify(envelope));
+    this.sendWire(JSON.stringify(envelope), 'playback.stopped', `playback.stopped:${terminalKey}`);
   }
   cancelAssistant(): void { this.sendCommand('turn.cancel', { reason: 'user' }); }
   private latestResponseId: string | undefined;
@@ -179,6 +306,7 @@ export class WebSocketSessionTransport implements SessionTransport {
   }
   onAudio(listener: (chunk: OutputAudioChunk) => void): () => void { this.audioListeners.add(listener); return () => this.audioListeners.delete(listener); }
   onFailure(listener: (message: string) => void): () => void { this.failureListeners.add(listener); return () => this.failureListeners.delete(listener); }
+  onReconnect(listener: () => void | Promise<void>): () => void { this.reconnectListeners.add(listener); return () => this.reconnectListeners.delete(listener); }
 
   private handleBinary(data: unknown): void {
     if (!(data instanceof ArrayBuffer)) { this.protocolFailure('a binary message was not an ArrayBuffer.'); return; }
@@ -210,9 +338,37 @@ export class WebSocketSessionTransport implements SessionTransport {
     return first ?? this.outputs.single;
   }
   private sendCommand(type: string, payload: Record<string, unknown>, epoch = this.epoch()): void {
-    this.readySocket().send(JSON.stringify(createEnvelope({ sessionId: this.sessionId, epoch, type, payload })));
+    const key = type === 'playback.progress' ? `playback.progress:${String(payload.playbackId)}:${String(payload.outputEpoch)}` : undefined;
+    this.sendWire(JSON.stringify(createEnvelope({ sessionId: this.sessionId, epoch, type, payload })), type, key);
+  }
+  private sendWire(message: string, type = 'control', key?: string): void {
+    if (!this.connected) {
+      if (!this.reconnecting) throw new Error('Session transport is not connected.');
+      this.queueCommand({ message, type, ...(key ? { key } : {}) });
+      return;
+    }
+    try { this.readySocket().send(message); } catch {
+      this.queueCommand({ message, type, ...(key ? { key } : {}) });
+      this.handleSocketFailure(this.socket, 'command send failed');
+    }
+  }
+  private queueCommand(command: QueuedCommand): void {
+    if (command.key) {
+      const existing = this.queuedCommands.findIndex(item => item.key === command.key);
+      if (existing >= 0) { this.queuedCommands[existing] = command; return; }
+    }
+    if (this.queuedCommands.length >= MAX_QUEUED_COMMANDS) {
+      const progress = this.queuedCommands.findIndex(item => item.type === 'playback.progress');
+      if (progress >= 0) this.queuedCommands.splice(progress, 1);
+      else {
+        this.notifyFailure('The secure session connection backlog could not be recovered safely.');
+        return;
+      }
+    }
+    this.queuedCommands.push(command);
   }
   private protocolFailure(reason: string): void {
+    this.permanentFailure = true;
     activityLog.append({ level: 'error', source: 'transport', message: 'protocol failure', detail: reason });
     this.notifyFailure(`The host sent invalid conversation data: ${reason}`);
     // close() with a server-only code would throw InvalidAccessError inside
@@ -227,7 +383,7 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.failureNotified = true;
     for (const listener of this.failureListeners) listener(message);
   }
-  private readySocket(): WebSocket { if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('Session transport is not connected.'); return this.socket; }
+  private readySocket(): WebSocket { if (!this.connected || !this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('Session transport is not connected.'); return this.socket; }
 }
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

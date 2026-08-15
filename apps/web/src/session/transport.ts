@@ -25,4 +25,5 @@ export interface SessionTransport {
   onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void;
   onAudio(listener: (chunk: OutputAudioChunk) => void): () => void;
   onFailure(listener: (message: string) => void): () => void;
+  onReconnect(listener: () => void | Promise<void>): () => void;
 }
