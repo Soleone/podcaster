@@ -8,8 +8,8 @@ const input: PiResearchRequestInput = { posture: "question", transcript: "A stab
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())); });
-async function client(scenario: FakePiScenario = "normal", version = "0.84.0") {
-  const fake = await makeFakePi(scenario, version); cleanups.push(fake.cleanup);
+async function client(scenario: FakePiScenario = "normal") {
+  const fake = await makeFakePi(scenario); cleanups.push(fake.cleanup);
   return { fake, value: new StdioPiResearchClient({ executable: fake.executable, startupDeadlineMs: 300, requestDeadlineMs: 500 }) };
 }
 async function events(value: StdioPiResearchClient, signal = new AbortController().signal): Promise<PiEvent[]> {

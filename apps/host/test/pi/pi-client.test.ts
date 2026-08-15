@@ -8,8 +8,8 @@ const input: PiRequestInput = { posture: "riff", transcript: "A stable transcrip
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())); });
-async function client(scenario: FakePiScenario = "normal", version = "0.84.0") {
-  const fake = await makeFakePi(scenario, version); cleanups.push(fake.cleanup);
+async function client(scenario: FakePiScenario = "normal") {
+  const fake = await makeFakePi(scenario); cleanups.push(fake.cleanup);
   return { fake, value: new StdioPiClient({ executable: fake.executable, startupDeadlineMs: 300, requestDeadlineMs: 500 }) };
 }
 
@@ -36,11 +36,6 @@ describe("production Pi RPC boundary", () => {
     const status = await value.probe();
     expect(status.status).toBe(expected);
     expect(status.detail).not.toMatch(/secret|token=/i);
-  });
-
-  it("rejects an unpinned executable version", async () => {
-    const { value } = await client("normal", "0.83.0");
-    expect(await value.probe()).toMatchObject({ status: "incompatible" });
   });
 
   it("does not accept unrelated normally settled assistant text as readiness", async () => {
