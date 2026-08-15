@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Play, Settings, Square } from 'lucide-react';
 import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
-import { Alert } from '../components/ui/alert';
+import { Alert, AlertDescription } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../components/ui/collapsible';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -161,7 +161,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
             <Collapsible open={promptOpen} onOpenChange={setPromptOpen}>
               <CollapsibleTrigger render={<Button variant="outline" className="w-full justify-between" />}>
                 View base system prompt
-                <ChevronDown className={cn('size-4 transition-transform', promptOpen && 'rotate-180')} aria-hidden="true" />
+                <ChevronDown data-icon="inline-end" className={cn('transition-transform', promptOpen && 'rotate-180')} aria-hidden="true" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2">
                 <div className="rounded-lg border border-border bg-muted/40 p-3">
@@ -172,7 +172,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
             </Collapsible>
           </TabsContent>
           <TabsContent value="voice" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1 pt-4 pb-1">
-            {model.notice ? <Alert variant={model.notice === 'missing_catalog' ? 'destructive' : 'default'}><p>{VOICE_NOTICE_COPY[model.notice]}</p></Alert> : null}
+            {model.notice ? <Alert variant={model.notice === 'missing_catalog' ? 'destructive' : 'default'}><AlertDescription>{VOICE_NOTICE_COPY[model.notice]}</AlertDescription></Alert> : null}
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="settings-voice">Voice</FieldLabel>
@@ -199,7 +199,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                       disabled={previewState === 'loading'}
                       onClick={() => void togglePreview()}
                     >
-                      {previewState === 'loading' ? <Spinner /> : previewState === 'playing' ? <Square className="size-4" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
+                      {previewState === 'loading' ? <Spinner aria-hidden="true" /> : previewState === 'playing' ? <Square aria-hidden="true" /> : <Play aria-hidden="true" />}
                     </Button> : null}
                   </div>
                   {previewError ? <p className="text-xs text-destructive" role="status">{previewError}</p> : null}
@@ -227,12 +227,12 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
             </FieldGroup>
           </TabsContent>
         </Tabs>
-        {saveError ? <Alert variant="destructive" className="shrink-0"><p>{saveError}</p></Alert> : null}
+        {saveError ? <Alert variant="destructive" className="shrink-0"><AlertDescription>{saveError}</AlertDescription></Alert> : null}
       </div>
       <DialogFooter>
         <DialogClose render={<Button variant="outline" disabled={saving}>Cancel</Button>} />
         <Button onClick={() => void commit()} disabled={!canSave}>
-          {saving ? <><Spinner />Saving…</> : 'Save settings'}
+          {saving ? <><Spinner aria-hidden="true" />Saving…</> : 'Save settings'}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -240,5 +240,5 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
 }
 
 export function SettingsButton({ onClick, title = 'Open settings' }: { onClick: () => void; title?: string }) {
-  return <Button variant="outline" size="icon" className="size-9" title={title} aria-label={title} onClick={onClick}><Settings className="size-4" aria-hidden="true" /></Button>;
+  return <Button variant="outline" size="icon" title={title} aria-label={title} onClick={onClick}><Settings aria-hidden="true" /></Button>;
 }

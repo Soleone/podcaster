@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react';
+import type { VariantProps } from 'class-variance-authority';
 import { Download } from 'lucide-react';
-import { Alert } from './ui/alert';
-import { Button } from './ui/button';
+import { Alert, AlertDescription } from './ui/alert';
+import { Button, buttonVariants } from './ui/button';
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from './ui/popover';
 import { Progress } from './ui/progress';
 import { Spinner } from './ui/spinner';
@@ -17,8 +18,8 @@ export interface ExportPopoverProps {
   /** Disable the trigger until a recording is actually available to export. */
   disabled?: boolean;
   label?: string;
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive';
-  size?: 'default' | 'sm' | 'lg' | 'xs';
+  variant?: NonNullable<VariantProps<typeof buttonVariants>['variant']>;
+  size?: NonNullable<VariantProps<typeof buttonVariants>['size']>;
   className?: string;
 }
 
@@ -74,18 +75,18 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
 
   return <Popover open={open} onOpenChange={handleOpenChange}>
     <PopoverTrigger render={
-      <Button variant={variant} size={size} disabled={disabled} className={className}>
-        {status === 'exporting' ? <Spinner /> : <Download />}
+      <Button variant={variant} size={size} disabled={disabled || status === 'exporting'} className={className}>
+        {status === 'exporting' ? <Spinner aria-hidden="true" /> : <Download data-icon="inline-start" />}
         {status === 'exporting' ? 'Exporting…' : label}
       </Button>
     } />
     <PopoverContent className="w-64">
       <PopoverTitle className="mb-1">Export recording</PopoverTitle>
-      <p className="hint" role="status" aria-live="polite">{statusText}</p>
+      <p className="text-sm text-muted-foreground" role="status" aria-live="polite">{statusText}</p>
       {status === 'exporting' && progress
         ? <Progress value={Math.round(progress.value * 100)} aria-label="Export progress" aria-valuetext={progress.message} />
         : null}
-      {status === 'error' ? <Alert variant="destructive">{notice || 'The recording could not be exported.'}</Alert> : null}
+      {status === 'error' ? <Alert variant="destructive"><AlertDescription>{notice || 'The recording could not be exported.'}</AlertDescription></Alert> : null}
     </PopoverContent>
   </Popover>;
 }

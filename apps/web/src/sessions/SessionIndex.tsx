@@ -4,8 +4,9 @@ import { Link } from 'react-router';
 import type { VoiceCatalog } from '@app/contracts/settings';
 import { Badge } from '../components/ui/badge';
 import { Button, buttonVariants } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+import { Card, CardContent } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
+import { cn } from '../lib/utils';
 import { ExportPopover } from '../components/ExportPopover';
 import type { ExportOnProgress } from '../recording/splice';
 import { Readiness } from '../readiness/Readiness';
@@ -13,7 +14,6 @@ import { RecordingStore } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
 import { SettingsButton } from '../settings/SettingsDialog';
 import { exportSessionRecording, loadSessionArchive, sessionDurationSeconds, type SessionSummary } from './session-archive';
-import './sessions.css';
 
 function formatWhen(iso: string): string {
   const date = new Date(iso);
@@ -66,35 +66,39 @@ export function SessionIndex(props: SessionIndexProps) {
     exportSessionRecording(sessionId, props.writer, onProgress), [props.writer]);
 
   const rows = summaries ?? [];
-  return <main className="index-shell">
-    <header className="index-header">
+  return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
+    <header className="mb-5 flex items-start justify-between gap-4">
       <div>
-        <p className="eyebrow">Podcaster</p>
-        <h1 className="index-title">Your sessions</h1>
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Podcaster</p>
+        <h1 className="mt-1 text-2xl font-semibold leading-tight tracking-tight">Your sessions</h1>
       </div>
       <SettingsButton onClick={props.onOpenSettings} />
     </header>
 
-    {props.liveSessionId ? <Card className="live-session-card" aria-label="Active session">
-      <div className="live-session-icon"><Radio aria-hidden="true" /></div>
-      <div className="live-session-body">
-        <p className="eyebrow">Active session</p>
-        <p className="live-session-id">Session {shortSessionId(props.liveSessionId)}</p>
-        <p className="live-session-meta"><Clock aria-hidden="true" />Running for {formatDuration(props.elapsedSeconds)}</p>
-      </div>
-      <Link to={`/session/${props.liveSessionId}`} className={buttonVariants({ variant: 'primary', size: 'default' })}><Play aria-hidden="true" />Open session</Link>
+    {props.liveSessionId ? <Card aria-label="Active session" className="mb-8">
+      <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Radio className="size-5" aria-hidden="true" /></div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Active session</p>
+          <p className="mt-1 font-medium tabular-nums">Session {shortSessionId(props.liveSessionId)}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><Clock className="size-3.5 shrink-0" aria-hidden="true" />Running for {formatDuration(props.elapsedSeconds)}</p>
+        </div>
+        <Link to={`/session/${props.liveSessionId}`} className={cn(buttonVariants({ variant: 'default', size: 'default' }), 'w-full sm:w-auto')}><Play data-icon="inline-start" aria-hidden="true" />Open session</Link>
+      </CardContent>
     </Card> : null}
 
-    <section aria-label="Start a new session" className="index-readiness">
-      <Readiness sessionAvailable={props.sessionAvailable} onStart={props.onStart} onCatalog={props.onCatalog} onCapability={props.onCapability} />
+    <section aria-label="Start a new session" className="mb-10">
+      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} onStart={props.onStart} onCatalog={props.onCatalog} onCapability={props.onCapability} />
     </section>
 
-    <section className="session-list" aria-labelledby="session-list-title">
-      <h2 id="session-list-title" className="session-list-title"><History aria-hidden="true" />Past sessions</h2>
-      {rows.length === 0 ? <Card className="session-list-empty">
-        {summaries === undefined ? <p className="hint"><Spinner className="size-4" />Loading sessions…</p> : <p className="hint">No sessions yet. Start one above and it will appear here.</p>}
+    <section aria-labelledby="session-list-title">
+      <h2 id="session-list-title" className="mb-3 flex items-center gap-2 text-base font-medium leading-snug"><History className="size-4 text-muted-foreground" aria-hidden="true" />Past sessions</h2>
+      {rows.length === 0 ? <Card>
+        <CardContent className="flex items-center gap-2 text-sm text-muted-foreground">
+          {summaries === undefined ? <><Spinner />Loading sessions…</> : 'No sessions yet. Start one above and it will appear here.'}
+        </CardContent>
       </Card> : null}
-      {rows.length > 0 ? <ul className="session-list-rows">
+      {rows.length > 0 ? <ul className="flex list-none flex-col gap-3 p-0">
         {rows.map(row => <SessionRow key={row.session.sessionId} row={row} live={row.session.sessionId === props.liveSessionId} buildExport={buildExport} onContinue={() => props.onContinueSession(row.session.sessionId)} />)}
       </ul> : null}
     </section>
@@ -105,30 +109,35 @@ function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (s
   const { session, preview, turnCount, recordingItemCount, recordingEnabled } = props.row;
   const stopped = session.state === 'stopped';
   const recordingLabel = !recordingEnabled ? 'Recording off' : recordingItemCount === 0 ? 'No recording' : `${recordingItemCount} message${recordingItemCount === 1 ? '' : 's'} recorded`;
-  return <li className="session-row">
-    <div className="session-row-main">
-      <p className="session-row-title"><span className="session-row-id">{shortSessionId(session.sessionId)}</span>
-        <Badge variant={props.live ? 'success' : stopped ? 'default' : 'primary'}>{props.live ? 'Active' : stopped ? 'Stopped' : 'Active'}</Badge>
-      </p>
-      {preview ? <p className="session-row-preview">{preview}</p> : null}
-      <p className="session-row-meta">
-        <span>Started {formatWhen(session.startedAt)}</span>
-        <span className="session-row-dot" aria-hidden="true">·</span>
-        <span>{formatDuration(sessionDurationSeconds(session))}</span>
-        <span className="session-row-dot" aria-hidden="true">·</span>
-        <span>{turnCount} turn{turnCount === 1 ? '' : 's'}</span>
-        <span className="session-row-dot" aria-hidden="true">·</span>
-        <span>{recordingLabel}</span>
-      </p>
-    </div>
-    <div className="session-row-actions">
-      {props.live ? <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'secondary', size: 'sm' })}><Play aria-hidden="true" />Open</Link>
-        : stopped ? <>
-          <Button variant="secondary" size="sm" onClick={props.onContinue}><Mic2 aria-hidden="true" />Continue</Button>
-          <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><ArrowRight aria-hidden="true" />Open</Link>
-        </> : <Button variant="secondary" size="sm" onClick={props.onContinue}><Play aria-hidden="true" />Resume</Button>}
-      <ExportPopover sessionId={session.sessionId} buildExport={props.buildExport(session.sessionId)} disabled={recordingItemCount === 0} variant="outline" size="sm" />
-    </div>
+  return <li>
+    <Card size="sm">
+      <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-2">
+            <span className="font-medium tabular-nums">{shortSessionId(session.sessionId)}</span>
+            <Badge variant={props.live || !stopped ? 'default' : 'secondary'}>{props.live ? 'Active' : stopped ? 'Stopped' : 'Active'}</Badge>
+          </p>
+          {preview ? <p className="mt-1 truncate text-sm">{preview}</p> : null}
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>Started {formatWhen(session.startedAt)}</span>
+            <span aria-hidden="true">·</span>
+            <span>{formatDuration(sessionDurationSeconds(session))}</span>
+            <span aria-hidden="true">·</span>
+            <span>{turnCount} turn{turnCount === 1 ? '' : 's'}</span>
+            <span aria-hidden="true">·</span>
+            <span>{recordingLabel}</span>
+          </p>
+        </div>
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+          {props.live ? <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'secondary', size: 'sm' })}><Play data-icon="inline-start" aria-hidden="true" />Open</Link>
+            : stopped ? <>
+              <Button variant="secondary" size="sm" onClick={props.onContinue}><Mic2 data-icon="inline-start" aria-hidden="true" />Continue</Button>
+              <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><ArrowRight data-icon="inline-start" aria-hidden="true" />Open</Link>
+            </> : <Button variant="secondary" size="sm" onClick={props.onContinue}><Play data-icon="inline-start" aria-hidden="true" />Resume</Button>}
+          <ExportPopover sessionId={session.sessionId} buildExport={props.buildExport(session.sessionId)} disabled={recordingItemCount === 0} variant="outline" size="sm" />
+        </div>
+      </CardContent>
+    </Card>
   </li>;
 }
 

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Download, Ear, MessageCircleQuestion, Pause, Play, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
-import { Alert } from '../components/ui/alert';
+import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Bubble, BubbleContent } from '../components/ui/bubble';
 import { Button } from '../components/ui/button';
 import { ButtonGroup, ButtonGroupSeparator } from '../components/ui/button-group';
-import { Card } from '../components/ui/card';
-import { Marker, MarkerContent } from '../components/ui/marker';
+import { Card, CardContent, CardHeader } from '../components/ui/card';
+import { Marker, MarkerContent, MarkerIcon } from '../components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '../components/ui/message';
 import { cn } from '../lib/utils';
 import { Spinner } from '../components/ui/spinner';
@@ -51,42 +51,53 @@ export function SessionScreen(props: SessionScreenProps) {
   const agentName = props.agentName.trim() || 'Assistant';
   const canExport = !readOnly && props.recording.includedCount > 0 && !props.exporting && !props.deleting;
   const canDelete = !readOnly && props.recording.totalCount > 0 && !props.deleting && !props.exporting;
-  // Keep the "thinking" shimmer only until the first reasoning preview arrives; the
-  // dimmed tentative row then takes over as the visible progress signal.
+  // Keep the dimmed tentative row as the visible progress signal after a preview arrives.
   const hasAssistantText = props.state.conversationItems.some(item => item.kind === 'assistant' && item.text.trim() !== '');
   const showAssistantActivity = props.state.dominant === 'speaking' || (props.state.dominant === 'reasoning' && !hasAssistantText);
   const StateIcon = stateIcons[props.state.dominant];
-  return <main className="session-shell">
-    <header className="session-header"><p className="eyebrow">{readOnly ? 'Ended session' : 'Active voice session'}</p><div className="session-header-actions">{readOnly ? <Button variant="outline" size="sm" onClick={props.onStop}><ArrowLeft aria-hidden="true" />All sessions</Button> : <>
-        <ButtonGroup aria-label="Session controls" className="session-controls">
-          <Button variant="outline" size="icon" aria-label={props.sessionPaused ? 'Resume session' : 'Pause session'} title={props.sessionPaused ? 'Resume session' : 'Pause session'} onClick={props.onTogglePause}>{props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</Button>
-          <Button variant="destructive" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button>
-          <ButtonGroupSeparator />
-          <Button variant="secondary" size="sm" disabled={!canExport} title="Export recording" aria-label="Export recording" onClick={() => void props.onExportRecording?.()}>
-            {props.exporting ? <><Spinner className="size-4" />Exporting…</> : <><Download aria-hidden="true" />Export</>}
-          </Button>
-          <Button variant="outline" size="sm" disabled={!canDelete} title="Delete recording" aria-label="Delete recording" onClick={() => void props.onDeleteRecording?.()}><Trash aria-hidden="true" /></Button>
-        </ButtonGroup>
-        <SettingsButton onClick={props.onOpenSettings} title="Settings · applies next session" />
-      </>}</div></header>
-    <Card className={`status-bar state-${props.state.dominant}`}>
-      <div className="status-label">{StateIcon ? <StateIcon className="state-icon" aria-hidden="true" /> : <Spinner className="state-icon" />}<h1 id="session-status-heading">{headings[props.state.dominant]}</h1></div>
-      <div className="status-actions"><Badge className="elapsed-badge" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>{assistantActive && !readOnly ? <Button variant="secondary" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}</div>
+  return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{readOnly ? 'Ended session' : 'Active voice session'}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {readOnly ? <Button variant="outline" size="sm" onClick={props.onStop}><ArrowLeft data-icon="inline-start" aria-hidden="true" />All sessions</Button> : <>
+          <ButtonGroup aria-label="Session controls" className="session-controls">
+            <Button variant="outline" size="icon" aria-label={props.sessionPaused ? 'Resume session' : 'Pause session'} title={props.sessionPaused ? 'Resume session' : 'Pause session'} onClick={props.onTogglePause}>{props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</Button>
+            <Button variant="destructive" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button>
+            <ButtonGroupSeparator />
+            <Button variant="secondary" size="sm" disabled={!canExport} title="Export recording" aria-label={props.exporting ? 'Exporting…' : 'Export recording'} onClick={() => void props.onExportRecording?.()}>
+              {props.exporting ? <><Spinner aria-hidden="true" />Exporting…</> : <><Download data-icon="inline-start" aria-hidden="true" />Export</>}
+            </Button>
+            <Button variant="outline" size="sm" disabled={!canDelete} title="Delete recording" aria-label="Delete recording" onClick={() => void props.onDeleteRecording?.()}><Trash data-icon="inline-start" aria-hidden="true" /></Button>
+          </ButtonGroup>
+          <SettingsButton onClick={props.onOpenSettings} title="Settings · applies next session" />
+        </>}
+      </div>
+    </header>
+    <Card size="sm" data-state={props.state.dominant} className="mt-4 flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <CardContent className="flex min-w-0 flex-1 items-center gap-2">
+        {StateIcon ? <StateIcon className={cn('size-5 shrink-0', props.state.dominant === 'degraded' ? 'text-destructive' : 'text-primary')} aria-hidden="true" /> : <Spinner className="size-5 shrink-0 text-muted-foreground" />}
+        <h1 id="session-status-heading" className="min-w-0 text-sm font-medium leading-snug">{headings[props.state.dominant]}</h1>
+      </CardContent>
+      <div className="flex items-center gap-2">
+        <Badge variant="secondary" className="font-mono tabular-nums" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>
+        {assistantActive && !readOnly ? <Button variant="secondary" size="sm" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}
+      </div>
     </Card>
-    <p className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{props.state.announcement}</p>
-    {trimAnnouncement ? <p className="visually-hidden" role="status" aria-live="polite">{trimAnnouncement}</p> : null}
-    {props.state.degradedMessage ? <Alert>{props.state.degradedMessage}</Alert> : null}
-    <section aria-labelledby="conversation-title" className="conversation"><h2 id="conversation-title">Conversation</h2>
+    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{props.state.announcement}</p>
+    {trimAnnouncement ? <p className="sr-only" role="status" aria-live="polite">{trimAnnouncement}</p> : null}
+    {props.state.degradedMessage ? <Alert variant="destructive" className="mt-4"><CircleAlert aria-hidden="true" /><AlertDescription>{props.state.degradedMessage}</AlertDescription></Alert> : null}
+    <section aria-labelledby="conversation-title" className="conversation mt-6 flex flex-col overflow-hidden rounded-xl border bg-card text-card-foreground ring-1 ring-foreground/10">
+      <h2 id="conversation-title" className="border-b px-5 py-4 text-sm font-medium leading-snug">Conversation</h2>
       <div className="conversation-scroll">
         <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor" scrollPreviousItemPeek={48}>
           <MessageScroller>
             <MessageScrollerViewport aria-label="Conversation transcript">
-              <MessageScrollerContent className="conversation-list" aria-busy={props.state.dominant === 'reasoning'}>
-                {props.state.conversationItems.length === 0 && !props.state.tentativeText ? <MessageScrollerItem messageId="conversation-empty"><p className="hint">Your conversation will appear here.</p></MessageScrollerItem> : null}
+              <MessageScrollerContent className="conversation-list p-3 pb-4" aria-busy={props.state.dominant === 'reasoning'}>
+                {props.state.conversationItems.length === 0 && !props.state.tentativeText ? <MessageScrollerItem messageId="conversation-empty"><p className="text-sm text-muted-foreground">Your conversation will appear here.</p></MessageScrollerItem> : null}
                 {props.state.conversationItems.filter(item => !(item.kind === 'assistant' && !item.text)).map(item => <MessageScrollerItem key={item.id} messageId={item.id} scrollAnchor={conversationItemStartsTurn(item)}><ConversationRow item={item} agentName={agentName} recording={props.recording} onToggleBubbleTrim={handleTrim} /></MessageScrollerItem>)}
-                {showAssistantActivity ? <MessageScrollerItem messageId="assistant-activity"><Marker role="status" className="assistant-activity"><MarkerContent className="shimmer"><span className="font-medium">{agentName}</span> {props.state.dominant === 'speaking' ? 'is speaking…' : 'is thinking…'}</MarkerContent></Marker></MessageScrollerItem> : null}
-                {props.state.tentativeText ? <MessageScrollerItem messageId="tentative-transcript"><Message align="end" className="conversation-message user-row"><MessageContent><MessageHeader>You · tentative</MessageHeader><Bubble variant="tinted" className="conversation-bubble-shell"><BubbleContent className="conversation-bubble tentative"><p>{props.state.tentativeText}</p></BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
-                {props.state.playbackNotice ? <MessageScrollerItem messageId="playback-notice"><Marker variant="separator" className="continuation-marker"><MarkerContent>{props.state.playbackNotice}</MarkerContent></Marker></MessageScrollerItem> : null}
+                {showAssistantActivity ? <MessageScrollerItem messageId="assistant-activity"><Marker role="status" className="assistant-activity my-1"><MarkerIcon><Spinner /></MarkerIcon><MarkerContent><span className="font-medium">{agentName}</span> {props.state.dominant === 'speaking' ? 'is speaking…' : 'is thinking…'}</MarkerContent></Marker></MessageScrollerItem> : null}
+                {props.state.tentativeText ? <MessageScrollerItem messageId="tentative-transcript"><Message align="end" className="conversation-message user-row"><MessageContent><MessageHeader>You · tentative</MessageHeader><Bubble variant="tinted" className="conversation-bubble-shell max-w-[min(78%,38rem)] max-[36rem]:max-w-[90%]"><BubbleContent className="conversation-bubble tentative border-dashed opacity-75"><p>{props.state.tentativeText}</p></BubbleContent></Bubble></MessageContent></Message></MessageScrollerItem> : null}
+                {props.state.playbackNotice ? <MessageScrollerItem messageId="playback-notice"><Marker variant="separator" className="continuation-marker my-1"><MarkerContent>{props.state.playbackNotice}</MarkerContent></Marker></MessageScrollerItem> : null}
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton />
@@ -111,32 +122,32 @@ function ActivityLogPanel() {
       );
     } catch { setNotice('Copy failed'); }
   };
-  return <Card className="activity-log">
-    <div className="activity-log-header">
+  return <Card size="sm" className="activity-log mt-6">
+    <CardHeader className="activity-log-header flex flex-row flex-wrap items-center justify-between gap-2">
       <Button variant="ghost" size="sm" className="activity-log-toggle" aria-expanded={open} aria-controls="activity-log-region" onClick={() => setOpen(value => !value)}>
-        <ChevronDown className={cn('activity-log-chevron', open && 'activity-log-chevron-open')} aria-hidden="true" />
+        <ChevronDown data-icon="inline-start" className={cn('transition-transform', open && 'rotate-180')} aria-hidden="true" />
         Activity log
-        {entries.length > 0 ? <Badge className="activity-log-count">{entries.length}</Badge> : null}
+        {entries.length > 0 ? <Badge variant="secondary" className="activity-log-count font-mono tabular-nums">{entries.length}</Badge> : null}
       </Button>
-      {open ? <div className="activity-log-actions">
-        {notice ? <span className="activity-log-notice" role="status">{notice}</span> : null}
+      {open ? <div className="activity-log-actions flex items-center gap-2">
+        {notice ? <span className="activity-log-notice text-xs text-muted-foreground" role="status">{notice}</span> : null}
         <ButtonGroup aria-label="Activity log actions">
-          <Button variant="outline" size="icon" className="size-8" title="Copy" aria-label="Copy entries" onClick={copyLog}><Copy className="activity-log-icon" aria-hidden="true" /></Button>
+          <Button variant="outline" size="icon" title="Copy" aria-label="Copy entries" onClick={copyLog}><Copy aria-hidden="true" /></Button>
           <ButtonGroupSeparator />
-          <Button variant="outline" size="icon" className="size-8" title="Clear" aria-label="Clear entries" onClick={() => { activityLog.clear(); setNotice(''); }}><Trash className="activity-log-icon" aria-hidden="true" /></Button>
+          <Button variant="outline" size="icon" title="Clear" aria-label="Clear entries" onClick={() => { activityLog.clear(); setNotice(''); }}><Trash aria-hidden="true" /></Button>
         </ButtonGroup>
       </div> : null}
-    </div>
-    {open ? <div id="activity-log-region" role="region" aria-label="Activity log entries" className="activity-log-region">
-      {entries.length === 0 ? <p className="hint">No activity logged yet.</p> : <ul className="activity-log-list">
-        {[...entries].reverse().map((entry, index) => <li key={`${entry.ts}-${index}`} className="activity-log-entry">
-          <time className="log-entry-time font-mono" dateTime={new Date(entry.ts).toISOString()}>{formatLogTime(entry.ts)}</time>
-          <Badge className="log-level" variant={entry.level === 'error' ? 'destructive' : entry.level === 'warn' ? 'warning' : 'primary'}>{entry.level}</Badge>
-          <span className="log-entry-source">{entry.source}</span>
-          <span className="log-entry-message">{entry.message}{entry.detail ? ` — ${entry.detail}` : ''}</span>
+    </CardHeader>
+    {open ? <CardContent id="activity-log-region" role="region" aria-label="Activity log entries" className="activity-log-region border-t p-2">
+      {entries.length === 0 ? <p className="text-sm text-muted-foreground">No activity logged yet.</p> : <ul className="activity-log-list m-0 flex max-h-64 list-none flex-col overflow-y-auto p-0">
+        {[...entries].reverse().map((entry, index) => <li key={`${entry.ts}-${index}`} className="activity-log-entry grid items-baseline gap-x-2 rounded-md px-2 py-1 text-xs leading-snug [overflow-wrap:anywhere] hover:bg-muted/50">
+          <time className="log-entry-time font-mono text-[0.7rem] tabular-nums text-muted-foreground" dateTime={new Date(entry.ts).toISOString()}>{formatLogTime(entry.ts)}</time>
+          <Badge className="log-level justify-self-start" variant={entry.level === 'error' ? 'destructive' : entry.level === 'warn' ? 'outline' : 'secondary'}>{entry.level}</Badge>
+          <span className="log-entry-source truncate text-muted-foreground">{entry.source}</span>
+          <span className="log-entry-message min-w-0">{entry.message}{entry.detail ? ` — ${entry.detail}` : ''}</span>
         </li>)}
       </ul>}
-    </div> : null}
+    </CardContent> : null}
   </Card>;
 }
 function formatElapsed(seconds: number): string { const minutes = Math.floor(seconds / 60); return `${minutes}:${String(seconds % 60).padStart(2, '0')}`; }

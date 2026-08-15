@@ -66,12 +66,12 @@ function TrimControl({ action, targetId, pending, onToggleBubbleTrim, onPrimary 
   return <Button
     variant="ghost"
     size="icon-xs"
-    className={cn('trim-action', onPrimary && 'trim-action-on-primary')}
+    className={cn('trim-action', onPrimary && 'text-primary-foreground hover:bg-primary-foreground/15')}
     data-trimmed={action.trimmedNow || undefined}
     aria-label={action.accessible}
     disabled={pending}
     onClick={() => void onToggleBubbleTrim(targetId, action.setTrimmed)}
-  ><Icon data-icon="inline-start" aria-hidden="true" /></Button>;
+  ><Icon aria-hidden="true" /></Button>;
 }
 
 function AssistantPartRow({ part, index, responseId, recording, onToggleBubbleTrim }: {
@@ -86,18 +86,24 @@ function AssistantPartRow({ part, index, responseId, recording, onToggleBubbleTr
   const trimmed = target?.state === 'trimmed';
   const action = trimActionFor('assistant', part.tentative, target, recording.enabled, `Assistant's part ${part.partIndex + 1}`);
   return <div
-    className={cn('assistant-part', index > 0 && 'assistant-part-boundary', action && 'assistant-part-with-action', trimmed && 'trimmed')}
+    className={cn(
+      'assistant-part relative',
+      index > 0 && 'assistant-part-boundary mt-2 border-t border-border pt-2',
+      action && 'assistant-part-with-action pr-8',
+      part.tentative && 'assistant-part-tentative opacity-60 saturate-50',
+      trimmed && 'trimmed opacity-55 saturate-50 [&_p]:line-through',
+    )}
     data-part-index={part.partIndex}
     data-trimmed={trimmed || undefined}
   >
-    <p className={cn(part.tentative && 'assistant-part-tentative')}>{part.text}</p>
-    {action ? <BubbleActions className="assistant-part-actions"><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId !== null} onToggleBubbleTrim={onToggleBubbleTrim} /></BubbleActions> : null}
+    <p>{part.text}</p>
+    {action ? <BubbleActions className="assistant-part-actions top-auto bottom-1"><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId !== null} onToggleBubbleTrim={onToggleBubbleTrim} /></BubbleActions> : null}
   </div>;
 }
 
 export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim }: ConversationRowProps) {
   if (item.kind === 'continuation') return <Marker variant="separator" className="continuation-marker"><MarkerContent>{item.label}</MarkerContent></Marker>;
-  if (item.kind === 'notice') return <Marker className={`conversation-notice ${item.tone}`}><MarkerContent>{item.text}</MarkerContent></Marker>;
+  if (item.kind === 'notice') return <Marker className={cn('conversation-notice', item.tone === 'warning' ? 'text-destructive' : 'text-muted-foreground')}><MarkerContent>{item.text}</MarkerContent></Marker>;
   if (item.kind === 'user') {
     const target = item.id ? recording.targets.get(`user:${item.id}`) : undefined;
     const trimmed = target?.state === 'trimmed';
@@ -105,15 +111,15 @@ export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim
     return <Message align="end" className="conversation-message user-row">
       <MessageContent>
         <MessageHeader>You</MessageHeader>
-        <Bubble variant="default" className="conversation-bubble-shell">
-          <BubbleContent className={cn('conversation-bubble user-bubble', action && 'relative pr-9', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
+        <Bubble variant="default" className="conversation-bubble-shell max-w-[min(78%,38rem)] max-[36rem]:max-w-[90%]">
+          <BubbleContent className={cn('conversation-bubble user-bubble', action && 'relative pr-8', trimmed && 'trimmed opacity-55 saturate-50 [&_p]:line-through')} data-trimmed={trimmed || undefined}>
             <p>{item.text}</p>
             {action ? <BubbleActions><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId !== null} onToggleBubbleTrim={onToggleBubbleTrim} onPrimary /></BubbleActions> : null}
           </BubbleContent>
         </Bubble>
         {item.status === 'control' || trimmed ? <MessageFooter>
-          {item.status === 'control' ? <Badge>Control only</Badge> : null}
-          {trimmed ? <span className="trim-state-note">Not included in recording</span> : null}
+          {item.status === 'control' ? <Badge variant="secondary">Control only</Badge> : null}
+          {trimmed ? <span className="trim-state-note text-xs text-muted-foreground">Not included in recording</span> : null}
         </MessageFooter> : null}
       </MessageContent>
     </Message>;
@@ -124,15 +130,20 @@ export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim
   return <Message className="conversation-message assistant-row">
     <MessageContent>
       <MessageHeader>{(agentName ?? '').trim() || 'Assistant'}</MessageHeader>
-      <Bubble variant="secondary" className="conversation-bubble-shell">
-        <BubbleContent className={cn('conversation-bubble assistant-bubble', action && 'relative pr-9', item.tentative && 'tentative', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
+      <Bubble variant="secondary" className="conversation-bubble-shell max-w-[min(78%,38rem)] max-[36rem]:max-w-[90%]">
+        <BubbleContent className={cn(
+          'conversation-bubble assistant-bubble transition-[opacity,filter] duration-500',
+          action && 'relative pr-8',
+          item.tentative && 'tentative border-dashed opacity-55 saturate-50',
+          trimmed && 'trimmed opacity-55 saturate-50 [&_p]:line-through',
+        )} data-trimmed={trimmed || undefined}>
           {item.parts && item.parts.length > 0
             ? item.parts.map((part, index) => <AssistantPartRow key={part.partIndex} part={part} index={index} responseId={item.responseId} recording={recording} onToggleBubbleTrim={onToggleBubbleTrim} />)
             : <p>{item.text}</p>}
           {action ? <BubbleActions><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId !== null} onToggleBubbleTrim={onToggleBubbleTrim} /></BubbleActions> : null}
         </BubbleContent>
       </Bubble>
-      {trimmed ? <MessageFooter><span className="trim-state-note">Not included in recording</span></MessageFooter> : null}
+      {trimmed ? <MessageFooter><span className="trim-state-note text-xs text-muted-foreground">Not included in recording</span></MessageFooter> : null}
     </MessageContent>
   </Message>;
 }

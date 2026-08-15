@@ -534,7 +534,7 @@ export function App() {
 
   const settingsDialog = <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />;
 
-  if (!writer) return <main className="index-shell"><p className="hint"><Spinner className="size-4" />Loading…</p></main>;
+  if (!writer) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading…</main>;
 
   return <>
     <Routes>
@@ -616,7 +616,12 @@ function SessionRoute(props: SessionRouteProps) {
     setExporting(true);
     try {
       const blob = await props.buildExport();
-      if (blob) downloadRecording(blob, props.liveSessionId);
+      if (blob) {
+        await new Promise<void>(resolve => {
+          requestAnimationFrame(() => { requestAnimationFrame(() => resolve()); });
+        });
+        downloadRecording(blob, props.liveSessionId);
+      }
     } finally {
       setExporting(false);
     }
@@ -632,27 +637,25 @@ function SessionRoute(props: SessionRouteProps) {
   }, [props.onDeleteRecording]);
 
   if (props.liveSessionId === routeSessionId) {
-    return <div className="session-layout">
-      <SessionScreen
-        state={props.view ?? initialSessionState}
-        agentName={props.agentName}
-        elapsedSeconds={props.elapsed}
-        sessionPaused={props.sessionPaused}
-        onTogglePause={props.onTogglePause}
-        onStop={props.onStop}
-        onCancelAssistant={props.onCancelAssistant}
-        onOpenSettings={props.onOpenSettings}
-        settingsOpen={props.settingsOpen}
-        recording={props.recordingView}
-        onToggleBubbleTrim={props.onToggleBubbleTrim}
-        onExportRecording={exportRecording}
-        onDeleteRecording={deleteRecording}
-        exporting={exporting}
-        deleting={deleting}
-      />
-    </div>;
+    return <SessionScreen
+      state={props.view ?? initialSessionState}
+      agentName={props.agentName}
+      elapsedSeconds={props.elapsed}
+      sessionPaused={props.sessionPaused}
+      onTogglePause={props.onTogglePause}
+      onStop={props.onStop}
+      onCancelAssistant={props.onCancelAssistant}
+      onOpenSettings={props.onOpenSettings}
+      settingsOpen={props.settingsOpen}
+      recording={props.recordingView}
+      onToggleBubbleTrim={props.onToggleBubbleTrim}
+      onExportRecording={exportRecording}
+      onDeleteRecording={deleteRecording}
+      exporting={exporting}
+      deleting={deleting}
+    />;
   }
-  if (props.resuming) return <main className="index-shell"><p className="hint"><Spinner className="size-4" />Resuming session…</p></main>;
+  if (props.resuming) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Resuming session…</main>;
   if (!routeSessionId) return null;
   return <StoppedSession
     writer={props.writer}

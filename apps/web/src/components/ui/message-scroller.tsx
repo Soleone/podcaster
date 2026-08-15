@@ -2,6 +2,7 @@ import { MessageScroller as MessageScrollerPrimitive, useMessageScroller, useMes
 import { ArrowDownIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
 import { cn } from '../../lib/utils';
+import { buttonVariants } from './button';
 
 export function MessageScrollerProvider(props: ComponentProps<typeof MessageScrollerPrimitive.Provider>) {
   return <MessageScrollerPrimitive.Provider {...props} />;
@@ -27,10 +28,10 @@ export function MessageScrollerButton({ direction = 'end', className, children, 
   return <MessageScrollerPrimitive.Button
     data-slot="message-scroller-button"
     direction={direction}
-    className={cn('absolute bottom-3 left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-background text-foreground shadow transition-opacity data-[active=false]:pointer-events-none data-[active=false]:opacity-0', className)}
+    className={cn(buttonVariants({ variant: 'outline', size: 'icon' }), 'absolute bottom-3 left-1/2 z-10 -translate-x-1/2 data-[active=false]:pointer-events-none data-[active=false]:opacity-0', className)}
     {...props}
   >
-    {children ?? <><ArrowDownIcon className="size-4" /><span className="visually-hidden">Jump to latest</span></>}
+    {children ?? <><ArrowDownIcon /><span className="sr-only">Jump to latest</span></>}
   </MessageScrollerPrimitive.Button>;
 }
 

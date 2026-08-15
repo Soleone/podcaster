@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Mic2, Trash } from 'lucide-react';
-import { Alert } from '../components/ui/alert';
+import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
 import { ExportPopover } from '../components/ExportPopover';
 import type { ExportOnProgress } from '../recording/splice';
@@ -11,11 +11,10 @@ import { SessionScreen } from '../session/SessionScreen';
 import type { SessionViewState } from '../session/state';
 import type { RecordingTrimTargetId } from '../recording/trim-state';
 import { projectRecordingTrim, type RecordingSessionViewState } from '../recording/trim-state';
-import { RecordingStore, type RecordingItemSummary } from '../storage/recording-store';
+import { RecordingStore } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
 import type { StoredSession } from '../storage/schema';
 import { exportSessionRecording, sessionDurationSeconds, sessionViewStateFromTurns } from './session-archive';
-import './sessions.css';
 
 export interface StoppedSessionProps {
   writer: StableTurnWriter;
@@ -104,22 +103,26 @@ export function StoppedSession(props: StoppedSessionProps) {
   }, [props.sessionId, loadRecording]);
 
   if (!session) {
-    return <main className="index-shell">
-      <Card className="stopped-missing">
-        <p className="eyebrow">Podcaster</p>
-        <h1 className="stopped-missing-title">Session not found</h1>
-        <p className="hint">This session may have been removed from this device.</p>
-        <Button variant="outline" onClick={props.onBack}><ArrowLeft aria-hidden="true" />All sessions</Button>
+    return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
+      <Card className="mx-auto max-w-md text-center">
+        <CardHeader className="items-center">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Podcaster</p>
+          <CardTitle><h1 className="m-0 text-base leading-snug font-medium">Session not found</h1></CardTitle>
+          <CardDescription>This session may have been removed from this device.</CardDescription>
+        </CardHeader>
+        <CardFooter className="justify-center">
+          <Button variant="outline" onClick={props.onBack}><ArrowLeft data-icon="inline-start" aria-hidden="true" />All sessions</Button>
+        </CardFooter>
       </Card>
     </main>;
   }
 
   if (!view || !recording) {
-    return <main className="index-shell"><p className="hint"><Spinner className="size-4" />Loading session…</p></main>;
+    return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading session…</main>;
   }
 
   const elapsed = sessionDurationSeconds(session);
-  return <main className="index-shell">
+  return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
     <SessionScreen
       state={view}
       agentName={props.agentName}
@@ -134,17 +137,21 @@ export function StoppedSession(props: StoppedSessionProps) {
       onToggleBubbleTrim={toggleTrim}
       readOnly
     />
-    <Card className="stopped-actions" role="group" aria-label="Session actions">
-      <div className="stopped-actions-status">
-        <Badge variant="default">{session.state === 'active' ? 'Interrupted' : 'Ended'}</Badge>
-      </div>
-      <div className="button-row">
-        <Button onClick={props.onContinue}><Mic2 aria-hidden="true" />Continue session</Button>
-        <ExportPopover sessionId={props.sessionId} buildExport={buildExport} disabled={recording.includedCount === 0} label="Export recording" variant="secondary" />
-        <Button variant="outline" disabled={deleting || recording.totalCount === 0} onClick={() => void deleteRecording()}><Trash aria-hidden="true" />Delete recording</Button>
-      </div>
-      {recordingError ? <Alert variant="destructive">{recordingError}</Alert> : null}
-      {notice ? <p className="hint" role="status">{notice}</p> : null}
+    <Card className="mt-6" role="group" aria-label="Session actions">
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">{session.state === 'active' ? 'Interrupted' : 'Ended'}</Badge>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button className="min-h-11" onClick={props.onContinue}><Mic2 data-icon="inline-start" aria-hidden="true" />Continue session</Button>
+            <ExportPopover sessionId={props.sessionId} buildExport={buildExport} disabled={recording.includedCount === 0} label="Export recording" variant="secondary" />
+            <Button variant="outline" disabled={deleting || recording.totalCount === 0} onClick={() => void deleteRecording()}><Trash data-icon="inline-start" aria-hidden="true" />Delete recording</Button>
+          </div>
+        </div>
+        {recordingError ? <Alert variant="destructive"><AlertDescription>{recordingError}</AlertDescription></Alert> : null}
+        {notice ? <p className="text-sm text-muted-foreground" role="status">{notice}</p> : null}
+      </CardContent>
     </Card>
   </main>;
 }

@@ -1,78 +1,31 @@
-.session-shell{width:min(56rem,calc(100% - 2rem));margin:2rem auto}
-.session-header{display:flex;align-items:center;justify-content:space-between;gap:1rem}
-.session-header-actions{display:flex;align-items:center;gap:.5rem}
-.session-header .eyebrow{margin:0}
-.status-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem 1rem;padding:.4rem .65rem;margin:1rem 0;box-shadow:0 .35rem 1.2rem color-mix(in srgb,var(--shadow-color) 5%,transparent)}
-.status-label,.status-actions{display:flex;align-items:center;gap:.65rem}
-.status-label{min-width:0;flex:1 1 16rem}
-.status-label h1{font-size:1rem;line-height:1.35;margin:0;overflow-wrap:anywhere}
-.status-actions{flex:0 1 auto;margin-left:auto}
-.state-icon{width:1.25rem;height:1.25rem;flex:none;color:var(--primary)}
-.state-degraded .state-icon,.state-stopping .state-icon{color:var(--warning)}
-.elapsed-badge{font-variant-numeric:tabular-nums}
-.conversation{display:flex;flex-direction:column;margin-top:1.5rem;overflow:hidden;background:var(--card);border:1px solid var(--border);border-radius:1rem;box-shadow:0 1rem 3rem color-mix(in srgb,var(--shadow-color) 7%,transparent)}
-.conversation h2{margin:0;padding:1rem 1.25rem;font-size:1rem;line-height:1.35;border-bottom:1px solid var(--border)}
-.conversation-scroll{height:min(62vh,38rem);min-height:0}
-.conversation-list{padding:.75rem .75rem 1rem}
-.conversation-message{padding:.1rem 0}
-/* The width cap belongs on Bubble, not BubbleContent. Capping both creates a
-   percentage-of-a-percentage shrink-to-fit loop that breaks short messages. */
-.conversation-bubble-shell{max-width:min(78%,38rem)}
-.conversation-bubble{max-width:100%}
-.conversation-bubble p{margin:0}
-.user-bubble{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
-.assistant-bubble{background:var(--muted);border-color:var(--border);transition:opacity .45s ease,filter .45s ease}
-.assistant-activity{margin:.15rem 0}
-.tentative{border-style:dashed;opacity:.75}
-.assistant-bubble.tentative{opacity:.55;filter:saturate(.35)}
-.continuation-marker,.conversation-notice{margin:.1rem 0}
-.conversation-notice.warning{color:var(--destructive)}
-.button-row{display:flex;flex-wrap:wrap;gap:.75rem}
-.hint{color:var(--muted-foreground)}
-.visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media(max-width:36rem){.session-header{align-items:stretch;flex-direction:column}.status-actions{width:100%;justify-content:space-between;margin-left:0}.conversation-bubble-shell{max-width:90%}}
-@media(max-width:22rem){.session-shell{width:min(100% - 1rem,56rem);margin:1rem auto}}
-.session-layout{width:min(56rem,calc(100% - 2rem));margin:2rem auto}
-.activity-log{margin-top:1.5rem;overflow:hidden}
-.activity-log-header{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;padding:.4rem .5rem}
-.activity-log-toggle{gap:.45rem}
-.activity-log-chevron{width:1rem;height:1rem;flex:none;color:var(--muted-foreground);transition:transform .15s ease}
-.activity-log-chevron-open{transform:rotate(-180deg)}
-.activity-log-count{font-variant-numeric:tabular-nums}
-.activity-log-icon{width:.875rem;height:.875rem;flex:none}
-.activity-log-actions{display:flex;align-items:center;gap:.5rem}
-.activity-log-notice{color:var(--muted-foreground);font-size:.75rem}
-.activity-log-region{border-top:1px solid var(--border);padding:.4rem .5rem .6rem}
-.activity-log-list{list-style:none;margin:0;padding:0;max-height:16rem;overflow-y:auto;display:flex;flex-direction:column}
-.activity-log-entry{display:grid;grid-template-columns:auto auto 4.75rem minmax(0,1fr);align-items:baseline;column-gap:.6rem;padding:.25rem .5rem;border-radius:.375rem;font-size:.75rem;line-height:1.35;overflow-wrap:anywhere}
-.activity-log-entry:hover{background:color-mix(in srgb,var(--muted) 50%,transparent)}
-.log-entry-time{color:var(--muted-foreground);font-size:.7rem;font-variant-numeric:tabular-nums}
-.log-level{text-transform:capitalize;justify-self:start}
-.log-entry-source{color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.log-entry-message{min-width:0}
-@media(max-width:36rem){.activity-log-actions{width:100%;justify-content:flex-end}}
-.conversation-bubble .assistant-part{position:relative}
-.conversation-bubble .assistant-part-boundary{margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--border)}
-.conversation-bubble .assistant-part-with-action{padding-right:2rem}
-.assistant-part-actions{top:auto;bottom:.25rem}
-.assistant-part-tentative{opacity:.6;filter:saturate(.5)}
-.conversation-bubble.trimmed,.conversation-bubble .assistant-part.trimmed{opacity:.55;filter:saturate(.35)}
-.conversation-bubble.trimmed p,.conversation-bubble .assistant-part.trimmed p{text-decoration:line-through}
-.trim-state-note{color:var(--muted-foreground);font-size:.75rem}
-.trim-action{flex:none}
-.trim-action svg{width:.875rem;height:.875rem}
-.trim-action:disabled{opacity:.8}
-.trim-action-on-primary{color:var(--primary-foreground)}
-.trim-action-on-primary:hover{background:color-mix(in srgb,var(--primary-foreground) 15%,transparent)}
-@media (hover:hover) and (pointer:fine){
-  /* Keep the reserved pr-9 space stable while making the control quiet until needed.
-     The wrapper is inert until the bubble is hovered; the button remains the
-     pointer target so hover/click can reveal it without an overlay intercept. */
-  .conversation-bubble:has(.trim-action) .trim-action{opacity:0;pointer-events:auto;transition:opacity .15s ease}
-  .conversation-bubble:has(.trim-action) [data-slot="bubble-actions"]{pointer-events:none}
-  .conversation-bubble:has(.trim-action):hover .trim-action,
-  .conversation-bubble:has(.trim-action):focus-within .trim-action{opacity:1}
-  .conversation-bubble:has(.trim-action):hover [data-slot="bubble-actions"],
-  .conversation-bubble:has(.trim-action):focus-within [data-slot="bubble-actions"]{pointer-events:auto}
+.conversation-scroll {
+  height: min(62vh, 38rem);
+  min-height: 0;
 }
-@media (prefers-reduced-motion: reduce){.conversation-bubble.trimmed{transition:none}}
+
+.activity-log-entry {
+  grid-template-columns: auto auto 4.75rem minmax(0, 1fr);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  /* Keep reserved trim-action space stable while revealing the control on demand. */
+  .conversation-bubble:has(.trim-action) .trim-action {
+    opacity: 0;
+    pointer-events: auto;
+    transition: opacity 150ms ease;
+  }
+
+  .conversation-bubble:has(.trim-action) [data-slot="bubble-actions"] {
+    pointer-events: none;
+  }
+
+  .conversation-bubble:has(.trim-action):hover .trim-action,
+  .conversation-bubble:has(.trim-action):focus-within .trim-action {
+    opacity: 1;
+  }
+
+  .conversation-bubble:has(.trim-action):hover [data-slot="bubble-actions"],
+  .conversation-bubble:has(.trim-action):focus-within [data-slot="bubble-actions"] {
+    pointer-events: auto;
+  }
+}
