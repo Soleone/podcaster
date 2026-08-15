@@ -17,6 +17,33 @@ describe('StableTurnWriter', () => {
     reopened.close();
   });
 
+  it('reopens a stopped session as active with a fresh seed and clears its end time', async () => {
+    const { writer } = await open();
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-1', personaDigest: 'digest' });
+    await writer.endSession('session');
+    expect(await writer.getSession('session')).toMatchObject({ state: 'stopped', endedAt: expect.any(String) });
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-2', personaDigest: 'digest' });
+    const reopened = await writer.getSession('session');
+    expect(reopened).toMatchObject({ state: 'active', endedAt: null, sessionSeed: 'seed-2' });
+    expect(await writer.recoverActiveSession()).toMatchObject({ sessionId: 'session' });
+    writer.close();
+  });
+
+  it('lists sessions most recently active first and counts turns per session', async () => {
+    const { writer } = await open();
+    await writer.beginSession({ sessionId: 'older', sessionSeed: 'seed-1', personaDigest: 'digest', startedAt: '2026-01-01T00:00:00.000Z' });
+    await writer.beginSession({ sessionId: 'newer', sessionSeed: 'seed-2', personaDigest: 'digest', startedAt: '2026-01-02T00:00:00.000Z' });
+    await writer.apply(event('older', 'transcript.final', { turnId: 't1', text: 'first' }));
+    await writer.apply(event('older', 'transcript.final', { turnId: 't2', text: 'second' }));
+    await writer.apply(event('newer', 'transcript.final', { turnId: 't3', text: 'third' }));
+    const sessions = await writer.listSessions();
+    expect(sessions.map(session => session.sessionId)).toEqual(['newer', 'older']);
+    expect(await writer.countTurns('older')).toBe(2);
+    expect(await writer.countTurns('newer')).toBe(1);
+    expect(await writer.getSession('missing')).toBeUndefined();
+    writer.close();
+  });
+
   it('never persists partials and idempotently merges silence policy before stable final', async () => {
     const { writer } = await open(); await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
     await writer.apply(event('s', 'transcript.partial', { turnId: 't', text: 'not stable' }));

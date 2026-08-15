@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BrowserCapture, type CaptureHandle } from './audio/capture';
 import { BrowserPlayback } from './audio/playback';
 import type { PlaybackStopReason } from './audio/playback-ledger';
-import { Readiness } from './readiness/Readiness';
 import { RecordingControls } from './recording/RecordingControls';
 import { createEncoderClient } from './recording/encoder-client';
 import { RecordingRecorder } from './recording/recorder';
@@ -21,11 +20,16 @@ import { RecordingStore, type RecordingItemSummary } from './storage/recording-s
 import { StableTurnWriter } from './storage/stable-turn-writer';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_VOICE_SPEED_MODIFIER, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { SettingsDialog } from './settings/SettingsDialog';
+import { SessionIndex } from './sessions/SessionIndex';
+import { StoppedSession } from './sessions/StoppedSession';
+import { bootstrapCapability } from './sessions/session-archive';
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
+import { Spinner } from './components/ui/spinner';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 type SessionStartSettings = { version: 1; persona: string; voice: VoicePreference };
@@ -59,11 +63,18 @@ interface TestApi {
 declare global { interface Window { __podcasterTest?: TestApi } }
 
 export function App() {
+  const location = useLocation();
+  const locationRef = useRef(location);
+  locationRef.current = location;
+  const navigate = useNavigate();
   const [view, setView] = useState<SessionViewState>();
   const [sessionId, setSessionId] = useState<string>();
   const [capability, setCapability] = useState<string>();
   const [elapsed, setElapsed] = useState(0);
   const [sessionPaused, setSessionPaused] = useState(false);
+  const [writer, setWriter] = useState<StableTurnWriter | undefined>(undefined);
+  const [resuming, setResuming] = useState(false);
+  const stoppedRef = useRef(false);
   const writerRef = useRef<StableTurnWriter | undefined>(undefined);
   const controllerRef = useRef<SessionController | undefined>(undefined);
   const transportRef = useRef<SessionTransport | undefined>(undefined);
@@ -87,9 +98,19 @@ export function App() {
   const voiceCatalogRef = useRef<VoiceCatalog | undefined>(undefined);
   const settingsFrozenRef = useRef<SettingsModel | undefined>(undefined);
   const [settingsModel, setSettingsModel] = useState<SettingsModel>(() => defaultSettingsModel(undefined));
+  const settingsModelRef = useRef(settingsModel);
+  settingsModelRef.current = settingsModel;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaveError, setSettingsSaveError] = useState<string | undefined>(undefined);
+
+  const currentStartSettings = useCallback((): { settings: SessionStartSettings; digest: string } => {
+    const model = settingsModelRef.current;
+    return {
+      settings: { version: 1, persona: model.persona, voice: { ...model.voice } },
+      digest: settingsDigest(model),
+    };
+  }, []);
 
   const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, settings: SessionStartSettings) => {
     const transport = new FakeSessionTransport();
@@ -147,6 +168,7 @@ export function App() {
     };
     setCapability(cap);
     setSessionId(id);
+    stoppedRef.current = false;
   }, []);
 
   const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings) => {
@@ -198,29 +220,72 @@ export function App() {
     }
     setCapability(cap);
     setSessionId(id);
+    stoppedRef.current = false;
   }, []);
 
+  const fetchRecordingSummaries = useCallback(async (targetSession: string): Promise<void> => {
+    const store = recordingStoreRef.current;
+    if (!store) return;
+    const gen = ++recordingGenRef.current;
+    let enabled: boolean;
+    let summaries: RecordingItemSummary[];
+    try {
+      [enabled, summaries] = await Promise.all([store.getRecordingEnabled(), store.getSessionItemSummaries(targetSession)]);
+    } catch (error) {
+      if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
+      setRecordingView(prev => ({ ...prev, error: error instanceof Error ? error.message : 'Recording state could not be read.' }));
+      return;
+    }
+    if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
+    lastCheapRef.current = { enabled, count: summaries.length };
+    setRecordingView(prev => ({ ...projectRecordingTrim(summaries, enabled), pendingTargetId: prev.pendingTargetId, notice: prev.notice, error: '' }));
+  }, []);
+
+  // Open the shared session store once. If the initial URL targets a session
+  // that was still active, resume it right away (like the readiness flow, but
+  // without a fresh session): the transcript is rebuilt from stable storage and
+  // the host is reconnected under the same session identity.
   useEffect(() => {
-    if (!fakeServices) return;
     let cancelled = false;
-    void StableTurnWriter.open().then(async opened => {
+    void (async () => {
+      const opened = await StableTurnWriter.open();
       if (cancelled) { opened.close(); return; }
       writerRef.current = opened;
-      const active = await opened.recoverActiveSession();
-      if (!active || cancelled) return;
-      const turns = await opened.getTurns(active.sessionId);
-      const restored: SessionViewState = {
-        ...initialSessionState,
-        dominant: 'listening',
-        announcement: 'Listening',
-        stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
-        conversationItems: conversationFromStoredTurns(turns),
-      };
-      startedAt.current = new Date(active.startedAt).getTime();
-      await composeFakeSession(opened, active.sessionId, restored, 'fake-recovered', { version: 1, persona: DEFAULT_AGENT_PERSONA, voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER } });
-    });
+      const target = sessionIdFromPath(locationRef.current.pathname);
+      if (target) {
+        const stored = await opened.getSession(target);
+        if (!cancelled && stored?.state === 'active') {
+          setResuming(true);
+          setWriter(opened);
+          try {
+            const turns = await opened.getTurns(target);
+            const restored: SessionViewState = {
+              ...initialSessionState,
+              dominant: 'listening',
+              announcement: 'Listening',
+              stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
+              conversationItems: conversationFromStoredTurns(turns),
+            };
+            startedAt.current = new Date(stored.startedAt).getTime();
+            const { settings, digest } = currentStartSettings();
+            const reopened = await opened.beginSession({ sessionId: target, sessionSeed: uuidV7(), personaDigest: digest });
+            if (!reopened.ok) throw new Error(reopened.degradedReason);
+            if (fakeServices) await composeFakeSession(opened, target, restored, 'fake-recovered', settings);
+            else await composeRealSession(opened, target, restored, await bootstrapCapability(), uuidV7(), 'full', settings);
+            if (!cancelled) navigate(`/session/${target}`);
+          } catch (error) {
+            activityLog.append({ level: 'error', source: 'app', message: 'active session could not be resumed', ...(error instanceof Error ? { detail: error.message } : {}) });
+          } finally {
+            if (!cancelled) setResuming(false);
+          }
+          return;
+        }
+      }
+      if (!cancelled) setWriter(opened);
+    })();
     return () => { cancelled = true; };
-  }, [composeFakeSession]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!view) return;
@@ -246,10 +311,10 @@ export function App() {
     return () => { delete window.__podcasterTest; };
   }, [sessionId, view]);
 
-  async function start(cap: string, reasoningMode: 'full' | 'transcript_only' = 'full') {
-    const opened = writerRef.current ?? await StableTurnWriter.open();
-    writerRef.current = opened;
-    const id = uuidV7();
+  async function start(cap: string, reasoningMode: 'full' | 'transcript_only' = 'full', existingId?: string) {
+    const opened = writerRef.current;
+    if (!opened) throw new Error('Local session storage is not ready yet.');
+    const id = existingId ?? uuidV7();
     const seed = uuidV7();
     const frozen: SettingsModel = { agentName: settingsModel.agentName, persona: settingsModel.persona, voice: { ...settingsModel.voice } };
     settingsFrozenRef.current = frozen;
@@ -263,9 +328,61 @@ export function App() {
     const initial = { ...initialSessionState, dominant: 'listening' as const, announcement: 'Listening' };
     if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
     else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
+    navigate(`/session/${id}`);
   }
 
+  const stop = useCallback(async () => {
+    activityLog.append({ level: 'info', source: 'app', message: 'session stopped by user' });
+    setSessionPaused(false);
+    await captureRef.current?.stop();
+    const streamId = captureStreamIdRef.current;
+    if (streamId !== undefined) {
+      await transportRef.current?.stopAudio(streamId);
+      captureStreamIdRef.current = undefined;
+    }
+    await controllerRef.current?.stop();
+    recordingUnsubscribeRef.current?.();
+    recordingUnsubscribeRef.current = undefined;
+    await recordingRecorderRef.current?.stop(true);
+    if (capability && capability !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
+    stoppedRef.current = true;
+  }, [capability]);
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+
+  const continueSession = useCallback(async (targetId: string) => {
+    const current = sessionId;
+    if (current && current !== targetId && !stoppedRef.current) await stopRef.current();
+    let cap: string;
+    try {
+      cap = fakeServices ? 'fake-recovered' : await bootstrapCapability();
+    } catch (error) {
+      activityLog.append({ level: 'error', source: 'app', message: 'session capability could not be obtained', ...(error instanceof Error ? { detail: error.message } : {}) });
+      return;
+    }
+    await start(cap, 'full', targetId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  // Leaving the stopped-live view (index or another session's page) releases
+  // its state so the page renders the session read-only from storage again.
+  // Opening a different session's page while another session is still running
+  // ends the live session first so the read-only view can take over.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (location.pathname === '/') {
+      if (stoppedRef.current) { setSessionId(undefined); setView(undefined); }
+      return;
+    }
+    const target = sessionIdFromPath(location.pathname);
+    if (target && target !== sessionId) {
+      if (stoppedRef.current) { setSessionId(undefined); setView(undefined); }
+      else void stopRef.current();
+    }
+  }, [location, sessionId]);
+
   const togglePause = useCallback(async () => {
+    if (stoppedRef.current) return;
     const transport = transportRef.current;
     const controller = controllerRef.current;
     const recorder = recordingRecorderRef.current;
@@ -313,22 +430,6 @@ export function App() {
     }
   }, [sessionPaused]);
 
-  async function stop() {
-    activityLog.append({ level: 'info', source: 'app', message: 'session stopped by user' });
-    setSessionPaused(false);
-    await captureRef.current?.stop();
-    const streamId = captureStreamIdRef.current;
-    if (streamId !== undefined) {
-      await transportRef.current?.stopAudio(streamId);
-      captureStreamIdRef.current = undefined;
-    }
-    await controllerRef.current?.stop();
-    recordingUnsubscribeRef.current?.();
-    recordingUnsubscribeRef.current = undefined;
-    await recordingRecorderRef.current?.stop(true);
-    if (capability && capability !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
-  }
-
   const buildExport = useCallback(async () => {
     const store = recordingStoreRef.current;
     const writer = writerRef.current;
@@ -341,24 +442,6 @@ export function App() {
       resample: offlineResample,
       encode: createEncoderClient(),
     });
-  }, []);
-
-  const fetchRecordingSummaries = useCallback(async (targetSession: string): Promise<void> => {
-    const store = recordingStoreRef.current;
-    if (!store) return;
-    const gen = ++recordingGenRef.current;
-    let enabled: boolean;
-    let summaries: RecordingItemSummary[];
-    try {
-      [enabled, summaries] = await Promise.all([store.getRecordingEnabled(), store.getSessionItemSummaries(targetSession)]);
-    } catch (error) {
-      if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
-      setRecordingView(prev => ({ ...prev, error: error instanceof Error ? error.message : 'Recording state could not be read.' }));
-      return;
-    }
-    if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
-    lastCheapRef.current = { enabled, count: summaries.length };
-    setRecordingView(prev => ({ ...projectRecordingTrim(summaries, enabled), pendingTargetId: prev.pendingTargetId, notice: prev.notice, error: '' }));
   }, []);
 
   const pollRecording = useCallback(async (targetSession: string): Promise<void> => {
@@ -459,25 +542,110 @@ export function App() {
     return true;
   }, [fetchRecordingSummaries]);
 
-  if (!view) return <>
-    <Readiness sessionAvailable={fakeServices} onStart={start} onCatalog={onCatalog} onOpenSettings={() => setSettingsOpen(true)} onCapability={setCapability} />
-    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
+  const settingsDialog = <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />;
+
+  if (!writer) return <main className="index-shell"><p className="hint"><Spinner className="size-4" />Loading…</p></main>;
+
+  return <>
+    <Routes>
+      <Route path="/" element={
+        <SessionIndex
+          writer={writer}
+          sessionAvailable={fakeServices}
+          liveSessionId={sessionId}
+          elapsedSeconds={elapsed}
+          onStart={start}
+          onCatalog={onCatalog}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onCapability={setCapability}
+          onContinueSession={id => void continueSession(id)}
+        />
+      } />
+      <Route path="/session/:sessionId" element={
+        <SessionRoute
+          writer={writer}
+          liveSessionId={sessionId}
+          resuming={resuming}
+          view={view}
+          agentName={settingsModel.agentName}
+          elapsed={elapsed}
+          sessionPaused={sessionPaused}
+          recordingView={recordingView}
+          settingsOpen={settingsOpen}
+          onTogglePause={() => void togglePause()}
+          onStop={() => void stop()}
+          onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onToggleBubbleTrim={toggleBubbleTrim}
+          onToggleRecording={toggleRecording}
+          onDeleteRecording={deleteRecording}
+          buildExport={buildExport}
+          onContinueSession={(id: string) => void continueSession(id)}
+          onBack={() => navigate('/')}
+        />
+      } />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+    {settingsDialog}
   </>;
-  return <div className="session-layout">
-    <SessionScreen
-      state={view}
-      agentName={settingsModel.agentName}
-      elapsedSeconds={elapsed}
-      sessionPaused={sessionPaused}
-      onTogglePause={() => void togglePause()}
-      onStop={() => void stop()}
-      onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
-      onOpenSettings={() => setSettingsOpen(true)}
-      settingsOpen={settingsOpen}
-      recording={recordingView}
-      onToggleBubbleTrim={toggleBubbleTrim}
-    />
-    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
-    {sessionId ? <RecordingControls sessionId={sessionId} buildExport={buildExport} recording={recordingView} onToggleRecording={toggleRecording} onDelete={deleteRecording} /> : null}
-  </div>;
 }
+
+function sessionIdFromPath(pathname: string): string | undefined {
+  const match = pathname.match(/^\/session\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]!) : undefined;
+}
+
+interface SessionRouteProps {
+  writer: StableTurnWriter;
+  liveSessionId: string | undefined;
+  resuming: boolean;
+  view: SessionViewState | undefined;
+  agentName: string;
+  elapsed: number;
+  sessionPaused: boolean;
+  recordingView: RecordingSessionViewState;
+  settingsOpen: boolean;
+  onTogglePause: () => void;
+  onStop: () => void;
+  onCancelAssistant: () => void;
+  onOpenSettings: () => void;
+  onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
+  onToggleRecording: (enabled: boolean) => Promise<void>;
+  onDeleteRecording: () => Promise<void>;
+  buildExport: () => Promise<Blob | null>;
+  onContinueSession: (sessionId: string) => void;
+  onBack: () => void;
+}
+
+function SessionRoute(props: SessionRouteProps) {
+  const params = useParams();
+  const routeSessionId = params.sessionId;
+  if (props.liveSessionId === routeSessionId) {
+    return <div className="session-layout">
+      <SessionScreen
+        state={props.view ?? initialSessionState}
+        agentName={props.agentName}
+        elapsedSeconds={props.elapsed}
+        sessionPaused={props.sessionPaused}
+        onTogglePause={props.onTogglePause}
+        onStop={props.onStop}
+        onCancelAssistant={props.onCancelAssistant}
+        onOpenSettings={props.onOpenSettings}
+        settingsOpen={props.settingsOpen}
+        recording={props.recordingView}
+        onToggleBubbleTrim={props.onToggleBubbleTrim}
+      />
+      {props.liveSessionId ? <RecordingControls sessionId={props.liveSessionId} buildExport={props.buildExport} recording={props.recordingView} onToggleRecording={props.onToggleRecording} onDelete={props.onDeleteRecording} /> : null}
+    </div>;
+  }
+  if (props.resuming) return <main className="index-shell"><p className="hint"><Spinner className="size-4" />Resuming session…</p></main>;
+  if (!routeSessionId) return null;
+  return <StoppedSession
+    writer={props.writer}
+    sessionId={routeSessionId}
+    agentName={props.agentName}
+    onContinue={() => props.onContinueSession(routeSessionId)}
+    onBack={props.onBack}
+  />;
+}
+

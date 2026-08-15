@@ -42,9 +42,27 @@ export class StableTurnWriter {
       const existing = await requestResult(sessions.get(input.sessionId)) as StoredSession | undefined;
       const now = input.startedAt ?? isoNow();
       if (!existing) sessions.put({ sessionId: input.sessionId, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, startedAt: now, updatedAt: now, endedAt: null, state: 'active', failures: [] } satisfies StoredSession);
+      else sessions.put({ ...existing, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, state: 'active', endedAt: null, updatedAt: now });
       transaction.objectStore(STORES.meta).put({ key: 'activeSession', sessionId: input.sessionId });
       await transactionDone(transaction);
     });
+  }
+
+  async getSession(sessionId: string): Promise<StoredSession | undefined> {
+    const transaction = this.db.transaction(STORES.sessions, 'readonly');
+    return await requestResult(transaction.objectStore(STORES.sessions).get(sessionId)) as StoredSession | undefined;
+  }
+
+  /** Every local session, most recently active first. */
+  async listSessions(): Promise<StoredSession[]> {
+    const transaction = this.db.transaction(STORES.sessions, 'readonly');
+    const sessions = await requestResult(transaction.objectStore(STORES.sessions).getAll()) as StoredSession[];
+    return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async countTurns(sessionId: string): Promise<number> {
+    const transaction = this.db.transaction(STORES.turns, 'readonly');
+    return await requestResult(transaction.objectStore(STORES.turns).index('sessionId').count(sessionId)) as number;
   }
 
   async recoverActiveSession(): Promise<StoredSession | undefined> {

@@ -156,7 +156,7 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
           ? 'Transcript-only mode is ready. Assistant responses are unavailable.'
           : 'A few things need your attention before you can start.';
 
-  return <main className="readiness-shell">
+  return <section className="readiness-shell">
     <header className="readiness-header">
       <div>
         <p className="eyebrow">Get started</p>
@@ -191,7 +191,7 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
       </div>
     </Card>}
     {error ? <Alert variant="destructive" className="readiness-note"><CircleAlert className="size-4 mt-0.5 shrink-0 text-destructive" aria-hidden="true" /><p>{error}</p></Alert> : null}
-  </main>;
+  </section>;
 }
 
 function PrivacyStatement() {
