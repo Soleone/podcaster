@@ -6,7 +6,7 @@ let server: DevServer;
 test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
 test.afterAll(async () => { await stopDevServer(server); });
 
-test('starts automatically after all three readiness checks turn green', async ({ page }) => {
+test('keeps the home page open after all three readiness checks turn green', async ({ page }) => {
   await installFakeMicrophone(page);
   await page.route('**/api/readiness', route => route.fulfill({
     status: 200,
@@ -29,6 +29,7 @@ test('starts automatically after all three readiness checks turn green', async (
   await page.getByRole('button', { name: 'Continue and check readiness' }).click();
   await expect(page.getByText('Voice input', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Enable microphone' }).click();
-  await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start session' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Readiness' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start session' })).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
 });
