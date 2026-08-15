@@ -445,7 +445,7 @@ export function App() {
     const store = recordingStoreRef.current;
     const current = recordingSessionRef.current;
     if (!store || !current) return false;
-    const target = recordingViewRef.current.targets.get(targetId);
+    const target = recordingViewRef.current.targets.get(targetId) ?? recordingViewRef.current.partTargets.get(targetId);
     if (!target) return false;
     setRecordingView(prev => ({ ...prev, pendingTargetId: targetId, error: '' }));
     try {

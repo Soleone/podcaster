@@ -32,6 +32,20 @@ describe('projectRecordingTrim', () => {
     expect(state.includedBubbleCount).toBe(1);
   });
 
+  it('projects each assistant part separately while keeping the parent bubble target', () => {
+    const state = projectRecordingTrim([
+      summary({ itemId: 'p0', role: 'agent', responseId: 'r1', partIndex: 0 }),
+      summary({ itemId: 'p1', role: 'agent', responseId: 'r1', partIndex: 1, trimmed: true }),
+    ], true);
+    expect(state.targets.get('assistant:r1')).toMatchObject({ itemIds: ['p0', 'p1'], state: 'mixed' });
+    expect(state.partTargets.get('assistant-part:r1:0')).toEqual({ targetId: 'assistant-part:r1:0', itemIds: ['p0'], state: 'included' });
+    expect(state.partTargets.get('assistant-part:r1:1')).toEqual({ targetId: 'assistant-part:r1:1', itemIds: ['p1'], state: 'trimmed' });
+    expect(state.totalCount).toBe(2);
+    expect(state.includedCount).toBe(1);
+    expect(state.bubbleCount).toBe(1);
+    expect(state.includedBubbleCount).toBe(1);
+  });
+
   it('keeps same-turn user and assistant targets distinct', () => {
     const state = projectRecordingTrim([
       summary({ itemId: 'u', role: 'user', turnId: 't1' }),

@@ -1,6 +1,6 @@
 import { RotateCcw, XIcon } from 'lucide-react';
 import type { ConversationItem } from '../../session/conversation';
-import type { RecordingSessionViewState, RecordingTrimTarget, RecordingTrimTargetId } from '../../recording/trim-state';
+import { assistantPartTargetId, type RecordingSessionViewState, type RecordingTrimTarget, type RecordingTrimTargetId } from '../../recording/trim-state';
 import { cn } from '../../lib/utils';
 import { Badge } from '../ui/badge';
 import { Bubble, BubbleActions, BubbleContent } from '../ui/bubble';
@@ -29,23 +29,19 @@ interface TrimAction {
   accessible: string;
 }
 
-function trimTargetId(item: ConversationItem): RecordingTrimTargetId | undefined {
-  if (item.kind === 'user') return item.id ? `user:${item.id}` : undefined;
-  if (item.kind === 'assistant') return item.responseId ? `assistant:${item.responseId}` : undefined;
-  return undefined;
-}
-
 /**
- * Resolves whether a trim control should appear for a row and which action it
- * performs. Requires a persisted target and never shows for tentative rows.
- * Assistant targets group persisted parts under one response message. New
- * Remove actions hide while recording is off, but Undo stays available for
- * already-trimmed messages.
+ * Resolves whether a trim control should appear for a visible message or part.
+ * New Remove actions hide while recording is off, but Undo stays available for
+ * already-trimmed audio so a user can restore it after disabling recording.
  */
-function trimActionFor(item: ConversationItem, target: RecordingTrimTarget | undefined, enabled: boolean): TrimAction | null {
-  if (!target) return null;
-  if (item.kind === 'assistant' && item.tentative) return null;
-  const who = item.kind === 'assistant' ? "Assistant's response" : 'your message';
+function trimActionFor(
+  kind: 'user' | 'assistant',
+  tentative: boolean | undefined,
+  target: RecordingTrimTarget | undefined,
+  enabled: boolean,
+  who: string,
+): TrimAction | null {
+  if (!target || (kind === 'assistant' && tentative)) return null;
   if (target.state === 'included') {
     if (!enabled) return null;
     return { setTrimmed: true, trimmedNow: false, label: 'Remove from recording', accessible: `Remove ${who} from recording` };
@@ -78,20 +74,41 @@ function TrimControl({ action, targetId, pending, onToggleBubbleTrim, onPrimary 
   ><Icon data-icon="inline-start" aria-hidden="true" /></Button>;
 }
 
+function AssistantPartRow({ part, index, responseId, recording, onToggleBubbleTrim }: {
+  part: { partIndex: number; text: string; tentative: boolean };
+  index: number;
+  responseId: string;
+  recording: RecordingSessionViewState;
+  onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
+}) {
+  const targetId = assistantPartTargetId(responseId, part.partIndex);
+  const target = recording.partTargets.get(targetId);
+  const trimmed = target?.state === 'trimmed';
+  const action = trimActionFor('assistant', part.tentative, target, recording.enabled, `Assistant's part ${part.partIndex + 1}`);
+  return <div
+    className={cn('assistant-part', index > 0 && 'assistant-part-boundary', action && 'assistant-part-with-action', trimmed && 'trimmed')}
+    data-part-index={part.partIndex}
+    data-trimmed={trimmed || undefined}
+  >
+    <p className={cn(part.tentative && 'assistant-part-tentative')}>{part.text}</p>
+    {action ? <BubbleActions className="assistant-part-actions"><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId !== null} onToggleBubbleTrim={onToggleBubbleTrim} /></BubbleActions> : null}
+  </div>;
+}
+
 export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim }: ConversationRowProps) {
   if (item.kind === 'continuation') return <Marker variant="separator" className="continuation-marker"><MarkerContent>{item.label}</MarkerContent></Marker>;
   if (item.kind === 'notice') return <Marker className={`conversation-notice ${item.tone}`}><MarkerContent>{item.text}</MarkerContent></Marker>;
   if (item.kind === 'user') {
     const target = item.id ? recording.targets.get(`user:${item.id}`) : undefined;
     const trimmed = target?.state === 'trimmed';
-    const action = trimActionFor(item, target, recording.enabled);
+    const action = trimActionFor('user', false, target, recording.enabled, 'your message');
     return <Message align="end" className="conversation-message user-row">
       <MessageContent>
         <MessageHeader>You</MessageHeader>
         <Bubble variant="default" className="conversation-bubble-shell">
           <BubbleContent className={cn('conversation-bubble user-bubble', action && 'relative pr-9', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
             <p>{item.text}</p>
-            {action ? <BubbleActions><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId === target!.targetId} onToggleBubbleTrim={onToggleBubbleTrim} onPrimary /></BubbleActions> : null}
+            {action ? <BubbleActions><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId !== null} onToggleBubbleTrim={onToggleBubbleTrim} onPrimary /></BubbleActions> : null}
           </BubbleContent>
         </Bubble>
         {item.status === 'control' || trimmed ? <MessageFooter>
@@ -103,16 +120,16 @@ export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim
   }
   const target = item.responseId ? recording.targets.get(`assistant:${item.responseId}`) : undefined;
   const trimmed = target?.state === 'trimmed';
-  const action = trimActionFor(item, target, recording.enabled);
+  const action = trimActionFor('assistant', item.tentative, target, recording.enabled, "Assistant's response");
   return <Message className="conversation-message assistant-row">
     <MessageContent>
       <MessageHeader>{(agentName ?? '').trim() || 'Assistant'}</MessageHeader>
       <Bubble variant="secondary" className="conversation-bubble-shell">
         <BubbleContent className={cn('conversation-bubble assistant-bubble', action && 'relative pr-9', item.tentative && 'tentative', trimmed && 'trimmed')} data-trimmed={trimmed || undefined}>
-          {item.parts && item.parts.length > 1
-            ? item.parts.map((part, index) => <p key={index} className={cn(index > 0 && 'assistant-part', part.tentative && 'assistant-part-tentative')}>{part.text}</p>)
+          {item.parts && item.parts.length > 0
+            ? item.parts.map((part, index) => <AssistantPartRow key={part.partIndex} part={part} index={index} responseId={item.responseId} recording={recording} onToggleBubbleTrim={onToggleBubbleTrim} />)
             : <p>{item.text}</p>}
-          {action ? <BubbleActions><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId === target!.targetId} onToggleBubbleTrim={onToggleBubbleTrim} /></BubbleActions> : null}
+          {action ? <BubbleActions><TrimControl action={action} targetId={target!.targetId} pending={recording.pendingTargetId !== null} onToggleBubbleTrim={onToggleBubbleTrim} /></BubbleActions> : null}
         </BubbleContent>
       </Bubble>
       {trimmed ? <MessageFooter><span className="trim-state-note">Not included in recording</span></MessageFooter> : null}

@@ -55,10 +55,13 @@
 .log-entry-source{color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .log-entry-message{min-width:0}
 @media(max-width:36rem){.activity-log-actions{width:100%;justify-content:flex-end}}
-.conversation-bubble .assistant-part{margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--border)}
+.conversation-bubble .assistant-part{position:relative}
+.conversation-bubble .assistant-part-boundary{margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--border)}
+.conversation-bubble .assistant-part-with-action{padding-right:2rem}
+.assistant-part-actions{top:auto;bottom:.25rem}
 .assistant-part-tentative{opacity:.6;filter:saturate(.5)}
-.conversation-bubble.trimmed{opacity:.55;filter:saturate(.35)}
-.conversation-bubble.trimmed p{text-decoration:line-through}
+.conversation-bubble.trimmed,.conversation-bubble .assistant-part.trimmed{opacity:.55;filter:saturate(.35)}
+.conversation-bubble.trimmed p,.conversation-bubble .assistant-part.trimmed p{text-decoration:line-through}
 .trim-state-note{color:var(--muted-foreground);font-size:.75rem}
 .trim-action{flex:none}
 .trim-action svg{width:.875rem;height:.875rem}

@@ -38,6 +38,41 @@ test('trims completed agent output with a compact in-bubble action', async ({ pa
   await expect(page.locator('.conversation-bubble.assistant-bubble.trimmed')).toHaveAttribute('data-trimmed', 'true');
 });
 
+test('trims one assistant part without removing the rest of its bubble', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+  await page.getByLabel('Record this session').click();
+
+  await emit(page, 'reasoning.started', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', partIndex: 0 });
+  await emit(page, 'reasoning.final', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', text: 'The quick acknowledgement.', partIndex: 0 });
+  await emit(page, 'tts.started', { responseId: 'response-parts', playbackId: 'playback-part-0', sampleRate: 24000, partIndex: 0 });
+  await page.evaluate(() => window.__podcasterTest!.audio('playback-part-0', 0, 480));
+  await emit(page, 'tts.ended', { responseId: 'response-parts', playbackId: 'playback-part-0', generatedSamples: 480, partIndex: 0 });
+  await page.waitForTimeout(25);
+
+  await emit(page, 'reasoning.started', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', partIndex: 1 });
+  await emit(page, 'reasoning.final', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', text: 'The longer body response.', partIndex: 1 });
+  await emit(page, 'tts.started', { responseId: 'response-parts', playbackId: 'playback-part-1', sampleRate: 24000, partIndex: 1 });
+  await page.evaluate(() => window.__podcasterTest!.audio('playback-part-1', 0, 480));
+  await emit(page, 'tts.ended', { responseId: 'response-parts', playbackId: 'playback-part-1', generatedSamples: 480, partIndex: 1 });
+
+  await expect(page.getByLabel('Recording status: 2 of 2 messages included')).toBeVisible();
+  await expect(page.getByText('The quick acknowledgement.')).toBeVisible();
+  await expect(page.getByText('The longer body response.')).toBeVisible();
+
+  const removePart = page.getByRole('button', { name: "Remove Assistant's part 2 from recording" });
+  await expect(removePart).toBeVisible();
+  await removePart.click();
+
+  await expect(page.getByLabel('Recording status: 1 of 2 messages included')).toBeVisible();
+  await expect(page.locator('[data-part-index="1"][data-trimmed="true"]')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: "Undo removal of Assistant's part 2" })).toBeVisible();
+  await expect(page.getByText('The quick acknowledgement.')).toBeVisible();
+
+  await page.getByRole('button', { name: "Undo removal of Assistant's part 2" }).click();
+  await expect(page.getByLabel('Recording status: 2 of 2 messages included')).toBeVisible();
+  await expect(page.getByRole('button', { name: "Remove Assistant's part 2 from recording" })).toBeVisible();
+});
+
 test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   const toggle = page.getByLabel('Record this session');
