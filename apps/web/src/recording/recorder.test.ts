@@ -123,35 +123,6 @@ describe('RecordingRecorder', () => {
     store.close();
   });
 
-  it('toggle-off finalizes open user slices with the truncated flag', async () => {
-    const { store, recorder } = await setup();
-    await store.setRecordingEnabled(true);
-    await recorder.start();
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 2 }));
-    for (let sequence = 2; sequence <= 9; sequence++) recorder.onCaptureAudio(captureFrame(sequence));
-    await recorder.setEnabled(false);
-    const items = await store.getSessionItems(SESSION);
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ role: 'user', truncated: true, captureStartSequence: 2, captureEndSequence: 9 });
-    expect(await store.getRecordingEnabled()).toBe(false);
-    store.close();
-  });
-
-  it('records nothing while recording is disabled', async () => {
-    const { store, recorder } = await setup();
-    await recorder.start();
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
-    for (let sequence = 0; sequence <= 4; sequence++) recorder.onCaptureAudio(captureFrame(sequence));
-    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 4 }));
-    recorder.onSessionEvent(event('reasoning.started', { turnId: TURN, responseId: RESPONSE, posture: 'riff' }));
-    recorder.onSessionEvent(event('tts.started', { responseId: RESPONSE, playbackId: PLAYBACK, sampleRate: 24000 }));
-    recorder.onPlaybackAudio({ playbackId: PLAYBACK, sampleOffset: 0, pcm16: new Int16Array(480).fill(500) });
-    recorder.onSessionEvent(event('playback.stopped', { playbackId: PLAYBACK, cancelledEpoch: 0, finalPlayedSampleOffset: 480, reason: 'completed' }));
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(await store.getSessionItems(SESSION)).toHaveLength(0);
-    expect(await store.getRecordingEnabled()).toBe(false);
-    store.close();
-  });
 
   it('resumes the record sequence after the highest persisted item', async () => {
     const { store, recorder } = await setup();

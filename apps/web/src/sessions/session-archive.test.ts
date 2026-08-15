@@ -31,8 +31,8 @@ describe('session archive', () => {
       const summaries = await loadSessionArchive(writer, recordingStore);
       expect(summaries.map(summary => summary.session.sessionId)).toEqual(['newer', 'older']);
       expect(summaries).toMatchObject([
-        { turnCount: 1, recordingItemCount: 0, recordingEnabled: false },
-        { turnCount: 2, recordingItemCount: 0, recordingEnabled: false },
+        { turnCount: 1, recordingItemCount: 0, recordingEnabled: true },
+        { turnCount: 2, recordingItemCount: 0, recordingEnabled: true },
       ]);
     } finally {
       recordingStore.close();

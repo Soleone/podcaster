@@ -18,7 +18,6 @@ async function recordUserTurn(page: import('@playwright/test').Page): Promise<vo
 
 test('trims completed agent output with a compact in-bubble action', async ({ page }) => {
   await enterFakeSession(page, server.origin);
-  await page.getByLabel('Record this session').click();
 
   await emit(page, 'reasoning.started', { turnId: 'turn-1', responseId: 'response-1', posture: 'question' });
   await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'A recorded answer' });
@@ -40,7 +39,6 @@ test('trims completed agent output with a compact in-bubble action', async ({ pa
 
 test('trims one assistant part without removing the rest of its bubble', async ({ page }) => {
   await enterFakeSession(page, server.origin);
-  await page.getByLabel('Record this session').click();
 
   await emit(page, 'reasoning.started', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', partIndex: 0 });
   await emit(page, 'reasoning.final', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', text: 'The quick acknowledgement.', partIndex: 0 });
@@ -55,7 +53,6 @@ test('trims one assistant part without removing the rest of its bubble', async (
   await page.evaluate(() => window.__podcasterTest!.audio('playback-part-1', 0, 480));
   await emit(page, 'tts.ended', { responseId: 'response-parts', playbackId: 'playback-part-1', generatedSamples: 480, partIndex: 1 });
 
-  await expect(page.getByLabel('Recording status: 2 of 2 messages included')).toBeVisible();
   await expect(page.getByText('The quick acknowledgement.')).toBeVisible();
   await expect(page.getByText('The longer body response.')).toBeVisible();
 
@@ -63,24 +60,18 @@ test('trims one assistant part without removing the rest of its bubble', async (
   await expect(removePart).toBeVisible();
   await removePart.click();
 
-  await expect(page.getByLabel('Recording status: 1 of 2 messages included')).toBeVisible();
   await expect(page.locator('[data-part-index="1"][data-trimmed="true"]')).toHaveCount(1);
   await expect(page.getByRole('button', { name: "Undo removal of Assistant's part 2" })).toBeVisible();
   await expect(page.getByText('The quick acknowledgement.')).toBeVisible();
 
   await page.getByRole('button', { name: "Undo removal of Assistant's part 2" }).click();
-  await expect(page.getByLabel('Recording status: 2 of 2 messages included')).toBeVisible();
   await expect(page.getByRole('button', { name: "Remove Assistant's part 2 from recording" })).toBeVisible();
 });
 
 test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page }) => {
   await enterFakeSession(page, server.origin, { decodeDelayMs: 50 });
-  const toggle = page.getByLabel('Record this session');
-  await toggle.click();
-  await expect(page.getByLabel('Recording status: 0 items')).toBeVisible();
 
   await recordUserTurn(page);
-  await expect(page.getByLabel('Recording status: 1 of 1 messages included')).toBeVisible();
 
   // The persisted user message exposes a trim control.
   const remove = page.getByRole('button', { name: 'Remove your message from recording' });
@@ -98,7 +89,6 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   // It was the only included item, so Export is disabled; Delete stays enabled.
   await expect(page.getByRole('button', { name: 'Export' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Delete' })).toBeEnabled();
-  await expect(page.getByLabel('Recording status: 0 of 1 messages included')).toBeVisible();
 
   // Reload the active fake session: trimmed presentation and Undo are restored
   // from IndexedDB before actions are exposed.
@@ -107,27 +97,22 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   await expect(page.getByRole('button', { name: 'Undo removal of your message' })).toBeVisible();
   await expect(page.getByText('Not included in recording')).toBeVisible();
   await expect(page.locator('.conversation-bubble.user-bubble.trimmed')).toHaveAttribute('data-trimmed', 'true');
-  await expect(page.getByLabel('Recording status: 0 of 1 messages included')).toBeVisible();
 
   // Undo restores the message and re-enables export.
   await page.getByRole('button', { name: 'Undo removal of your message' }).click();
   await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible();
-  await expect(page.getByLabel('Recording status: 1 of 1 messages included')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeEnabled();
 
-  // Export an MP3 download. While building, the disabled button, a
-  // progressbar, and phase-aware status text must all be visible before the
-  // native save dialog opens.
+  // Export an MP3 download. During building the button is disabled and relabels
+  // while the native save dialog is prepared.
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export' }).click();
-  await expect(page.getByRole('button', { name: 'Exporting…' })).toBeDisabled();
-  await expect(page.getByRole('progressbar', { name: 'Export progress' })).toBeVisible();
-  await expect(page.locator('.export-progress .hint')).toHaveText(/Reading recording…|Decoding \d+ of \d+ clips…|Encoding MP3… \d+%|Preparing download…/);
+  await expect(page.getByRole('button', { name: /Exporting/ })).toBeDisabled();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^podcaster-[0-9a-f]{8}-\d{4}-\d{2}-\d{2}\.mp3$/);
 
   // Whole-recording delete stays available even after all this.
   await page.getByRole('button', { name: 'Delete' }).click();
-  await expect(page.getByLabel('Recording status: 0 items')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Delete' })).toBeDisabled();
 });

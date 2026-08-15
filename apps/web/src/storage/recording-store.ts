@@ -50,10 +50,9 @@ export class RecordingStore {
 
   close(): void { this.db.close(); }
 
+  // Recording is always on for every session; there is no user toggle to persist.
   async getRecordingEnabled(): Promise<boolean> {
-    const transaction = this.db.transaction(STORES.meta, 'readonly');
-    const meta = await requestResult(transaction.objectStore(STORES.meta).get('recordingEnabled')) as { enabled?: boolean } | undefined;
-    return meta?.enabled === true;
+    return true;
   }
 
   async setRecordingEnabled(enabled: boolean): Promise<void> {

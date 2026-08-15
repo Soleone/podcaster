@@ -33,14 +33,6 @@
 @media(max-width:36rem){.session-header{align-items:stretch;flex-direction:column}.status-actions{width:100%;justify-content:space-between;margin-left:0}.conversation-bubble-shell{max-width:90%}}
 @media(max-width:22rem){.session-shell{width:min(100% - 1rem,56rem);margin:1rem auto}}
 .session-layout{width:min(56rem,calc(100% - 2rem));margin:2rem auto}
-.recording-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;margin-top:1rem;padding:.75rem 1rem}
-.recording-row{display:flex;align-items:center;gap:.75rem}
-.recording-toggle{display:flex;align-items:center;gap:.5rem}
-.recording-status{font-variant-numeric:tabular-nums}
-.recording-actions{display:flex;flex-direction:column;align-items:flex-end;gap:.5rem;min-width:0}
-.export-progress{display:flex;flex-direction:column;gap:.5rem;width:min(22rem,100%);max-width:100%}
-.export-progress .hint{margin:0}
-@media(max-width:36rem){.recording-actions{width:100%;align-items:stretch}}
 .activity-log{margin-top:1.5rem;overflow:hidden}
 .activity-log-header{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;padding:.4rem .5rem}
 .activity-log-toggle{gap:.45rem}

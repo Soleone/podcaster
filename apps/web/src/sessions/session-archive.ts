@@ -33,11 +33,12 @@ export async function bootstrapCapability(): Promise<string> {
 
 /** Every local session with per-session turn and recording counts, newest first. */
 export async function loadSessionArchive(writer: StableTurnWriter, recordingStore: RecordingStore): Promise<SessionSummary[]> {
-  const [sessions, enabled] = await Promise.all([writer.listSessions(), recordingStore.getRecordingEnabled()]);
+  const sessions = await writer.listSessions();
   const summaries = await Promise.all(sessions.map(async session => {
     const [turnCount, recordingItemCount, turns] = await Promise.all([writer.countTurns(session.sessionId), recordingStore.countSessionItems(session.sessionId), writer.getTurns(session.sessionId)]);
     const preview = turns.find(turn => turn.stableText?.trim())?.stableText ?? '';
-    return { session, turnCount, recordingItemCount, recordingEnabled: enabled, preview };
+    // Recording is always on, so every session reports as recorded.
+    return { session, turnCount, recordingItemCount, recordingEnabled: true, preview };
   }));
   return summaries;
 }

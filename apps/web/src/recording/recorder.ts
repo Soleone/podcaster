@@ -58,24 +58,15 @@ export class RecordingRecorder {
   private readonly now: () => number;
 
   constructor(private readonly deps: RecordingRecorderDependencies) {
+    // Recording is always on; there is no per-session toggle.
+    this.enabled = true;
     this.now = deps.now ?? (() => Math.max(0, Math.floor(performance.now())));
   }
 
-  /** Loads the persisted toggle and resumes the per-session record sequence. */
+  /** Resumes the per-session record sequence from persisted items. */
   async start(): Promise<void> {
-    this.enabled = await this.deps.store.getRecordingEnabled();
-    if (this.enabled) {
-      const existing = await this.deps.store.getSessionItems(this.deps.sessionId);
-      this.recordSeq = existing.reduce((max, item) => Math.max(max, item.recordSeq), -1) + 1;
-    }
-  }
-
-  recordingEnabled(): boolean { return this.enabled; }
-
-  async setEnabled(enabled: boolean): Promise<void> {
-    this.enabled = enabled;
-    await this.deps.store.setRecordingEnabled(enabled);
-    if (!enabled) await this.stop(true);
+    const existing = await this.deps.store.getSessionItems(this.deps.sessionId);
+    this.recordSeq = existing.reduce((max, item) => Math.max(max, item.recordSeq), -1) + 1;
   }
 
   onCaptureAudio(capture: { streamId: number; sequence: number; sampleOffset: number; pcm16: Int16Array }): void {

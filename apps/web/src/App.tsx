@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BrowserCapture, type CaptureHandle } from './audio/capture';
 import { BrowserPlayback } from './audio/playback';
 import type { PlaybackStopReason } from './audio/playback-ledger';
-import { RecordingControls } from './recording/RecordingControls';
 import { createEncoderClient } from './recording/encoder-client';
 import { RecordingRecorder } from './recording/recorder';
 import { offlineResample } from './recording/resample';
@@ -18,7 +17,7 @@ import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
 import { RecordingStore, type RecordingItemSummary } from './storage/recording-store';
 import { StableTurnWriter } from './storage/stable-turn-writer';
-import { deleteSessionRecording } from './recording/export';
+import { deleteSessionRecording, downloadRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
 import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
@@ -472,12 +471,6 @@ export function App() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [sessionId, fetchRecordingSummaries, pollRecording]);
 
-  const toggleRecording = useCallback(async (enabled: boolean) => {
-    await recordingRecorderRef.current?.setEnabled(enabled);
-    const current = recordingSessionRef.current;
-    if (current) await fetchRecordingSummaries(current);
-  }, [fetchRecordingSummaries]);
-
   const onCatalog = useCallback((catalog: VoiceCatalog) => {
     voiceCatalogRef.current = catalog;
     setSettingsModel(prev => applyReconciled(prev, reconcileVoice(prev.voice, catalog)));
@@ -579,7 +572,6 @@ export function App() {
           onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
           onOpenSettings={() => setSettingsOpen(true)}
           onToggleBubbleTrim={toggleBubbleTrim}
-          onToggleRecording={toggleRecording}
           onDeleteRecording={deleteRecording}
           buildExport={buildExport}
           onContinueSession={(id: string) => void continueSession(id)}
@@ -612,7 +604,6 @@ interface SessionRouteProps {
   onCancelAssistant: () => void;
   onOpenSettings: () => void;
   onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
-  onToggleRecording: (enabled: boolean) => Promise<void>;
   onDeleteRecording: () => Promise<void>;
   buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>;
   onContinueSession: (sessionId: string) => void;
@@ -622,6 +613,29 @@ interface SessionRouteProps {
 function SessionRoute(props: SessionRouteProps) {
   const params = useParams();
   const routeSessionId = params.sessionId;
+  const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const exportRecording = useCallback(async () => {
+    if (!props.liveSessionId || props.recordingView.includedCount === 0) return;
+    setExporting(true);
+    try {
+      const blob = await props.buildExport();
+      if (blob) downloadRecording(blob, props.liveSessionId);
+    } finally {
+      setExporting(false);
+    }
+  }, [props.liveSessionId, props.recordingView.includedCount, props.buildExport]);
+
+  const deleteRecording = useCallback(async () => {
+    setDeleting(true);
+    try {
+      await props.onDeleteRecording();
+    } finally {
+      setDeleting(false);
+    }
+  }, [props.onDeleteRecording]);
+
   if (props.liveSessionId === routeSessionId) {
     return <div className="session-layout">
       <SessionScreen
@@ -636,8 +650,11 @@ function SessionRoute(props: SessionRouteProps) {
         settingsOpen={props.settingsOpen}
         recording={props.recordingView}
         onToggleBubbleTrim={props.onToggleBubbleTrim}
+        onExportRecording={exportRecording}
+        onDeleteRecording={deleteRecording}
+        exporting={exporting}
+        deleting={deleting}
       />
-      {props.liveSessionId ? <RecordingControls sessionId={props.liveSessionId} buildExport={props.buildExport} recording={props.recordingView} onToggleRecording={props.onToggleRecording} onDelete={props.onDeleteRecording} /> : null}
     </div>;
   }
   if (props.resuming) return <main className="index-shell"><p className="hint"><Spinner className="size-4" />Resuming session…</p></main>;

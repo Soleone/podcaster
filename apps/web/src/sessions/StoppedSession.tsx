@@ -137,7 +137,6 @@ export function StoppedSession(props: StoppedSessionProps) {
     <Card className="stopped-actions" role="group" aria-label="Session actions">
       <div className="stopped-actions-status">
         <Badge variant="default">{session.state === 'active' ? 'Interrupted' : 'Ended'}</Badge>
-        <span className="hint">{recording.totalCount === 0 ? 'No recording in this session.' : `${recording.includedCount} of ${recording.totalCount} recorded messages included in the export.`}</span>
       </div>
       <div className="button-row">
         <Button onClick={props.onContinue}><Mic2 aria-hidden="true" />Continue session</Button>
