@@ -95,7 +95,7 @@ export function SessionIndex(props: SessionIndexProps) {
     </Card> : null}
 
     <section aria-label="Start a new session" className="index-readiness">
-      <Readiness sessionAvailable={props.sessionAvailable} onStart={props.onStart} onCatalog={props.onCatalog} onOpenSettings={props.onOpenSettings} onCapability={props.onCapability} />
+      <Readiness sessionAvailable={props.sessionAvailable} onStart={props.onStart} onCatalog={props.onCatalog} onCapability={props.onCapability} />
     </section>
 
     <section className="session-list" aria-labelledby="session-list-title">

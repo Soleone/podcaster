@@ -6,7 +6,6 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
-import { SettingsButton } from '../settings/SettingsDialog';
 import './readiness.css';
 
 type Capability = { id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string };
@@ -21,7 +20,7 @@ const capabilityIcons: Record<string, LucideIcon> = { voice_input: Mic, voice_ou
 const capabilityBadge: Record<Capability['state'], 'success' | 'warning' | 'destructive'> = { ready: 'success', needs_action: 'warning', unavailable: 'destructive' };
 const capabilityBadgeLabel: Record<Capability['state'], string> = { ready: 'Ready', needs_action: 'Needs attention', unavailable: 'Unavailable' };
 
-export function Readiness(props: { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onOpenSettings: () => void; onCapability?: (capability: string) => void }) {
+export function Readiness(props: { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onCapability?: (capability: string) => void }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const [capability, setCapability] = useState<string>();
   const [snapshot, setSnapshot] = useState<Snapshot>();
@@ -157,13 +156,6 @@ export function Readiness(props: { sessionAvailable: boolean; onStart: (capabili
           : 'A few things need your attention before you can start.';
 
   return <section className="readiness-shell">
-    <header className="readiness-header">
-      <div>
-        <p className="eyebrow">Get started</p>
-        <h1 className="readiness-title">Set up your thinking companion</h1>
-      </div>
-      {acknowledged ? <SettingsButton onClick={props.onOpenSettings} /> : null}
-    </header>
     {!acknowledged ? <Card className="readiness-card" aria-labelledby="privacy-title">
       <div className="readiness-card-head">
         <h2 id="privacy-title" className="readiness-card-title">Before you continue</h2>

@@ -3,9 +3,7 @@
 body{margin:0}
 
 .readiness-shell{width:min(46rem,calc(100% - 2rem));margin:3rem auto}
-.readiness-header{margin:0 0 1.5rem;display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
 .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-weight:700;color:var(--muted-foreground);margin:0}
-.readiness-title{font-size:clamp(1.5rem,4vw,2rem);font-weight:700;line-height:1.15;letter-spacing:-.01em;margin:.2rem 0 0}
 
 .readiness-card{padding:1.5rem;border-color:var(--border);box-shadow:0 1px 2px color-mix(in srgb,var(--shadow-color) 5%,transparent)}
 .readiness-card-head{margin-bottom:1rem}
