@@ -20,6 +20,8 @@ export interface StoppedSessionProps {
   writer: StableTurnWriter;
   sessionId: string;
   agentName: string;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
   onContinue: () => void;
   onBack: () => void;
 }
@@ -132,6 +134,8 @@ export function StoppedSession(props: StoppedSessionProps) {
       onStop={props.onBack}
       onCancelAssistant={() => undefined}
       onOpenSettings={() => undefined}
+      darkMode={props.darkMode}
+      onToggleDarkMode={props.onToggleDarkMode}
       settingsOpen={false}
       recording={recording}
       onToggleBubbleTrim={toggleTrim}

@@ -29,6 +29,7 @@ import { StoppedSession } from './sessions/StoppedSession';
 import { bootstrapCapability } from './sessions/session-archive';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
 import { Spinner } from './components/ui/spinner';
+import { persistTheme, readTheme } from './theme';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 type SessionStartSettings = { version: 1; persona: string; voice: VoicePreference };
@@ -100,8 +101,14 @@ export function App() {
   const settingsModelRef = useRef(settingsModel);
   settingsModelRef.current = settingsModel;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => readTheme() === 'dark');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaveError, setSettingsSaveError] = useState<string | undefined>(undefined);
+  const toggleDarkMode = useCallback(() => setDarkMode(value => !value), []);
+
+  useEffect(() => {
+    persistTheme(darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   const currentStartSettings = useCallback((): { settings: SessionStartSettings; digest: string } => {
     const model = settingsModelRef.current;
@@ -546,6 +553,8 @@ export function App() {
           elapsedSeconds={elapsed}
           onStart={start}
           onCatalog={onCatalog}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
           onOpenSettings={() => setSettingsOpen(true)}
           onCapability={setCapability}
           onContinueSession={id => void continueSession(id)}
@@ -561,6 +570,8 @@ export function App() {
           elapsed={elapsed}
           sessionPaused={sessionPaused}
           recordingView={recordingView}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
           settingsOpen={settingsOpen}
           onTogglePause={() => void togglePause()}
           onStop={() => void stop()}
@@ -593,6 +604,8 @@ interface SessionRouteProps {
   elapsed: number;
   sessionPaused: boolean;
   recordingView: RecordingSessionViewState;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
   settingsOpen: boolean;
   onTogglePause: () => void;
   onStop: () => void;
@@ -646,6 +659,8 @@ function SessionRoute(props: SessionRouteProps) {
       onStop={props.onStop}
       onCancelAssistant={props.onCancelAssistant}
       onOpenSettings={props.onOpenSettings}
+      darkMode={props.darkMode}
+      onToggleDarkMode={props.onToggleDarkMode}
       settingsOpen={props.settingsOpen}
       recording={props.recordingView}
       onToggleBubbleTrim={props.onToggleBubbleTrim}
@@ -661,6 +676,8 @@ function SessionRoute(props: SessionRouteProps) {
     writer={props.writer}
     sessionId={routeSessionId}
     agentName={props.agentName}
+    darkMode={props.darkMode}
+    onToggleDarkMode={props.onToggleDarkMode}
     onContinue={() => props.onContinueSession(routeSessionId)}
     onBack={props.onBack}
   />;
