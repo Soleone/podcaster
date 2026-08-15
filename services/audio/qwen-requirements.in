@@ -1,0 +1,8 @@
+# Isolated CUDA runtime for the official qwen-tts Python implementation.
+# Keep this environment separate from the host audio environment: qwen-tts pins
+# Transformers 4.57.3, while the selected ASR environment uses Transformers 5.x.
+qwen-tts==0.1.1
+transformers==4.57.3
+accelerate==1.12.0
+# The project PyPI torch 2.12.1 lock resolves the CUDA 13.0 build on Linux.
+torch==2.12.1
