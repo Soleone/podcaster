@@ -245,16 +245,28 @@ def test_prefetched_multipart_siblings_share_parent_response_id() -> None:
     runtime.close_stream(stream)
 
 
-def test_third_open_raises_defensive_queue_bound() -> None:
-    """len(state.tts) >= 2 remains the defensive bound for uncoordinated clients."""
+def test_rapid_double_replacement_waits_for_oldest_terminalization_fence() -> None:
+    """A second replacement waits for the old response instead of poisoning capture."""
     import threading
 
-    release = threading.Event()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    release_remaining = threading.Event()
+    calls = 0
 
     class BlockingTts(FakeTts):
         def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
-            release.wait(timeout=2)
-            return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 1)
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_started.set()
+                release_first.wait(timeout=2)
+            else:
+                release_remaining.wait(timeout=2)
+            cancel.raise_if_cancelled()
+            if on_audio:
+                on_audio(AudioChunk(0, bytes(960), 24_000, 0))
+            return SynthesisResult(24_000, 480, 0.02, 0.01, "a" * 64, 1)
 
     runtime = SelectedAudioRuntime(FakeStt(), BlockingTts())
     runtime.mark_ready_for_test()
@@ -262,14 +274,54 @@ def test_third_open_raises_defensive_queue_bound() -> None:
     stream = "018f1f32-7abc-7def-8abc-0123456789ab"
     runtime.open_stream(stream, 12, events.append, lambda _: None)
     first = "018f1f32-7abd-7def-8abc-0123456789ab"
-    second = "018f1f32-7abe-7def-8abc-0123456789ab"
-    third = "018f1f32-7abf-7def-8abc-0123456789ab"
-    for response in (first, second):
-        runtime.open_tts(stream, response, 0)
-        runtime.append_tts(stream, response, 0, 0, "response")
-        runtime.commit_tts(stream, response, 0, 1, hashlib.sha256(b"response").hexdigest())
-    import pytest
-    with pytest.raises(RuntimeError, match="TTS request queue exceeded bound"):
-        runtime.open_tts(stream, third, 0)
-    release.set()
+    replacement = "018f1f32-7abe-7def-8abc-0123456789ab"
+    second_replacement = "018f1f32-7abf-7def-8abc-0123456789ab"
+
+    # Leave the original worker inside the adapter, then admit and commit the
+    # first replacement. The replacement worker is retained behind the original
+    # worker's terminalization fence, so the next open reaches the old bound.
+    runtime.request_tts(stream, first, 0, "response")
+    assert first_started.wait(1)
+    runtime.cancel_tts(stream, first)
+    runtime.request_tts(stream, replacement, 1, "response")
+
+    opened = threading.Event()
+    errors = []
+
+    def open_second_replacement() -> None:
+        try:
+            runtime.open_tts(stream, second_replacement, 2)
+        except BaseException as error:
+            errors.append(error)
+        else:
+            opened.set()
+
+    opener = threading.Thread(target=open_second_replacement)
+    opener.start()
+    assert not opened.wait(0.05)
+
+    # Releasing the oldest worker frees exactly one bounded slot. The waiting
+    # open must then succeed, while its worker remains fenced behind replacement.
+    release_first.set()
+    assert opened.wait(1)
+    opener.join(timeout=1)
+    assert not opener.is_alive()
+    assert errors == []
+
+    runtime.append_tts(stream, second_replacement, 2, 0, "response")
+    runtime.commit_tts(
+        stream,
+        second_replacement,
+        2,
+        1,
+        hashlib.sha256(b"response").hexdigest(),
+    )
+    release_remaining.set()
+    deadline = time.monotonic() + 2
+    while len([event for event in events if event["type"] in {"tts.ended", "tts.cancelled"}]) < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len([event for event in events if event["type"] == "tts.cancelled"]) == 1
+    assert len([event for event in events if event["type"] == "tts.ended"]) == 2
+    assert not any(event["type"] == "sidecar.failure" for event in events)
+    assert runtime.status == "ready"
     runtime.close_stream(stream)

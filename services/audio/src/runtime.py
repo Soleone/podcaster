@@ -10,6 +10,7 @@ import json
 import math
 import secrets
 import threading
+import time
 from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ MAX_BINARY_PAYLOAD = 64 * 1024 - 20
 DEFAULT_VOICE_SPEED_MODIFIER = 1.0
 MIN_VOICE_SPEED_MODIFIER = 0.5
 MAX_VOICE_SPEED_MODIFIER = 2.0
+TTS_TERMINALIZATION_TIMEOUT_SECONDS = 10.0
 
 
 def _sha256_file(path: Path) -> str:
@@ -352,43 +354,58 @@ class SelectedAudioRuntime:
             if not math.isfinite(speed) or speed < MIN_VOICE_SPEED_MODIFIER or speed > MAX_VOICE_SPEED_MODIFIER:
                 raise ValueError("invalid TTS speed modifier")
         tts_key = _tts_key(response_id, part_index)
-        with self._lock:
-            if self.status != "ready":
-                raise RuntimeError("selected runtime requires restart")
-            if state.closed:
-                raise RuntimeError("audio stream is closing")
-            existing = state.tts_stream
-            if existing is not None and not existing.token.cancelled:
-                raise RuntimeError("a progressive TTS stream is already open")
-            if tts_key in state.tts:
-                raise ValueError("duplicate TTS response")
-            if len(state.tts) >= 2:
-                raise RuntimeError("TTS request queue exceeded bound")
-            prior_fences = tuple(state.tts_done.values())
-            playback_id = _uuid7()
-            output_stream_id = secrets.randbelow(2**32)
-            while output_stream_id in state.used_output_stream_ids:
-                output_stream_id = secrets.randbelow(2**32)
-            state.used_output_stream_ids.add(output_stream_id)
-            token = CancellationToken()
-            done = threading.Event()
-            state.tts[tts_key] = token
-            state.tts_done[tts_key] = done
-            text_stream = TtsTextStream(
-                response_id=response_id,
-                epoch=epoch,
-                token=token,
-                condition=threading.Condition(),
-                chunks=deque(),
-                playback_id=playback_id,
-                output_stream_id=output_stream_id,
-                done=done,
-                part_index=part_index,
-                part_id=part_id,
-                voice_id=voice_id,
-                speed_modifier=speed,
-            )
-            state.tts_stream = text_stream
+        # Admission is deliberately bounded, but a replacement must not turn a
+        # short terminalization race into a session-fatal protocol error. Wait
+        # outside self._lock so the retiring worker can remove itself and signal
+        # its fence. The deadline keeps an adapter stall fail-closed rather than
+        # allowing an unbounded request to block the sidecar.
+        deadline = time.monotonic() + TTS_TERMINALIZATION_TIMEOUT_SECONDS
+        while True:
+            with self._lock:
+                if self.status != "ready":
+                    raise RuntimeError("selected runtime requires restart")
+                if state.closed:
+                    raise RuntimeError("audio stream is closing")
+                existing = state.tts_stream
+                if existing is not None and not existing.token.cancelled:
+                    raise RuntimeError("a progressive TTS stream is already open")
+                if tts_key in state.tts:
+                    raise ValueError("duplicate TTS response")
+                if len(state.tts) < 2:
+                    prior_fences = tuple(state.tts_done.values())
+                    playback_id = _uuid7()
+                    output_stream_id = secrets.randbelow(2**32)
+                    while output_stream_id in state.used_output_stream_ids:
+                        output_stream_id = secrets.randbelow(2**32)
+                    state.used_output_stream_ids.add(output_stream_id)
+                    token = CancellationToken()
+                    done = threading.Event()
+                    state.tts[tts_key] = token
+                    state.tts_done[tts_key] = done
+                    text_stream = TtsTextStream(
+                        response_id=response_id,
+                        epoch=epoch,
+                        token=token,
+                        condition=threading.Condition(),
+                        chunks=deque(),
+                        playback_id=playback_id,
+                        output_stream_id=output_stream_id,
+                        done=done,
+                        part_index=part_index,
+                        part_id=part_id,
+                        voice_id=voice_id,
+                        speed_modifier=speed,
+                    )
+                    state.tts_stream = text_stream
+                    break
+                # Dict insertion order is admission order, so the first fence is
+                # the oldest nonterminal worker. The worker's finally block pops
+                # its state before setting this event.
+                oldest_fence = next(iter(state.tts_done.values()), None)
+
+            remaining = deadline - time.monotonic()
+            if oldest_fence is None or remaining <= 0 or not oldest_fence.wait(timeout=remaining):
+                raise RuntimeError("TTS request queue exceeded bound: prior worker did not terminalize")
 
         def work() -> None:
             try:
@@ -593,8 +610,8 @@ class SelectedAudioRuntime:
             # prefetched successor can open while this worker finishes synthesis.
             # The committed stream stays in state.tts/tts_done until the worker
             # terminalizes; the successor's worker waits on its fence. This is the
-            # decision-007 two-nonterminal-stream design; len(state.tts) >= 2 in
-            # open_tts remains the defensive bound for uncoordinated clients.
+            # decision-007 two-nonterminal-stream design; a further open waits on
+            # the oldest fence before admitting another bounded stream.
             if state.tts_stream is text_stream:
                 state.tts_stream = None
             with text_stream.condition:

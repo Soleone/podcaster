@@ -47,7 +47,7 @@ The race fix is structurally correct: the sidecar waits on the prior TTS worker'
 
 ## Findings and follow-up
 
-- **[medium] Single-replacement bound** — `runtime.py` open_tts `len(state.tts) >= 2`: a second replacement arriving while the first replacement's worker is still terminalizing raises "TTS request queue exceeded bound" with `recoverable: false`, which closes capture. This is the same failure class as the historical bug, now bounded and fail-closed (window is terminalization latency, typically <0.5 s, up to adapter-stall). **Follow-up tracked** (`sq`): make the replacement wait on the oldest fence instead of raising, or fail recoverable.
+- **[medium, resolved] Single-replacement bound** — The prior `runtime.py` `open_tts` bound raised "TTS request queue exceeded bound" with `recoverable: false` when a second replacement arrived while the first replacement's worker was terminalizing. `open_tts` now keeps the two-nonterminal-stream bound but waits outside the runtime lock on the oldest terminalization fence for up to 10 seconds before failing closed on an adapter stall. Focused regression coverage is `services/audio/tests/test_runtime_multipart.py:test_rapid_double_replacement_waits_for_oldest_terminalization_fence`.
 - **[low] Retry exercised the mid-reasoning replacement path** (`replaced-before-tts`); the post-TTS (worker-live) branch is covered by the unit test above, not the real-stack run. `barge_in.confirmed` provisional path not exercised end-to-end.
 - **[low] Evidence untracked** — `artifacts/evidence/`, `scripts/multi-turn-retry.mjs`, `scripts/fixtures/*` should be committed for provenance.
 - **[nit] Physical mic/headphone ergonomics** not human-tested; the automated retry exercises the identical real code path (real models, real Pi, real speech, browser protocol).
@@ -62,8 +62,8 @@ The race fix is structurally correct: the sidecar waits on the prior TTS worker'
 | No regressions | 209 py + 221 host + 1084 contracts + 95 web + 4 e2e + check | Pass |
 | Independent review | Reviewer: PASS, no blocker/high | Pass |
 
-**Gate result: passed.** Milestone 5 is closed for the first prototype; residual limitations are documented above and tracked.
+**Gate result: passed.** Milestone 5 is closed for the first prototype; residual limitations are documented above and tracked. The double-replacement terminalization race is resolved; an adapter that remains stalled beyond the bounded wait still fails closed by design.
 
 ## Decision
 
-Close T5.3. Proceed with the TTS quality track (Qwen3-TTS CUDA evaluation, Kokoro-on-CUDA P0) and the recording-feature integration already in flight. Treat physical-mic ergonomics, the double-replacement bound, and long-run playback as observation/follow-up items, not satisfied gates.
+Close T5.3. Proceed with the TTS quality track (Qwen3-TTS CUDA evaluation, Kokoro-on-CUDA P0) and the recording-feature integration already in flight. Treat physical-mic ergonomics and long-run playback as observation/follow-up items, not satisfied gates.
