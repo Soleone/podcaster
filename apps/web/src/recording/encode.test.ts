@@ -29,6 +29,23 @@ describe('encodeMp3', () => {
     const bytes = encodeMp3(tone(100, 16000), 16000, 64);
     expect(hasMp3FrameHeader(bytes)).toBe(true);
   });
+
+  it('reports monotonic progress that ends at exactly 1', () => {
+    const pcm = tone(24000, 24000);
+    const fractions: number[] = [];
+    encodeMp3(pcm, 24000, 64, fraction => fractions.push(fraction));
+    expect(fractions.length).toBeGreaterThan(1);
+    for (let index = 1; index < fractions.length; index++) {
+      expect(fractions[index]!).toBeGreaterThanOrEqual(fractions[index - 1]!);
+    }
+    expect(fractions[fractions.length - 1]).toBe(1);
+  });
+
+  it('reports a final 1 even for a tiny input', () => {
+    const fractions: number[] = [];
+    encodeMp3(tone(100, 16000), 16000, 64, fraction => fractions.push(fraction));
+    expect(fractions[fractions.length - 1]).toBe(1);
+  });
 });
 
 interface FakeWorker {
@@ -88,5 +105,37 @@ describe('encoder worker client', () => {
     const settled = request.then(() => 'resolved', error => `rejected:${(error as Error).message}`);
     worker.onmessage?.({ data: { requestId: posted.requestId, error: 'encoder exploded' } } as MessageEvent);
     await expect(settled).resolves.toMatch(/^rejected:encoder exploded$/);
+  });
+
+  it('forwards progress frames when a callback is supplied and resolves exact bytes', async () => {
+    const { worker, encode } = fakeWorker();
+    const onProgress = vi.fn();
+    const request = encode(tone(8000, 16000), 16000, 64, onProgress);
+    const posted = worker.postMessage.mock.calls[0]![0] as { requestId: number; reportProgress?: boolean };
+    expect(posted.reportProgress).toBe(true);
+    worker.onmessage?.({ data: { requestId: posted.requestId, progress: 0.5 } } as MessageEvent);
+    expect(onProgress).toHaveBeenCalledWith(0.5);
+    const mp3 = new Uint8Array([0xff, 0xfb, 9, 8]);
+    worker.onmessage?.({ data: { requestId: posted.requestId, mp3 } } as MessageEvent);
+    await expect(request).resolves.toEqual(mp3);
+  });
+
+  it('omits reportProgress when no callback is supplied', async () => {
+    const { worker, encode } = fakeWorker();
+    encode(tone(8000, 16000), 16000, 64);
+    const posted = worker.postMessage.mock.calls[0]![0] as { requestId: number; reportProgress?: boolean };
+    expect(posted).not.toHaveProperty('reportProgress');
+  });
+
+  it('ignores progress for an unknown request id without disturbing known requests', async () => {
+    const { worker, encode } = fakeWorker();
+    const onProgress = vi.fn();
+    const request = encode(tone(8000, 16000), 16000, 64, onProgress);
+    worker.onmessage?.({ data: { requestId: 9999, progress: 0.5 } } as MessageEvent);
+    expect(onProgress).not.toHaveBeenCalled();
+    const posted = worker.postMessage.mock.calls[0]![0] as { requestId: number };
+    const mp3 = new Uint8Array([0xff, 0xfb, 1]);
+    worker.onmessage?.({ data: { requestId: posted.requestId, mp3 } } as MessageEvent);
+    await expect(request).resolves.toEqual(mp3);
   });
 });

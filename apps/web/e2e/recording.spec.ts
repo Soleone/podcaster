@@ -74,7 +74,7 @@ test('trims one assistant part without removing the rest of its bubble', async (
 });
 
 test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+  await enterFakeSession(page, server.origin, { decodeDelayMs: 50 });
   const toggle = page.getByLabel('Record this session');
   await toggle.click();
   await expect(page.getByLabel('Recording status: 0 items')).toBeVisible();
@@ -115,9 +115,14 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   await expect(page.getByLabel('Recording status: 1 of 1 messages included')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeEnabled();
 
-  // Export an MP3 download.
+  // Export an MP3 download. While building, the disabled button, a
+  // progressbar, and phase-aware status text must all be visible before the
+  // native save dialog opens.
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export' }).click();
+  await expect(page.getByRole('button', { name: 'Exporting…' })).toBeDisabled();
+  await expect(page.getByRole('progressbar', { name: 'Export progress' })).toBeVisible();
+  await expect(page.locator('.export-progress .hint')).toHaveText(/Reading recording…|Decoding \d+ of \d+ clips…|Encoding MP3… \d+%|Preparing download…/);
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^podcaster-[0-9a-f]{8}-\d{4}-\d{2}-\d{2}\.mp3$/);
 

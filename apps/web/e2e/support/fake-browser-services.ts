@@ -1,7 +1,9 @@
 import type { Page } from '@playwright/test';
 
-export async function installFakeMicrophone(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+export interface FakeBrowserOptions { decodeDelayMs?: number }
+
+export async function installFakeMicrophone(page: Page, options: FakeBrowserOptions = {}): Promise<void> {
+  await page.addInitScript((initOptions: FakeBrowserOptions) => {
     type Listener = () => void;
     class FakeTrack {
       private readonly listeners = new Map<string, Listener[]>();
@@ -51,7 +53,11 @@ export async function installFakeMicrophone(page: Page): Promise<void> {
       async close(): Promise<void> {}
       async decodeAudioData(_data: ArrayBuffer): Promise<FakeAudioBuffer> {
         // The recording export path decodes each MP3 item before splicing; the
-        // fake returns one second of silence at 16 kHz.
+        // fake returns one second of silence at 16 kHz. The optional delay lets
+        // the export-progress UI observe the decoding phase.
+        if ((initOptions.decodeDelayMs ?? 0) > 0) {
+          await new Promise<void>(resolve => setTimeout(resolve, initOptions.decodeDelayMs));
+        }
         return new FakeAudioBuffer(16_000, 16_000);
       }
     }
@@ -78,11 +84,11 @@ export async function installFakeMicrophone(page: Page): Promise<void> {
     });
     Object.defineProperty(window, 'AudioContext', { configurable: true, value: FakeAudioContext });
     Object.defineProperty(window, 'AudioWorkletNode', { configurable: true, value: FakeAudioWorkletNode });
-  });
+  }, options);
 }
 
-export async function enterFakeSession(page: Page, origin: string): Promise<void> {
-  await installFakeMicrophone(page);
+export async function enterFakeSession(page: Page, origin: string, options: FakeBrowserOptions = {}): Promise<void> {
+  await installFakeMicrophone(page, options);
   await page.goto(origin);
   await page.getByRole('button', { name: 'Continue and check readiness' }).click();
   await page.getByRole('button', { name: 'Enable microphone' }).click();

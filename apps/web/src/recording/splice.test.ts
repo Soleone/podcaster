@@ -4,7 +4,7 @@ import { RecordingStore, type RecordingRole, type StoredRecordingItem } from '..
 import type { StoredTurn } from '../storage/schema';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
 import type { EncodeMp3 } from './encode';
-import { buildRecording, EXPORT_GAP_MS, FINAL_KBPS, FINAL_SAMPLE_RATE, MAX_NORMALIZATION_GAIN, SILENCE_RMS_FLOOR, TARGET_RMS, type SpliceDependencies } from './splice';
+import { buildRecording, DECODE_END, DECODE_START, ENCODE_END, ENCODE_START, EXPORT_GAP_MS, FINAL_KBPS, FINAL_SAMPLE_RATE, MAX_NORMALIZATION_GAIN, PREPARING_END, READ_END, SILENCE_RMS_FLOOR, TARGET_RMS, type ExportProgress, type SpliceDependencies } from './splice';
 
 let dbName = '';
 afterEach(async () => {
@@ -269,6 +269,94 @@ describe('buildRecording', () => {
       expect(value).toBeGreaterThanOrEqual(-32768);
       expect(value).toBeLessThanOrEqual(32767);
     }
+    store.close();
+  });
+
+  it('reports reading, per-clip decoding, and preparing progress that is monotonic', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const T2 = '018f1f32-7abe-7def-8abc-0123456789ab';
+    const store = (await deps([], [turn(T1, 1), turn(T2, 2)])).store;
+    const { decode, resample, encode, turns } = await deps([
+      { sampleRate: 16000, channelData: tone(1600) },
+      { sampleRate: 16000, channelData: tone(800) },
+    ], [turn(T1, 1), turn(T2, 2)]);
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    await store.put(item({ itemId: 'b', role: 'user', recordSeq: 1, sampleRate: 16000, turnId: T2 }));
+    const progress: ExportProgress[] = [];
+    await buildRecording(SESSION, { store, turns, decode, resample, encode, onProgress: update => progress.push(update) });
+    // Reading is emitted once at READ_END before decoding starts.
+    expect(progress[0]).toMatchObject({ phase: 'reading', message: 'Reading recording…', value: READ_END });
+    // Every emitted value stays monotonic.
+    for (let index = 1; index < progress.length; index++) {
+      expect(progress[index]!.value).toBeGreaterThanOrEqual(progress[index - 1]!.value);
+    }
+    // Both clips surface their own completed count and the final decode uses DECODE_END.
+    const first = progress.find(update => update.message === 'Decoding 1 of 2 clips…');
+    const second = progress.find(update => update.message === 'Decoding 2 of 2 clips…');
+    expect(first?.value).toBe(DECODE_START + (DECODE_END - DECODE_START) * (1 / 2));
+    expect(second?.value).toBe(DECODE_END);
+    // The successful export closes with an exactly-1 preparing call.
+    expect(progress[progress.length - 1]).toMatchObject({ phase: 'preparing', message: 'Preparing download…', value: PREPARING_END });
+    store.close();
+  });
+
+  it('counts a survivor that decodes to no samples toward per-clip progress', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const store = (await deps([], [turn(T1, 1)])).store;
+    // The first survivor decodes to silence (empty samples); the second is real.
+    const { decode, resample, encode, turns } = await deps([
+      { sampleRate: 16000, channelData: new Float32Array(0) },
+      { sampleRate: 16000, channelData: tone(800) },
+    ], [turn(T1, 1)]);
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    await store.put(item({ itemId: 'b', role: 'user', recordSeq: 1, sampleRate: 16000, turnId: T1 }));
+    const progress: ExportProgress[] = [];
+    const blob = await buildRecording(SESSION, { store, turns, decode, resample, encode, onProgress: update => progress.push(update) });
+    expect(blob).not.toBeNull();
+    expect(progress.some(update => update.message === 'Decoding 1 of 2 clips…')).toBe(true);
+    expect(progress.some(update => update.message === 'Decoding 2 of 2 clips…')).toBe(true);
+    store.close();
+  });
+
+  it('maps encoder fractions into the encoding band and never regresses', async () => {
+    const T1 = '018f1f32-7abd-7def-8abc-0123456789ab';
+    const store = await openStore();
+    await store.put(item({ itemId: 'a', role: 'user', recordSeq: 0, sampleRate: 16000, turnId: T1 }));
+    const encode = vi.fn<EncodeMp3>(async (_pcm, _sampleRate, _bitrateKbps, onProgress) => {
+      onProgress?.(0.25);
+      onProgress?.(0.1); // regression that must be clamped
+      onProgress?.(0.5);
+      onProgress?.(1);
+      return new Uint8Array([1, 2, 3]);
+    });
+    const { decode, resample, turns } = await deps([{ sampleRate: 16000, channelData: tone(1600) }], [turn(T1, 1)], { store, resample: identityResample });
+    const progress: ExportProgress[] = [];
+    await buildRecording(SESSION, { store, turns, decode, resample, encode, onProgress: update => progress.push(update) });
+    const encoding = progress.filter(update => update.phase === 'encoding');
+    expect(encoding.length).toBeGreaterThanOrEqual(3);
+    for (const update of encoding) {
+      expect(update.value).toBeGreaterThanOrEqual(ENCODE_START);
+      expect(update.value).toBeLessThanOrEqual(ENCODE_END);
+    }
+    // The regressing 0.1 after 0.25 must clamp to the same encoded value.
+    expect(encoding[0]!.value).toBeGreaterThan(ENCODE_START);
+    expect(encoding[1]!.value).toBe(encoding[0]!.value);
+    for (let index = 1; index < encoding.length; index++) {
+      expect(encoding[index]!.value).toBeGreaterThanOrEqual(encoding[index - 1]!.value);
+    }
+    for (let index = 1; index < progress.length; index++) {
+      expect(progress[index]!.value).toBeGreaterThanOrEqual(progress[index - 1]!.value);
+    }
+    expect(progress[progress.length - 1]).toMatchObject({ phase: 'preparing', value: PREPARING_END });
+    store.close();
+  });
+
+  it('keeps the progress callback quiet for an empty export', async () => {
+    const { store, decode, resample, encode, turns } = await deps([], []);
+    const onProgress = vi.fn();
+    const blob = await buildRecording(SESSION, { store, turns, decode, resample, encode, onProgress });
+    expect(blob).toBeNull();
+    expect(onProgress).not.toHaveBeenCalled();
     store.close();
   });
 });

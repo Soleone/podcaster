@@ -14,6 +14,22 @@ export const MAX_NORMALIZATION_GAIN = 10;
 
 export type NormalizeMode = 'none' | 'rms';
 
+export type ExportPhase = 'reading' | 'decoding' | 'encoding' | 'preparing';
+export interface ExportProgress {
+  phase: ExportPhase;
+  message: string;
+  value: number;
+}
+export type ExportOnProgress = (progress: ExportProgress) => void;
+
+export const READ_START = 0;
+export const READ_END = 0.04;
+export const DECODE_START = 0.04;
+export const DECODE_END = 0.9;
+export const ENCODE_START = 0.9;
+export const ENCODE_END = 0.99;
+export const PREPARING_END = 1;
+
 function normalizeSegment(input: Float32Array, mode: NormalizeMode): Float32Array {
   if (mode === 'none') return input;
   let sumSquares = 0;
@@ -38,6 +54,7 @@ export interface SpliceDependencies {
   encode: EncodeMp3;
   gapMs?: number;
   normalizeMode?: NormalizeMode;
+  onProgress?: ExportOnProgress;
 }
 
 export function createBrowserDecoder(): DecodeMp3 {
@@ -72,29 +89,50 @@ function orderItems(items: StoredRecordingItem[], turnSequences: Map<string, num
  */
 export async function buildRecording(sessionId: string, deps: SpliceDependencies): Promise<Blob | null> {
   const normalizeMode: NormalizeMode = deps.normalizeMode ?? 'rms';
+  let lastReported = -1;
+  const reportProgress = (update: ExportProgress): void => {
+    if (deps.onProgress === undefined) return;
+    if (!Number.isFinite(update.value)) return;
+    const clamped = Math.min(1, Math.max(0, update.value));
+    const value = clamped < lastReported ? lastReported : clamped;
+    lastReported = value;
+    deps.onProgress({ ...update, value });
+  };
   const [items, turns] = await Promise.all([deps.store.getSessionItems(sessionId), deps.turns.getTurns(sessionId)]);
   // Trimmed bubbles are excluded before ordering, decoding, resampling, or gap
   // insertion so their Blobs are never touched during export.
   const survivors = items.filter(item => !item.trimmed);
   if (survivors.length === 0) return null;
+  reportProgress({ phase: 'reading', message: 'Reading recording…', value: READ_END });
   const turnSequences = new Map(turns.map(turn => [turn.turnId, turn.timelineSequence]));
   const gapSamples = Math.round(FINAL_SAMPLE_RATE * Math.max(0, deps.gapMs ?? EXPORT_GAP_MS) / 1000);
   const segments: Float32Array[] = [];
   let totalSamples = 0;
+  let completed = 0;
   for (const item of orderItems(survivors, turnSequences)) {
-    const { sampleRate, channelData } = await deps.decode(new Uint8Array(await item.data.arrayBuffer()));
-    let samples = channelData;
-    if (item.role === 'agent' && item.interrupted && item.deliveredSamples !== null) {
-      const trim = Math.max(0, Math.min(item.deliveredSamples, samples.length));
-      samples = samples.subarray(0, trim);
+    let completedNormally = false;
+    try {
+      const { sampleRate, channelData } = await deps.decode(new Uint8Array(await item.data.arrayBuffer()));
+      let samples = channelData;
+      if (item.role === 'agent' && item.interrupted && item.deliveredSamples !== null) {
+        const trim = Math.max(0, Math.min(item.deliveredSamples, samples.length));
+        samples = samples.subarray(0, trim);
+      }
+      if (samples.length === 0) { completedNormally = true; continue; }
+      const resampled = deps.resample(samples, sampleRate, FINAL_SAMPLE_RATE);
+      if (resampled.length === 0) { completedNormally = true; continue; }
+      const normalized = normalizeSegment(resampled, normalizeMode);
+      if (segments.length > 0) totalSamples += gapSamples;
+      segments.push(normalized);
+      totalSamples += normalized.length;
+      completedNormally = true;
+    } finally {
+      if (completedNormally) {
+        completed++;
+        const value = DECODE_START + (DECODE_END - DECODE_START) * (completed / survivors.length);
+        reportProgress({ phase: 'decoding', message: `Decoding ${completed} of ${survivors.length} clips…`, value });
+      }
     }
-    if (samples.length === 0) continue;
-    const resampled = deps.resample(samples, sampleRate, FINAL_SAMPLE_RATE);
-    if (resampled.length === 0) continue;
-    const normalized = normalizeSegment(resampled, normalizeMode);
-    if (segments.length > 0) totalSamples += gapSamples;
-    segments.push(normalized);
-    totalSamples += normalized.length;
   }
   if (segments.length === 0) return null;
   const joined = new Float32Array(totalSamples);
@@ -105,6 +143,14 @@ export async function buildRecording(sessionId: string, deps: SpliceDependencies
     offset += segments[index]!.length;
   }
   const pcm16 = floatToPcm16(joined);
-  const mp3 = await deps.encode(pcm16, FINAL_SAMPLE_RATE, FINAL_KBPS);
+  let lastEncodeFraction = 0;
+  const mp3 = await deps.encode(pcm16, FINAL_SAMPLE_RATE, FINAL_KBPS, fraction => {
+    const clamped = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : lastEncodeFraction;
+    const eff = clamped < lastEncodeFraction ? lastEncodeFraction : clamped;
+    lastEncodeFraction = eff;
+    const value = ENCODE_START + (ENCODE_END - ENCODE_START) * eff;
+    reportProgress({ phase: 'encoding', message: `Encoding MP3… ${Math.round(eff * 100)}%`, value });
+  });
+  reportProgress({ phase: 'preparing', message: 'Preparing download…', value: PREPARING_END });
   return new Blob([mp3], { type: 'audio/mpeg' });
 }

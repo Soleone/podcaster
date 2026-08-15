@@ -6,7 +6,7 @@ import { RecordingControls } from './recording/RecordingControls';
 import { createEncoderClient } from './recording/encoder-client';
 import { RecordingRecorder } from './recording/recorder';
 import { offlineResample } from './recording/resample';
-import { buildRecording, createBrowserDecoder } from './recording/splice';
+import { buildRecording, createBrowserDecoder, type ExportOnProgress } from './recording/splice';
 import { SessionScreen } from './session/SessionScreen';
 import { activityLog } from './session/activity-log';
 import { SessionController, type ControlledPlayback } from './session/controller';
@@ -430,18 +430,20 @@ export function App() {
     }
   }, [sessionPaused]);
 
-  const buildExport = useCallback(async () => {
+  const buildExport = useCallback(async (onProgress?: ExportOnProgress) => {
     const store = recordingStoreRef.current;
     const writer = writerRef.current;
     const current = recordingSessionRef.current;
     if (!store || !writer || !current) return null;
-    return buildRecording(current, {
+    const deps: Parameters<typeof buildRecording>[1] = {
       store,
       turns: writer,
       decode: createBrowserDecoder(),
       resample: offlineResample,
       encode: createEncoderClient(),
-    });
+    };
+    if (onProgress) deps.onProgress = onProgress;
+    return buildRecording(current, deps);
   }, []);
 
   const pollRecording = useCallback(async (targetSession: string): Promise<void> => {
@@ -612,7 +614,7 @@ interface SessionRouteProps {
   onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
   onToggleRecording: (enabled: boolean) => Promise<void>;
   onDeleteRecording: () => Promise<void>;
-  buildExport: () => Promise<Blob | null>;
+  buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>;
   onContinueSession: (sessionId: string) => void;
   onBack: () => void;
 }

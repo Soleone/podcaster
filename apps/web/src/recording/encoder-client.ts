@@ -1,7 +1,7 @@
-import type { EncodeMp3 } from './encode';
+import { type EncodeMp3, type EncodeSampleRate } from './encode';
 import EncodeWorker from './encoder.worker?worker';
 
-interface PendingEncode { resolve(value: Uint8Array): void; reject(error: Error): void }
+interface PendingEncode { resolve(value: Uint8Array): void; reject(error: Error): void; onProgress?: (fraction: number) => void }
 
 /**
  * Promise wrapper around the Vite module worker that runs encodeMp3 off the
@@ -14,9 +14,15 @@ export function createEncoderClient(factory: () => Worker = () => new EncodeWork
   let nextRequestId = 0;
   let terminated = false;
   worker.onmessage = (event: MessageEvent) => {
-    const message = event.data as { requestId: number; mp3?: Uint8Array; error?: string };
+    const message = event.data as { requestId: number; mp3?: Uint8Array; error?: string; progress?: number };
     const entry = pending.get(message.requestId);
     if (!entry) return;
+    if (message.progress !== undefined) {
+      if (message.mp3 === undefined && message.error === undefined) {
+        entry.onProgress?.(message.progress);
+        return;
+      }
+    }
     pending.delete(message.requestId);
     if (message.error !== undefined) entry.reject(new Error(message.error));
     else if (message.mp3 !== undefined) entry.resolve(message.mp3);
@@ -26,11 +32,17 @@ export function createEncoderClient(factory: () => Worker = () => new EncodeWork
     for (const entry of pending.values()) entry.reject(new Error(event.message || 'Encoder worker failed.'));
     pending.clear();
   };
-  return async (pcm16, sampleRate, bitrateKbps) => {
+  return async (pcm16, sampleRate, bitrateKbps, onProgress) => {
     if (terminated) throw new Error('Encoder worker is terminated.');
     const requestId = nextRequestId++;
-    const result = new Promise<Uint8Array>((resolve, reject) => pending.set(requestId, { resolve, reject }));
-    worker.postMessage({ requestId, pcm16, sampleRate, bitrateKbps });
+    const result = new Promise<Uint8Array>((resolve, reject) => {
+      const entry: PendingEncode = { resolve, reject };
+      if (onProgress) entry.onProgress = onProgress;
+      pending.set(requestId, entry);
+    });
+    const request: { requestId: number; pcm16: Int16Array; sampleRate: EncodeSampleRate; bitrateKbps: number; reportProgress?: boolean } = { requestId, pcm16, sampleRate, bitrateKbps };
+    if (onProgress) request.reportProgress = true;
+    worker.postMessage(request);
     return result;
   };
 }
