@@ -14,13 +14,13 @@ test('streams a dimmed assistant preview before audio and solidifies it on final
   await emit(page, 'policy.decision', { turnId: 'turn-1', posture: 'question', eligible: true, reasonCodes: ['selected'] });
   await emit(page, 'reasoning.started', { turnId: 'turn-1', responseId: 'response-1', posture: 'question' });
 
-  // Before the first preview arrives, the typing shimmer is the only signal and no
+  // Before the first preview arrives, the thinking shimmer is the only signal and no
   // assistant bubble is rendered yet.
-  await expect(page.locator('.assistant-activity')).toContainText('is typing…');
+  await expect(page.locator('.assistant-activity')).toContainText('is thinking…');
   expect(await page.locator('.assistant-bubble').count()).toBe(0);
 
   // The first preview renders the assistant row early, dimmed/tentative, and the
-  // typing shimmer hands off to it.
+  // thinking shimmer hands off to it.
   await emit(page, 'reasoning.delta', { turnId: 'turn-1', responseId: 'response-1', text: 'Perceived latency' });
   const preview = page.locator('.assistant-bubble.tentative');
   await expect(preview).toContainText('Perceived latency');
