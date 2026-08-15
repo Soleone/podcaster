@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import hmac
 import json
+import logging
 import os
 import signal
 import socket
@@ -286,9 +287,36 @@ class SidecarServer:
                 pass
 
 
+def _silence_aborted_handshake_noise() -> None:
+    """Drop websockets' traceback for TCP connections that die mid-handshake.
+
+    A probe or health-checker can connect to the loopback port and close before
+    completing the WebSocket handshake; websockets logs that benign condition
+    as ERROR with a full exception chain. Genuine protocol failures still
+    surface through the stream handler's own error path.
+    """
+
+    class _DropAbortedHandshake(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return record.getMessage() != "opening handshake failed"
+
+    # The server's connection loggers emit this record on websockets.server
+    # (not the package root), so the filter must be attached there.
+    logging.getLogger("websockets.server").addFilter(_DropAbortedHandshake())
+
+
 def run(host: str, port: int, secret: str) -> NoReturn:
     if host != "127.0.0.1" or port < 0:
         raise ValueError("sidecar must use 127.0.0.1 and an OS-assigned or valid port")
+    # Library noise hygiene: onnxruntime's default logger is separate from the
+    # per-session options, so the Kokoro session's log_severity_level=3 never
+    # silences one-time default notices (e.g. the ScatterND atomic-reduction
+    # fallback). Raise the default to ERROR so only genuine failures reach the
+    # captured stderr, and stop websockets from logging aborted handshakes.
+    import onnxruntime as ort
+
+    ort.set_default_logger_severity(3)
+    _silence_aborted_handshake_noise()
     runtime = SelectedAudioRuntime()
     server = SidecarServer((host, port), secret, runtime)
     signal.signal(signal.SIGTERM, lambda *_: server.shutdown())

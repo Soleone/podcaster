@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import queue
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -28,6 +31,29 @@ class NemotronBackend(Protocol):
     def reset(self) -> None: ...
 
     def close(self) -> None: ...
+
+
+@contextlib.contextmanager
+def _quiet_model_loading() -> Iterator[None]:
+    """Hide library progress bars while loading model weights.
+
+    Transformers renders a tqdm "Loading weights" bar straight to stderr and the
+    hub can print local-file notices; none of that is diagnostic in the sidecar.
+    Capture both streams and only replay them if loading actually fails so real
+    errors keep their context.
+    """
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            yield
+    except BaseException:
+        written = stdout.getvalue() + stderr.getvalue()
+        if written:
+            # The redirect context managers have already restored the real streams.
+            sys.stdout.write(written)
+            sys.stdout.flush()
+        raise
 
 
 @dataclass
@@ -59,14 +85,15 @@ class TransformersNemotronBackend:
             raise ValueError("pinned Nemotron checkpoint is float32; unmatched precision rejected")
         self.chunk_ms = chunk_ms
         self.language = language
-        self.processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
-        self.processor.set_num_lookahead_tokens(LOOKAHEAD_BY_CHUNK_MS[chunk_ms])
-        if self.processor.streaming_latency_ms != chunk_ms:
-            raise RuntimeError("processor streaming latency does not match config")
-        self.model = AutoModelForRNNT.from_pretrained(
-            model_path, local_files_only=True, dtype=torch.float32
-        ).to(self.device)
-        self.model.eval()
+        with _quiet_model_loading():
+            self.processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
+            self.processor.set_num_lookahead_tokens(LOOKAHEAD_BY_CHUNK_MS[chunk_ms])
+            if self.processor.streaming_latency_ms != chunk_ms:
+                raise RuntimeError("processor streaming latency does not match config")
+            self.model = AutoModelForRNNT.from_pretrained(
+                model_path, local_files_only=True, dtype=torch.float32
+            ).to(self.device)
+            self.model.eval()
 
     @staticmethod
     def _pcm_array(chunk: bytes) -> Any:
