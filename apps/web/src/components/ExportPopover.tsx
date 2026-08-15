@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Check, Download } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Alert } from './ui/alert';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from './ui/popover';
@@ -67,7 +67,7 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
   const statusText = status === 'exporting'
     ? progress?.message ?? 'Exporting…'
     : status === 'saved'
-      ? 'Recording downloaded to your browser\'s downloads folder.'
+      ? 'Download started.'
       : status === 'error'
         ? notice || 'The recording could not be exported.'
         : 'Run the export to build and download this recording.';
@@ -85,7 +85,6 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
       {status === 'exporting' && progress
         ? <Progress value={Math.round(progress.value * 100)} aria-label="Export progress" aria-valuetext={progress.message} />
         : null}
-      {status === 'saved' ? <p className="flex items-center gap-1.5 text-sm font-medium text-foreground"><Check className="size-4 shrink-0" />Saved to Downloads</p> : null}
       {status === 'error' ? <Alert variant="destructive">{notice || 'The recording could not be exported.'}</Alert> : null}
     </PopoverContent>
   </Popover>;
