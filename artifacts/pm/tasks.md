@@ -1,7 +1,7 @@
 # Qwen3-TTS task set
 
 ## Recommended route decision
-Start with the **official Qwen3-TTS Python implementation and the 0.6B CustomVoice checkpoint on CPU**, then compare it with the already-selected Kokoro baseline. This is the shortest dependable route to the requester’s goal: it is license-clean, exercises the PRD’s named quality candidate, and avoids adopting a young Rust runtime with a restrictive rider, unproven x86/WSL performance, a 2-GB artifact, and a sidecar/80-ms-packet integration burden. CPU speed is a feasibility measurement, not a promise; the current WSL environment has no usable CUDA route. Treat franken_tts only as a separately cleared future experiment.
+Start with the **official Qwen3-TTS Python implementation and the 0.6B CustomVoice checkpoint on CUDA**, then compare it with the already-selected Kokoro baseline. This is the shortest dependable route to the requester’s goal: it is license-clean, exercises the PRD’s named quality candidate, and avoids adopting a young Rust runtime with a restrictive rider, unproven x86/WSL performance, a 2-GB artifact, and a sidecar/80-ms-packet integration burden. The WSL RTX 4090 now has a validated CUDA route (`torch 2.12.1+cu130`, CUDA 13.0, `sm_89`); QW-2 records its actual feasibility and timings without claiming a latency target. Treat franken_tts only as a separately cleared future experiment.
 
 ## Task list
 
@@ -9,8 +9,8 @@ Start with the **official Qwen3-TTS Python implementation and the 0.6B CustomVoi
 
 | ID | Title | Why | Size | Dependencies | Done artifact / verification |
 |---|---|---|---|---|---|
-| QW-1 | Pin and acquire official Qwen CustomVoice CPU candidate | The PRD requires Qwen3-TTS 0.6B CustomVoice after Kokoro; Decision 004 deliberately did not download or implement it. | S | None | A tracked candidate/config and model-manifest entry recording official source, immutable revision, license URL, exact runtime lock, local paths and SHA-256s; `scripts/verify-models.py` passes before load. |
-| QW-2 | Run an official CPU feasibility spike | The requester wants Qwen actually used/tested; this WSL box has no CUDA execution, while local Qwen latency/RSS are unknown. | S | QW-1 | Dated spike record with command/environment, successful CustomVoice PCM output at 24 kHz, prepare/cold time, request-to-first-audio time, total processing/RTF, peak RSS, and failure logs if it cannot complete. No latency target is claimed. |
+| QW-1 | Pin and acquire official Qwen CustomVoice CUDA candidate | The PRD requires Qwen3-TTS 0.6B CustomVoice after Kokoro; Decision 004 deliberately did not download or implement it. | S | None | A tracked candidate/config and model-manifest entry recording official source, immutable revision, license URL, exact runtime lock, local paths and SHA-256s; `scripts/verify-models.py` passes before load. |
+| QW-2 | Run an official CUDA feasibility spike | The requester wants Qwen actually used/tested on the now-working RTX 4090; local CUDA synthesis, audio validity, timing, VRAM, and RSS are unknown. | S | QW-1 | Dated spike record with command/environment, successful CustomVoice PCM output at 24 kHz, prepare/cold time, request-to-first-audio time, total processing/RTF, peak VRAM and RSS, and failure logs if it cannot complete. No latency target is claimed. |
 
 ### Wave 2 — Make Qwen a replaceable first-class candidate
 
@@ -39,7 +39,7 @@ Start with the **official Qwen3-TTS Python implementation and the 0.6B CustomVoi
 - **Build a franken_tts sidecar or translate its 80-ms packets:** deferred; it adds supervision, framing, cancellation, and restart work before official Qwen is measured.
 - **Zero-shot voice cloning/enrollment:** deferred; requires consent and abuse-policy decisions, and is outside the PRD’s custom-voice productization scope.
 - **Claim Qwen is faster/better from upstream or M4 numbers:** out; only target-machine matched measurements and blinded listening can support selection.
-- **CUDA/RTX-4090 or Nemotron co-residency validation on this WSL box:** deferred to a machine with usable CUDA; do not fabricate a GPU result here.
+- **CUDA/RTX-4090 feasibility:** resolved by QW-2 with a valid official Qwen CUDA synthesis result. Nemotron co-residency and matched production-shape comparison remain later gates; do not fabricate those results.
 - **Other TTS candidates (Chatterbox/Orpheus):** out unless Qwen and Kokoro leave a material measured gap, per the PRD.
 
 ## Anything needed from the user
@@ -48,4 +48,4 @@ None to begin. QW-1 will download roughly 2 GB of ignored model artifacts; stop 
 
 ## Escalation
 
-None. The first two S tasks resolve the only material local uncertainty before adapter investment; if QW-2 cannot produce valid CPU audio, retain Kokoro and record Qwen as infeasible on this machine rather than pursuing franken_tts.
+None. The first two S tasks resolve the only material local uncertainty before adapter investment; if QW-2 cannot produce valid CUDA audio, retain Kokoro and record Qwen as infeasible on this machine rather than pursuing franken_tts.
