@@ -222,6 +222,31 @@ describe("safe session orchestrator multi-part", () => {
     expect(speech.cancelled.filter(item => item.partIndex === undefined).length).toBe(1);
   });
 
+  it("uses the currently paused part when resuming a multipart response", async () => {
+    const body = async function* (): AsyncIterable<PiEvent> {
+      yield { type: "delta", text: "Paris is the capital of France. It sits on the Seine. The city is a cultural hub. Millions of people visit it. The metro is very extensive. The food is world famous. " };
+      yield { type: "final", text: "Paris is the capital of France. It sits on the Seine. The city is a cultural hub. Millions of people visit it. The metro is very extensive. The food is world famous. " };
+    };
+    const { session, events } = setup({ researchPi: new FakeResearchPi(body) });
+    await session.handleStableFinal(turn(0));
+    const responseId = session.snapshot().activeResponseId!;
+    const partOnePlaybackId = ids[82]!;
+
+    // The host tracks the response through its parent ActiveResponse, while the
+    // browser pauses the currently audible body part. The decision must carry
+    // that body playback id or the browser will reject it as stale.
+    session.beginProvisionalBargeIn(responseId);
+    session.playbackPaused({ responseId, playbackId: partOnePlaybackId, outputEpoch: 0, pausedSampleOffset: 120, generatedSamples: 6400 });
+    await session.handleStableFinal(turn(1, "hm"));
+
+    expect(byType(events, "interruption.decision").at(-1)?.payload).toMatchObject({
+      playbackId: partOnePlaybackId,
+      action: "resume",
+      pausedSampleOffset: 120,
+    });
+    expect(byType(events, "barge_in.rejected").at(-1)?.payload).toMatchObject({ resumable: true });
+  });
+
   it("pauses the whole multi-part response on barge-in and confirms cancels every part", async () => {
     const body = async function* (): AsyncIterable<PiEvent> {
       yield { type: "delta", text: "Paris is the capital of France. It sits on the Seine. The city is a cultural hub. Millions of people visit it. The metro is very extensive. The food is world famous. " };

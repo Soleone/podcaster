@@ -82,6 +82,10 @@ interface ActiveResponse {
 interface ProvisionalState {
   responseId: string;
   outputEpoch: number;
+  // Multipart responses keep the parent ActiveResponse pointed at the first
+  // part for response-level lifecycle handling. Interruption checkpoints must
+  // retain the playback identity of the part that was actually paused.
+  playbackId?: string;
   echoRecovered: boolean;
   pausedAtMs: number;
   deadlineAtMs: number;
@@ -710,6 +714,7 @@ export class SessionOrchestrator {
     }
     if (![input.outputEpoch, input.pausedSampleOffset, input.generatedSamples].every(value => this.validOffset(value)) || input.generatedSamples > ledger.generatedSamples || input.pausedSampleOffset > input.generatedSamples || input.pausedSampleOffset < ledger.delivered) return;
     ledger.delivered = input.pausedSampleOffset;
+    provisional.playbackId = input.playbackId;
     provisional.pausedSampleOffset = input.pausedSampleOffset;
     provisional.generatedSamples = input.generatedSamples;
     const pendingTurn = provisional.pendingTurn;
@@ -826,10 +831,11 @@ export class SessionOrchestrator {
   private async decideInterruption(turn: { epoch: number; turnId: string; text: string; endpointComplete: boolean }): Promise<boolean> {
     const provisional = this.provisional;
     const active = this.active;
-    if (!provisional || !active || active.responseId !== provisional.responseId || !active.playbackId) return false;
+    const playbackId = provisional?.playbackId;
+    if (!provisional || !active || active.responseId !== provisional.responseId) return false;
     provisional.turnId = turn.turnId;
     this.phase = "interruption_deciding";
-    if (provisional.pausedSampleOffset === undefined || provisional.generatedSamples === undefined) {
+    if (!playbackId || provisional.pausedSampleOffset === undefined || provisional.generatedSamples === undefined) {
       provisional.pendingTurn = turn;
       return false;
     }
@@ -880,7 +886,7 @@ export class SessionOrchestrator {
     this.emit("interruption.decision", {
       turnId: turn.turnId,
       responseId: provisional.responseId,
-      playbackId: active.playbackId,
+      playbackId,
       outputEpoch: provisional.outputEpoch,
       action: accept ? "accept" : "resume",
       intent: accept ? (decision.action === "accept" ? decision.intent : redirection ? "topic_change" : "correction") : decision.intent,
@@ -899,7 +905,7 @@ export class SessionOrchestrator {
     this.provisional = undefined;
     const pending: AcceptancePendingTerminal = {
       responseId: provisional.responseId,
-      playbackId: active.playbackId,
+      playbackId,
       outputEpoch: provisional.outputEpoch,
       turn: { epoch: provisional.outputEpoch, turnId: turn.turnId, text: turn.text, endpointComplete: turn.endpointComplete },
       cancelTimer: () => {},
@@ -918,14 +924,14 @@ export class SessionOrchestrator {
     provisional.deciding?.abort();
     this.provisional = undefined;
     const active = this.active;
-    const ledger = active?.playbackId ? this.playback.get(active.playbackId) : undefined;
+    const ledger = provisional.playbackId ? this.playback.get(provisional.playbackId) : undefined;
     const safe = Boolean(
       active
       && active.responseId === provisional.responseId
       && active.epoch === provisional.outputEpoch
       && this.epoch === provisional.outputEpoch
       && active.phaseBeforeProvisional === "playing"
-      && active.playbackId
+      && provisional.playbackId
       && ledger
       && !ledger.terminal
       && provisional.pausedSampleOffset !== undefined

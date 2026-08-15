@@ -72,7 +72,7 @@ const correctionCues = /\b(?:no+|nope|nah|not|don'?t|doesn'?t|didn'?t|never|wron
 // Speech that means "keep the paused answer going" when it appears as a lone
 // word or opens a phrase: backchannels, acknowledgements, hedges, and short
 // answers ("yes", "right", "thanks", "please", "more").
-const resumeOpeners = new Set(["yes", "yeah", "yea", "yep", "yup", "right", "sure", "great", "cool", "awesome", "perfect", "nice", "wow", "aha", "okay", "ok", "okey", "fine", "good", "exactly", "absolutely", "definitely", "indeed", "alright", "true", "fair", "thanks", "thank", "please", "more", "sorry", "pardon", "oh", "mhm", "uh", "umm", "uhh", "um", "mm", "mmm", "ah", "er", "like", "k", "one", "got", "understood"]);
+const resumeOpeners = new Set(["yes", "yeah", "yea", "yep", "yup", "right", "sure", "great", "cool", "awesome", "perfect", "nice", "wow", "aha", "okay", "ok", "okey", "fine", "good", "exactly", "absolutely", "definitely", "indeed", "alright", "true", "fair", "thanks", "thank", "please", "more", "sorry", "pardon", "oh", "mhm", "hm", "hmm", "uh", "umm", "uhh", "um", "mm", "mmm", "ah", "er", "like", "k", "one", "got", "understood"]);
 // A fragment continuing the user's own interrupted thought starts with a
 // discourse connective or evaluative hedge ("and then…", "so the thing…",
 // "well…", "very cool"). Such openers keep the paused answer.
