@@ -9,7 +9,7 @@ export type BenchmarkRun = { "schemaVersion": 1; "runId": string; "kind": "synth
 export type BenchmarkSummaryDistribution = { "p50": number; "p95": number; "p99": number; };
 export type BenchmarkSummary = { "counts": { "total": number; "passed": number; "failed": number; "cancelled": number; }; "speechStartToFirstPartialMs": BenchmarkSummaryDistribution | null; "endpointToFinalMs": BenchmarkSummaryDistribution | null; "ttsTimeToFirstAudioMs": BenchmarkSummaryDistribution | null; "rtf": BenchmarkSummaryDistribution | null; "wer": number | null; "cer": number | null; "partialRevisionCount": number; "partialChurnCharacters": number; "underruns": number; "droppedFrames": number; "peakVramBytes": number | null; "steadyVramBytes": number | null; "failures": Array<{ "sourceId": string; "code": string; "stage": string; "message": string; }>; "soak": { "durationSeconds": number; "passed": boolean; "severeFailures": number; "underruns": number; "droppedFrames": number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "deadlineLatenessP95Ms"?: number; "deadlineLatenessMaxMs"?: number; "timingConformance"?: boolean; "resetCount"?: number; "workerLeaks"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; }; "totalAudioDurationSeconds"?: number; "totalSamples"?: number; "droppedOutputChunks"?: number; "peakRssBytes"?: number | null; "synthesisWindowWholeProcessPeakRssBytes"?: number | null; };
 export type BargeInEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out"; "monotonicMs": number; "payload": { "responseId": string; "outputEpoch": number; "resumable": boolean; "rewindMs"?: number; "partIndex"?: number; "partId"?: string; "playbackId"?: string; }; };
-export type BrowserCommand = ({ "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; }) & ({ "type": "session.start"; "payload": { "sessionSeed": string; "reasoningMode": "full" | "transcript_only"; "settings": { "version": 1; "persona": string; "voice": { "catalogId": string; "voiceId": string; "speedModifier"?: number; }; }; }; } | { "type": "audio.start"; "payload": { "streamId": number; "sampleRate": 16000; "channels": 1; "frameSamples": 320; }; } | { "type": "audio.stop"; "payload": { "streamId": number; }; } | { "type": "turn.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "barge_in.confirm" | "barge_in.reject"; "payload": { "responseId": string; "outputEpoch": number; }; } | { "type": "turn.persisted"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; }; } | { "type": "turn.persistence_failed"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; "reasonCode": "quota" | "unavailable" | "aborted"; }; } | { "type": "session.stop"; "payload": { "reason": "user" | "expired" | "disconnect"; }; } | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent);
+export type BrowserCommand = ({ "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; }) & ({ "type": "session.start"; "payload": { "sessionSeed": string; "reasoningMode": "full" | "transcript_only"; "settings": { "version": 1; "persona": string; "voice": { "catalogId": string; "voiceId": string; "backendId"?: string; "modelId"?: string; "speedModifier"?: number; }; }; }; } | { "type": "audio.start"; "payload": { "streamId": number; "sampleRate": 16000; "channels": 1; "frameSamples": 320; }; } | { "type": "audio.stop"; "payload": { "streamId": number; }; } | { "type": "turn.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "barge_in.confirm" | "barge_in.reject"; "payload": { "responseId": string; "outputEpoch": number; }; } | { "type": "turn.persisted"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; }; } | { "type": "turn.persistence_failed"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; "reasonCode": "quota" | "unavailable" | "aborted"; }; } | { "type": "session.stop"; "payload": { "reason": "user" | "expired" | "disconnect"; }; } | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent);
 export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.paused" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "interruption.decision" | "reasoning.started" | "reasoning.delta" | "reasoning.final" | "response.part_final" | "response.part_started" | "tts.started" | "tts.ended" | "response.failed" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
 export type FailureEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "failure"; "monotonicMs": number; "payload": { "code": string; "detail": string; "correctiveAction": string; "recoverable": boolean; }; };
 export type InterruptionDecisionEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "interruption.decision"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "playbackId": string; "outputEpoch": number; "action": "resume" | "accept"; "intent": "non_substantive" | "continue_previous" | "new_request" | "correction" | "topic_change" | "stop_previous"; "confidence": "low" | "medium" | "high"; "disposition": "resume_noise" | "resume_fragment" | "resume_requested" | "accept_takeover"; "pausedSampleOffset": number; "rewindMs"?: number; "partIndex"?: number; "partId"?: string; }; };
@@ -27,12 +27,15 @@ export type SessionStateEvent = { "protocolVersion": 1; "sessionId": string; "ep
 export type SidecarMessageStream = string;
 export type SidecarMessageUtterance = string;
 export type SidecarMessageResponse = string;
-export type SidecarMessageVoiceCatalog = { "catalogId": string; "backendId": string; "modelId": string; "runtimeConfigId": string; "revision": string; "defaultVoiceId": string; "voices": Array<{ "id": string; "label": string; }>; };
-export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": "kokoro-82m-onnx-fp32-af-heart-cuda-v1"; "voiceCatalog"?: SidecarMessageVoiceCatalog; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; "streamMode"?: "capture" | "preview"; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; }; } | { "type": "vad.speech_start"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; "captureEndSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; "voiceId": string; "speedModifier"?: number; }; } | { "type": "tts.open"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "voiceId": string; "speedModifier"?: number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.append"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "sequence": number; "text": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.commit"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "nextSequence": number; "textSha256": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; "voiceId": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; };
+export type SidecarMessageSpeedCapability = { "supported": boolean; "min": number; "max": number; "default": number; };
+export type SidecarMessageTtsModel = { "backendId": string; "modelId": string; };
+export type SidecarMessageTtsModelDescriptor = { "backendId": string; "modelId": string; "label": string; "status": "ready" | "unavailable"; "speed"?: SidecarMessageSpeedCapability; "voiceCatalog"?: SidecarMessageVoiceCatalog; "reason"?: string; "fallback"?: SidecarMessageTtsModel; };
+export type SidecarMessageVoiceCatalog = { "catalogId": string; "backendId": string; "modelId": string; "runtimeConfigId": string; "revision": string; "defaultVoiceId": string; "speed"?: SidecarMessageSpeedCapability; "voices": Array<{ "id": string; "label": string; }>; };
+export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": string; "activeTtsModel"?: SidecarMessageTtsModel; "ttsModels"?: Array<SidecarMessageTtsModelDescriptor>; "voiceCatalog"?: SidecarMessageVoiceCatalog; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; "streamMode"?: "capture" | "preview"; "backendId"?: string; "modelId"?: string; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; "backendId"?: string; "modelId"?: string; "voiceCatalog"?: SidecarMessageVoiceCatalog; "fallback"?: SidecarMessageTtsModel; }; } | { "type": "vad.speech_start"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; "captureEndSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; "voiceId": string; "speedModifier"?: number; }; } | { "type": "tts.open"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "voiceId": string; "speedModifier"?: number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.append"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "sequence": number; "text": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.commit"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "nextSequence": number; "textSha256": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; "voiceId": string; "backendId"?: string; "modelId"?: string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; };
 export type TranscriptFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.final"; "monotonicMs": number; "payload": { "turnId": string; "text": string; "endpointComplete": true; }; };
 export type TranscriptPartialEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.partial"; "monotonicMs": number; "payload": { "utteranceId": string; "sequence": number; "text": string; "replacedCharacters": number; }; };
 export type TtsEndedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.ended"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; };
-export type TtsStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.started"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "sampleRate": number; "outputStreamId"?: number; "partIndex"?: number; "partId"?: string; }; };
+export type TtsStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.started"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "sampleRate": number; "backendId"?: string; "modelId"?: string; "outputStreamId"?: number; "partIndex"?: number; "partId"?: string; }; };
 export type HistoryExport = { "version": 1; "exportedAt": string; "sessions": Array<{ "sessionId": string; "startedAt": string; "endedAt"?: string | null; "personaDigest": string; "turns": Array<{ "turnId": string; "role": "user" | "assistant"; "text": string; "createdAt": string; "posture"?: "riff" | "question" | "challenge" | "silence"; "deliveredSampleOffset"?: number; "interrupted"?: boolean; "failures"?: Array<string>; }>; }>; };
 export type Persona = { "version": 1; "name": string; "invitation_only": boolean; "posture_weights": { "riff": number; "question": number; "challenge": number; }; "challenge_enabled": boolean; "interests": Array<string>; "experiences"?: Array<string>; "body": string; };
 export type ProtocolEnvelope = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; };
@@ -1554,6 +1557,14 @@ export const CONTRACT_SCHEMAS = {
                             "type": "string",
                             "minLength": 1
                           },
+                          "backendId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "modelId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
                           "speedModifier": {
                             "type": "number",
                             "minimum": 0.5,
@@ -2791,6 +2802,96 @@ export const CONTRACT_SCHEMAS = {
         "type": "string",
         "format": "uuid"
       },
+      "speedCapability": {
+        "type": "object",
+        "required": [
+          "supported",
+          "min",
+          "max",
+          "default"
+        ],
+        "properties": {
+          "supported": {
+            "type": "boolean"
+          },
+          "min": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 2
+          },
+          "max": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 2
+          },
+          "default": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 2
+          }
+        },
+        "additionalProperties": false
+      },
+      "ttsModel": {
+        "type": "object",
+        "required": [
+          "backendId",
+          "modelId"
+        ],
+        "properties": {
+          "backendId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "modelId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ttsModelDescriptor": {
+        "type": "object",
+        "required": [
+          "backendId",
+          "modelId",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "backendId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "modelId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "unavailable"
+            ]
+          },
+          "speed": {
+            "$ref": "#/$defs/speedCapability"
+          },
+          "voiceCatalog": {
+            "$ref": "#/$defs/voiceCatalog"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "fallback": {
+            "$ref": "#/$defs/ttsModel"
+          }
+        },
+        "additionalProperties": false
+      },
       "voiceCatalog": {
         "type": "object",
         "required": [
@@ -2826,6 +2927,9 @@ export const CONTRACT_SCHEMAS = {
           "defaultVoiceId": {
             "type": "string",
             "minLength": 1
+          },
+          "speed": {
+            "$ref": "#/$defs/speedCapability"
           },
           "voices": {
             "type": "array",
@@ -2878,7 +2982,18 @@ export const CONTRACT_SCHEMAS = {
                 "const": "nemotron-3.5-transformers-fp32-320ms-paced-v1"
               },
               "tts": {
-                "const": "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
+                "type": "string",
+                "minLength": 1
+              },
+              "activeTtsModel": {
+                "$ref": "#/$defs/ttsModel"
+              },
+              "ttsModels": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/ttsModelDescriptor"
+                }
               },
               "voiceCatalog": {
                 "$ref": "#/$defs/voiceCatalog"
@@ -2948,6 +3063,14 @@ export const CONTRACT_SCHEMAS = {
                   "capture",
                   "preview"
                 ]
+              },
+              "backendId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "modelId": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "additionalProperties": false
@@ -2977,6 +3100,20 @@ export const CONTRACT_SCHEMAS = {
             "properties": {
               "streamId": {
                 "$ref": "#/$defs/stream"
+              },
+              "backendId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "modelId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "voiceCatalog": {
+                "$ref": "#/$defs/voiceCatalog"
+              },
+              "fallback": {
+                "$ref": "#/$defs/ttsModel"
               }
             },
             "additionalProperties": false
@@ -3473,6 +3610,14 @@ export const CONTRACT_SCHEMAS = {
                 "type": "string",
                 "minLength": 1
               },
+              "backendId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "modelId": {
+                "type": "string",
+                "minLength": 1
+              },
               "partIndex": {
                 "type": "integer",
                 "minimum": 0,
@@ -3813,6 +3958,14 @@ export const CONTRACT_SCHEMAS = {
               "sampleRate": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "backendId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "modelId": {
+                "type": "string",
+                "minLength": 1
               },
               "outputStreamId": {
                 "type": "integer",

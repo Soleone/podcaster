@@ -42,6 +42,25 @@ describe('SettingsStore', () => {
     expect(await store.load()).toEqual(settings());
   });
 
+  it('persists the selected model and independent voice profiles across reload', async () => {
+    dbName = 'settings-test-models';
+    const store = await SettingsStore.open(indexedDB, dbName);
+    const value = {
+      version: 1 as const,
+      agentName: 'Ada',
+      persona: 'You are a sharp skeptic.',
+      selectedModel: { backendId: 'qwen3', modelId: 'qwen3-tts-0.6b' },
+      voice: { backendId: 'qwen3', modelId: 'qwen3-tts-0.6b', catalogId: 'q1', voiceId: 'Serena', speedModifier: 1.0 },
+      voiceProfiles: {
+        'kokoro:kokoro-82m-onnx': { backendId: 'kokoro', modelId: 'kokoro-82m-onnx', catalogId: 'k1', voiceId: 'af_bella', speedModifier: 1.4 },
+        'qwen3:qwen3-tts-0.6b': { backendId: 'qwen3', modelId: 'qwen3-tts-0.6b', catalogId: 'q1', voiceId: 'Serena', speedModifier: 1.0 },
+      },
+    };
+    expect(await store.save(value)).toBe(true);
+    const reopened = await SettingsStore.open(indexedDB, dbName);
+    expect(await reopened.load()).toEqual(value);
+  });
+
   it('rejects an agent name over the byte limit', async () => {
     dbName = 'settings-test-d';
     const store = await SettingsStore.open(indexedDB, dbName);

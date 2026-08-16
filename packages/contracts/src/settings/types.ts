@@ -16,6 +16,32 @@ export const MIN_VOICE_SPEED_MODIFIER = 0.5;
 /** Safe upper bound for the editable playback speed modifier. */
 export const MAX_VOICE_SPEED_MODIFIER = 2.0;
 
+/** The stable identity of one selectable local TTS backend/model. */
+export interface TtsModelSelection {
+  backendId: string;
+  modelId: string;
+}
+
+/** A backend-owned speed contract. Unsupported speed is explicit, not implied. */
+export interface VoiceSpeedCapability {
+  supported: boolean;
+  min: number;
+  max: number;
+  default: number;
+}
+
+export const DEFAULT_TTS_MODEL: TtsModelSelection = Object.freeze({
+  backendId: "kokoro",
+  modelId: "kokoro-82m-onnx",
+});
+
+export const DEFAULT_VOICE_SPEED_CAPABILITY: VoiceSpeedCapability = Object.freeze({
+  supported: true,
+  min: MIN_VOICE_SPEED_MODIFIER,
+  max: MAX_VOICE_SPEED_MODIFIER,
+  default: DEFAULT_VOICE_SPEED_MODIFIER,
+});
+
 /** The first-run editable default agent name shown above the assistant's bubbles. */
 export const DEFAULT_AGENT_NAME = "Oliver";
 
@@ -42,6 +68,19 @@ export interface VoiceCatalog {
   /** The verified default voice, always present in `voices`. */
   defaultVoiceId: string;
   voices: VoiceInfo[];
+  /** Optional for old snapshots; new adapters must declare their speed contract. */
+  speed?: VoiceSpeedCapability;
+}
+
+/** A selectable backend/model and its current verified catalog state. */
+export interface TtsModelDescriptor extends TtsModelSelection {
+  label: string;
+  status: "ready" | "unavailable";
+  speed?: VoiceSpeedCapability;
+  voiceCatalog?: VoiceCatalog;
+  reason?: string;
+  /** The model that remains usable when this optional model is unavailable. */
+  fallback?: TtsModelSelection;
 }
 
 /** The browser's persisted voice selection, bound to one catalog. */
@@ -50,6 +89,10 @@ export interface VoicePreference {
   voiceId: string;
   /** Multiplier passed to the verified TTS backend; 1.0 is normal speed. */
   speedModifier: number;
+  /** Optional to keep settings/session snapshots written before model selection valid. */
+  backendId?: string;
+  /** Optional to keep settings/session snapshots written before model selection valid. */
+  modelId?: string;
 }
 
 /**
@@ -61,4 +104,14 @@ export interface SessionSettingsSnapshot {
   /** Free-form AGENTS.md-like persona text; empty is valid. */
   persona: string;
   voice: VoicePreference;
+}
+
+/** Stable storage/wire key for a backend/model-owned voice profile. */
+export function ttsModelKey(model: TtsModelSelection): string {
+  return `${model.backendId}:${model.modelId}`;
+}
+
+/** Return a catalog's declared speed contract, with the legacy safe range. */
+export function voiceSpeedCapability(catalog: VoiceCatalog | undefined): VoiceSpeedCapability {
+  return catalog?.speed ?? DEFAULT_VOICE_SPEED_CAPABILITY;
 }

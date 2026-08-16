@@ -181,6 +181,8 @@ class SidecarServer:
                         emit_json,
                         enqueue,
                         str(payload.get("streamMode", "capture")),
+                        str(payload["backendId"]) if payload.get("backendId") is not None else None,
+                        str(payload["modelId"]) if payload.get("modelId") is not None else None,
                     )
                 elif opened_stream is None or payload.get("streamId") != opened_stream:
                     raise ValueError("unknown stream")

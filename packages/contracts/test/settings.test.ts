@@ -9,6 +9,7 @@ import {
   isVoiceInCatalog,
   isValidSessionSettingsSnapshot,
   isValidVoiceCatalog,
+  isValidTtsModelDescriptor,
   isValidVoicePreference,
   normalizeVoicePreference,
   MAX_AGENT_NAME_BYTES,
@@ -98,6 +99,11 @@ describe("settings validators", () => {
     expect(isValidVoiceCatalog({ ...catalog, defaultVoiceId: "missing" })).toBe(false);
     expect(isValidVoiceCatalog({ ...catalog, voices: [catalog.voices[0], catalog.voices[0]] })).toBe(false);
     expect(isValidVoiceCatalog({ ...catalog, voices: [] })).toBe(false);
+  });
+
+  it("rejects a model descriptor whose catalog belongs to another model", () => {
+    const descriptor = { backendId: "qwen3", modelId: "qwen3-model", label: "Qwen", status: "ready", voiceCatalog: catalog } as const;
+    expect(isValidTtsModelDescriptor(descriptor)).toBe(false);
   });
 
   it("checks voice membership against a catalog", () => {

@@ -6,13 +6,12 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
+import type { TtsModelDescriptor, VoiceCatalog } from '@app/contracts/settings';
 
 type Capability = { id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string };
-type VoiceInfo = { id: string; label: string };
-type VoiceCatalog = { catalogId: string; backendId: string; modelId: string; runtimeConfigId: string; revision: string; defaultVoiceId: string; voices: VoiceInfo[] };
-type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: 'ready' | 'checking' | 'login_required' | 'unavailable' | 'incompatible' | 'rate_limited'; voiceCatalog?: VoiceCatalog };
+type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: 'ready' | 'checking' | 'login_required' | 'unavailable' | 'incompatible' | 'rate_limited'; voiceCatalog?: VoiceCatalog; ttsModels?: TtsModelDescriptor[] };
 
-type ReadinessProps = { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onCapability?: (capability: string) => void; className?: string };
+type ReadinessProps = { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string) => void; className?: string };
 
 const DISCLOSURE_KEY = 'podcaster.disclosure';
 const DISCLOSURE_VERSION = 'voice-cloud-boundary-v1';
@@ -63,6 +62,10 @@ export function Readiness(props: ReadinessProps) {
           lastReportedMic.current = microphoneReady;
           const next = await response.json() as Snapshot;
           setSnapshot(next);
+          // Publish the complete model set first. Otherwise a persisted Qwen
+          // selection can be temporarily reconciled against the legacy
+          // Kokoro-only catalog before the model descriptors arrive.
+          if (next.ttsModels) props.onModels?.(next.ttsModels);
           if (next.voiceCatalog) props.onCatalog?.(next.voiceCatalog);
         }
       } catch { /* the visible snapshot remains authoritative until the next retry */ }
@@ -94,6 +97,10 @@ export function Readiness(props: ReadinessProps) {
       props.onCapability?.(boot.capability);
       const next = await response.json() as Snapshot;
       setSnapshot(next);
+      // Publish the complete model set first. Otherwise a persisted Qwen
+      // selection can be temporarily reconciled against the legacy
+      // Kokoro-only catalog before the model descriptors arrive.
+      if (next.ttsModels) props.onModels?.(next.ttsModels);
       if (next.voiceCatalog) props.onCatalog?.(next.voiceCatalog);
       setAcknowledged(true);
       if (remember) {

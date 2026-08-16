@@ -93,6 +93,103 @@ def ready_runtime():
     return runtime, events, binary
 
 
+def test_selected_qwen_catalog_owns_voice_and_speed_for_its_stream() -> None:
+    class QwenFake(FakeTts):
+        default_voice = "Ryan"
+        speed = 1.0
+
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
+            assert text == "response"
+            self.speeds.append(getattr(self, "speed", 1.0))
+            for sequence in range(2):
+                cancel.raise_if_cancelled()
+                if on_audio:
+                    on_audio(AudioChunk(sequence, bytes(960), 24_000, sequence * 480))
+            return SynthesisResult(24_000, 960, 0.04, 0.01, "a" * 64, 2)
+
+        def voice_catalog(self):
+            return {
+                "catalogId": "qwen-catalog",
+                "backendId": "qwen3",
+                "modelId": "qwen3-tts-0.6b",
+                "runtimeConfigId": "qwen-runtime",
+                "revision": "qwen-rev",
+                "defaultVoiceId": self.default_voice,
+                "speed": {"supported": True, "min": 0.8, "max": 1.2, "default": 1.0},
+                "voices": [{"id": "Ryan", "label": "Ryan"}, {"id": "Serena", "label": "Serena"}],
+            }
+
+    qwen = QwenFake()
+    runtime = SelectedAudioRuntime(FakeStt(), FakeTts(), tts_adapters={"qwen3:qwen3-tts-0.6b": qwen})
+    runtime.mark_ready_for_test()
+    events = []
+    stream = "018f1f32-7abc-7def-8abc-0123456789ab"
+    runtime.open_stream(stream, 12, events.append, lambda _: None, "capture", "qwen3", "qwen3-tts-0.6b")
+    runtime.request_tts(stream, "018f1f32-7abd-7def-8abc-0123456789ab", 0, "response", voice_id="Serena", speed_modifier=1.15)
+    wait_for(events, "tts.ended")
+    started = next(event for event in events if event["type"] == "tts.started")
+    assert started["payload"]["backendId"] == "qwen3"
+    assert started["payload"]["modelId"] == "qwen3-tts-0.6b"
+    assert qwen.speeds == [1.15]
+    with pytest.raises(ValueError, match="selected model range"):
+        runtime.open_tts(stream, "018f1f32-7abe-7def-8abc-0123456789ab", 1, voice_id="Serena", speed_modifier=1.5)
+    runtime.close_stream(stream)
+
+
+def test_unavailable_optional_qwen_keeps_kokoro_ready_and_reports_fallback() -> None:
+    class MissingQwen(FakeTts):
+        def voice_catalog(self):
+            raise RuntimeError("Qwen runtime unavailable")
+
+    runtime = SelectedAudioRuntime(FakeStt(), FakeTts(), tts_adapters={"qwen3:qwen3-tts-0.6b": MissingQwen()})
+    runtime.mark_ready_for_test()
+    payload = runtime.readiness()["payload"]
+    assert payload["status"] == "ready"
+    assert payload["voiceCatalog"]["backendId"] == "kokoro"
+    qwen = next(model for model in payload["ttsModels"] if model["backendId"] == "qwen3")
+    assert qwen["status"] == "unavailable"
+    assert qwen["fallback"] == {"backendId": "kokoro", "modelId": "kokoro-82m-onnx"}
+
+
+def test_qwen_synthesis_failure_does_not_poison_kokoro_fallback() -> None:
+    class FailingQwen(FakeTts):
+        default_voice = "Ryan"
+
+        def voice_catalog(self):
+            return {
+                "catalogId": "qwen-catalog",
+                "backendId": "qwen3",
+                "modelId": "qwen3-tts-0.6b",
+                "runtimeConfigId": "qwen-runtime",
+                "revision": "qwen-rev",
+                "defaultVoiceId": self.default_voice,
+                "voices": [{"id": self.default_voice, "label": self.default_voice}],
+            }
+
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
+            raise RuntimeError("Qwen failed")
+
+    qwen = FailingQwen()
+    qwen.default_voice = "Ryan"
+    runtime = SelectedAudioRuntime(FakeStt(), FakeTts(), tts_adapters={"qwen3:qwen3-tts-0.6b": qwen})
+    runtime.mark_ready_for_test()
+    events = []
+    stream = "018f1f32-7abc-7def-8abc-0123456789ab"
+    qwen_response = "018f1f32-7abd-7def-8abc-0123456789ab"
+    runtime.open_stream(stream, 12, events.append, lambda _: None, "capture", "qwen3", "qwen3-tts-0.6b")
+    runtime.request_tts(stream, qwen_response, 0, "response", voice_id="Ryan")
+    wait_for(events, "sidecar.failure")
+    assert runtime.status == "ready"
+    runtime.close_stream(stream)
+
+    fallback_events = []
+    fallback_stream = "018f1f32-7abe-7def-8abc-0123456789ab"
+    runtime.open_stream(fallback_stream, 12, fallback_events.append, lambda _: None)
+    runtime.request_tts(fallback_stream, "018f1f32-7abf-7def-8abc-0123456789ab", 0, "response")
+    wait_for(fallback_events, "tts.ended")
+    runtime.close_stream(fallback_stream)
+
+
 def test_speed_modifier_is_applied_to_each_tts_stream() -> None:
     tts = FakeTts()
     runtime = SelectedAudioRuntime(FakeStt(), tts)

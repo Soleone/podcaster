@@ -29,6 +29,96 @@
       "type": "string",
       "format": "uuid"
     },
+    "speedCapability": {
+      "type": "object",
+      "required": [
+        "supported",
+        "min",
+        "max",
+        "default"
+      ],
+      "properties": {
+        "supported": {
+          "type": "boolean"
+        },
+        "min": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0
+        },
+        "max": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0
+        },
+        "default": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ttsModel": {
+      "type": "object",
+      "required": [
+        "backendId",
+        "modelId"
+      ],
+      "properties": {
+        "backendId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ttsModelDescriptor": {
+      "type": "object",
+      "required": [
+        "backendId",
+        "modelId",
+        "label",
+        "status"
+      ],
+      "properties": {
+        "backendId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        },
+        "speed": {
+          "$ref": "#/$defs/speedCapability"
+        },
+        "voiceCatalog": {
+          "$ref": "#/$defs/voiceCatalog"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "fallback": {
+          "$ref": "#/$defs/ttsModel"
+        }
+      },
+      "additionalProperties": false
+    },
     "voiceCatalog": {
       "type": "object",
       "required": [
@@ -64,6 +154,9 @@
         "defaultVoiceId": {
           "type": "string",
           "minLength": 1
+        },
+        "speed": {
+          "$ref": "#/$defs/speedCapability"
         },
         "voices": {
           "type": "array",
@@ -116,7 +209,18 @@
               "const": "nemotron-3.5-transformers-fp32-320ms-paced-v1"
             },
             "tts": {
-              "const": "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
+              "type": "string",
+              "minLength": 1
+            },
+            "activeTtsModel": {
+              "$ref": "#/$defs/ttsModel"
+            },
+            "ttsModels": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/ttsModelDescriptor"
+              }
             },
             "voiceCatalog": {
               "$ref": "#/$defs/voiceCatalog"
@@ -186,6 +290,14 @@
                 "capture",
                 "preview"
               ]
+            },
+            "backendId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "additionalProperties": false
@@ -215,6 +327,20 @@
           "properties": {
             "streamId": {
               "$ref": "#/$defs/stream"
+            },
+            "backendId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "voiceCatalog": {
+              "$ref": "#/$defs/voiceCatalog"
+            },
+            "fallback": {
+              "$ref": "#/$defs/ttsModel"
             }
           },
           "additionalProperties": false
@@ -708,6 +834,14 @@
               "const": 24000
             },
             "voiceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "backendId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
               "type": "string",
               "minLength": 1
             },

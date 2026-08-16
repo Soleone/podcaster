@@ -21,8 +21,9 @@ from uuid import UUID
 from .binary_framing import BinaryAudioFrame, encode_frame
 from .stt.base import TranscriptUpdate
 from .stt.nemotron import NemotronStreamingAdapter
-from .tts.base import AudioChunk
+from .tts.base import AudioChunk, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER
 from .tts.kokoro import KokoroStreamingAdapter
+from .tts.qwen3 import Qwen3StreamingAdapter
 from .vad.endpointer import DeterministicEndpointer, EndpointerConfig
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -33,14 +34,18 @@ STT_CONFIG_ID = "nemotron-3.5-transformers-fp32-320ms-paced-v1"
 STT_CONFIG_SHA256 = "140151ebb3d74b09a25fd0ebb4016aee2392f93f9410d87f015378b548b8660e"
 TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
 TTS_CONFIG_SHA256 = "64de64feba08bcb97efc4e148c30e342a800dae847768929f4c93d6c161af9a5"
+QWEN_TTS_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-0.6b.yaml"
+QWEN_TTS_CONFIG_ID = "qwen3-tts-0.6b-customvoice-cuda-v1"
+QWEN_TTS_CONFIG_SHA256 = "b240604744566bdf26cf04bf5c672ee7ae1ab88c7e767ff31ca11ce7b4c4421c"
+KOKORO_BACKEND_ID = "kokoro"
+KOKORO_MODEL_ID = "kokoro-82m-onnx"
+QWEN_BACKEND_ID = "qwen3"
+QWEN_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 CAPTURE_BYTES = 320 * 2
 STT_CHUNK_BYTES = 5_120 * 2
 MAX_STT_CHUNKS = 64
 MAX_PRE_ROLL_FRAMES = 10
 MAX_BINARY_PAYLOAD = 64 * 1024 - 20
-DEFAULT_VOICE_SPEED_MODIFIER = 1.0
-MIN_VOICE_SPEED_MODIFIER = 0.5
-MAX_VOICE_SPEED_MODIFIER = 2.0
 TTS_TERMINALIZATION_TIMEOUT_SECONDS = 10.0
 
 
@@ -133,6 +138,11 @@ class StreamState:
     emit_json: Callable[[dict[str, object]], None]
     emit_binary: Callable[[bytes], None]
     stream_mode: str = "capture"
+    tts_adapter: object | None = None
+    tts_catalog: dict[str, object] | None = None
+    tts_model: dict[str, str] = field(default_factory=dict)
+    fallback_model: dict[str, str] | None = None
+    announce_model: bool = False
     expected_sequence: int = 0
     endpointer: DeterministicEndpointer = field(
         default_factory=lambda: DeterministicEndpointer(EndpointerConfig())
@@ -162,16 +172,33 @@ class SelectedAudioRuntime:
         expected_stt_config_sha256: str = STT_CONFIG_SHA256,
         tts_config_path: Path = TTS_CONFIG,
         expected_tts_config_sha256: str = TTS_CONFIG_SHA256,
+        tts_adapters: dict[str, object] | None = None,
+        qwen_config_path: Path = QWEN_TTS_CONFIG,
+        expected_qwen_config_sha256: str = QWEN_TTS_CONFIG_SHA256,
     ) -> None:
         self.stt = stt if stt is not None else NemotronStreamingAdapter()
         self.tts = tts if tts is not None else KokoroStreamingAdapter()
+        # The first adapter remains the production default. Optional adapters
+        # are isolated so a missing Qwen runtime/model can never prevent Kokoro
+        # from preparing or serving the application.
+        self._tts_adapters: dict[str, object] = {
+            f"{KOKORO_BACKEND_ID}:{KOKORO_MODEL_ID}": self.tts,
+        }
+        if tts_adapters:
+            self._tts_adapters.update(tts_adapters)
+        elif tts is None:
+            self._tts_adapters[f"{QWEN_BACKEND_ID}:{QWEN_MODEL_ID}"] = Qwen3StreamingAdapter()
         self.root = root
         self.stt_config_path = stt_config_path
         self.model_manifest_path = model_manifest_path
         self.expected_stt_config_sha256 = expected_stt_config_sha256
         self.tts_config_path = tts_config_path
         self.expected_tts_config_sha256 = expected_tts_config_sha256
+        self.qwen_config_path = qwen_config_path
+        self.expected_qwen_config_sha256 = expected_qwen_config_sha256
         self.status = "starting"
+        self._tts_catalogs: dict[str, dict[str, object]] = {}
+        self._tts_errors: dict[str, str] = {}
         self._streams: dict[str, StreamState] = {}
         self._lock = threading.RLock()
         # Kokoro is a single-active synthesis adapter. Preview streams are
@@ -182,16 +209,124 @@ class SelectedAudioRuntime:
         self._workers: set[threading.Thread] = set()
         self.last_stt_audio_samples = 0
 
+    def _model_key(self, backend_id: str, model_id: str) -> str:
+        return f"{backend_id}:{model_id}"
+
+    def _catalog_model(self, catalog: dict[str, object]) -> dict[str, str]:
+        return {
+            "backendId": str(catalog.get("backendId", "")),
+            "modelId": str(catalog.get("modelId", "")),
+        }
+
+    def _catalog_speed(self, catalog: dict[str, object]) -> dict[str, object]:
+        value = catalog.get("speed")
+        if isinstance(value, dict):
+            supported = value.get("supported")
+            minimum = value.get("min")
+            maximum = value.get("max")
+            default = value.get("default")
+            if (
+                isinstance(supported, bool)
+                and isinstance(minimum, (int, float))
+                and isinstance(maximum, (int, float))
+                and isinstance(default, (int, float))
+                and not isinstance(minimum, bool)
+                and not isinstance(maximum, bool)
+                and not isinstance(default, bool)
+                and math.isfinite(float(minimum))
+                and math.isfinite(float(maximum))
+                and math.isfinite(float(default))
+                and MIN_VOICE_SPEED_MODIFIER <= float(minimum) <= float(maximum) <= MAX_VOICE_SPEED_MODIFIER
+                and float(minimum) <= float(default) <= float(maximum)
+            ):
+                return {"supported": supported, "min": float(minimum), "max": float(maximum), "default": float(default)}
+        return {"supported": True, "min": MIN_VOICE_SPEED_MODIFIER, "max": MAX_VOICE_SPEED_MODIFIER, "default": DEFAULT_VOICE_SPEED_MODIFIER}
+
+    def _register_tts_catalog(self, key: str, adapter: object) -> None:
+        catalog_fn = getattr(adapter, "voice_catalog", None)
+        if not callable(catalog_fn):
+            raise RuntimeError("TTS adapter does not expose a verified voice catalog")
+        catalog = catalog_fn()
+        if not isinstance(catalog, dict):
+            raise RuntimeError("TTS adapter returned an invalid voice catalog")
+        model = self._catalog_model(catalog)
+        if not model["backendId"] or not model["modelId"]:
+            raise RuntimeError("TTS catalog is missing backend/model identity")
+        # The adapter's catalog is authoritative, but it must still agree with
+        # the slot it was asked to fill. Otherwise a bad optional adapter could
+        # replace another model's catalog and leak its voice IDs.
+        expected_backend, separator, expected_model = key.partition(":")
+        actual_key = self._model_key(model["backendId"], model["modelId"])
+        if separator and (model["backendId"] != expected_backend or model["modelId"] != expected_model):
+            raise RuntimeError("TTS adapter catalog identity does not match its model slot")
+        existing = self._tts_adapters.get(actual_key)
+        if actual_key in self._tts_catalogs and existing is not None and existing is not adapter:
+            raise RuntimeError("TTS model catalog identity collision")
+        self._tts_adapters[actual_key] = adapter
+        self._tts_catalogs[actual_key] = catalog
+        if actual_key != key:
+            self._tts_adapters.pop(key, None)
+
+    def _model_descriptors(self) -> list[dict[str, object]]:
+        descriptors: list[dict[str, object]] = []
+        known = set(self._tts_adapters) | set(self._tts_catalogs) | set(self._tts_errors)
+        # Always advertise the default even when a test adapter has not exposed
+        # its catalog yet. A ready runtime will still fail closed below.
+        known.add(self._model_key(KOKORO_BACKEND_ID, KOKORO_MODEL_ID))
+        for key in sorted(known):
+            backend_id, _, model_id = key.partition(":")
+            catalog = self._tts_catalogs.get(key)
+            if catalog is not None:
+                descriptor: dict[str, object] = {
+                    "backendId": backend_id,
+                    "modelId": model_id,
+                    "label": "Kokoro CUDA" if backend_id == KOKORO_BACKEND_ID else "faster-Qwen CUDA" if backend_id == QWEN_BACKEND_ID else f"{backend_id} · {model_id}",
+                    "status": "ready",
+                    "speed": self._catalog_speed(catalog),
+                    "voiceCatalog": catalog,
+                }
+            else:
+                descriptor = {
+                    "backendId": backend_id,
+                    "modelId": model_id,
+                    "label": "Kokoro CUDA" if backend_id == KOKORO_BACKEND_ID else "faster-Qwen CUDA" if backend_id == QWEN_BACKEND_ID else f"{backend_id} · {model_id}",
+                    "status": "unavailable",
+                    "speed": {"supported": False, "min": 1.0, "max": 1.0, "default": 1.0},
+                    "reason": self._tts_errors.get(key, "TTS model is not available on this device."),
+                    "fallback": {"backendId": KOKORO_BACKEND_ID, "modelId": KOKORO_MODEL_ID},
+                }
+            descriptors.append(descriptor)
+        return descriptors
+
     def prepare(self) -> None:
         try:
             stt_config = self._verified_stt_config()
             tts_config = self._verified_tts_config()
             self.stt.prepare(stt_config)
             self.tts.prepare(tts_config)
+            self._register_tts_catalog(self._model_key(KOKORO_BACKEND_ID, KOKORO_MODEL_ID), self.tts)
+            # Optional candidates are deliberately best-effort. Qwen's isolated
+            # runtime, CUDA device, or model snapshot may be absent; none of
+            # those conditions are allowed to gate the Kokoro production path.
+            for key, adapter in tuple(self._tts_adapters.items()):
+                if adapter is self.tts:
+                    continue
+                try:
+                    config = self._verified_qwen_config()
+                    prepare = getattr(adapter, "prepare")
+                    prepare(config)
+                    self._register_tts_catalog(key, adapter)
+                except BaseException as error:
+                    self._tts_errors[key] = f"Qwen is unavailable: {type(error).__name__}"
+                    try:
+                        if bool(getattr(adapter, "prepared", False)):
+                            adapter.close()
+                    except BaseException:
+                        pass
             self.status = "ready"
         except BaseException:
             self.status = "failed"
-            for adapter in (self.tts, self.stt):
+            for adapter in (*self._tts_adapters.values(), self.stt):
                 if bool(getattr(adapter, "prepared", False)):
                     try:
                         adapter.close()
@@ -200,6 +335,13 @@ class SelectedAudioRuntime:
             raise
 
     def mark_ready_for_test(self) -> None:
+        # Test fakes often do not need prepare(). Register every catalog they
+        # expose, while retaining the old single-Kokoro test shape.
+        for key, adapter in tuple(self._tts_adapters.items()):
+            try:
+                self._register_tts_catalog(key, adapter)
+            except BaseException as error:
+                self._tts_errors[key] = str(error)
         self.status = "ready"
 
     def readiness(self) -> dict[str, object]:
@@ -210,14 +352,36 @@ class SelectedAudioRuntime:
         }
         if self.status == "ready":
             try:
-                payload["voiceCatalog"] = self.tts.voice_catalog()
+                default_key = self._model_key(KOKORO_BACKEND_ID, KOKORO_MODEL_ID)
+                catalog = self._tts_catalogs.get(default_key)
+                if catalog is None:
+                    self._register_tts_catalog(default_key, self.tts)
+                    catalog = self._tts_catalogs.get(default_key)
+                if catalog is None:
+                    raise RuntimeError("default TTS catalog is unavailable")
+                payload["voiceCatalog"] = catalog
+                payload["activeTtsModel"] = {"backendId": KOKORO_BACKEND_ID, "modelId": KOKORO_MODEL_ID}
+                payload["ttsModels"] = self._model_descriptors()
             except BaseException:
-                # A ready runtime must advertise its verified catalog; if it cannot,
-                # report it as not ready so the browser never over-promises voices.
+                # A ready runtime must advertise its verified default catalog;
+                # optional model failures remain visible in ttsModels instead.
                 self.status = "failed"
                 payload["status"] = "failed"
                 payload.pop("voiceCatalog", None)
         return {"type": "readiness.snapshot", "payload": payload}
+
+    def _select_tts(self, backend_id: str | None, model_id: str | None) -> tuple[str, object, dict[str, object], dict[str, str] | None]:
+        default_key = self._model_key(KOKORO_BACKEND_ID, KOKORO_MODEL_ID)
+        requested_key = default_key if not backend_id and not model_id else self._model_key(str(backend_id or ""), str(model_id or ""))
+        if requested_key not in self._tts_catalogs:
+            reason = self._tts_errors.get(requested_key, "requested TTS model is unavailable")
+            raise RuntimeError(f"{reason}; Kokoro remains available as the production fallback")
+        adapter = self._tts_adapters.get(requested_key)
+        catalog = self._tts_catalogs[requested_key]
+        if adapter is None:
+            raise RuntimeError("requested TTS adapter is unavailable")
+        fallback = None if requested_key == default_key else {"backendId": KOKORO_BACKEND_ID, "modelId": KOKORO_MODEL_ID}
+        return requested_key, adapter, catalog, fallback
 
     def open_stream(
         self,
@@ -226,18 +390,38 @@ class SelectedAudioRuntime:
         emit_json: Callable[[dict[str, object]], None],
         emit_binary: Callable[[bytes], None],
         stream_mode: str = "capture",
+        backend_id: str | None = None,
+        model_id: str | None = None,
     ) -> None:
         if self.status != "ready":
             raise RuntimeError("selected runtime is unavailable")
         if stream_mode not in {"capture", "preview"}:
             raise ValueError("invalid stream mode")
+        key, adapter, catalog, fallback = self._select_tts(backend_id, model_id)
         with self._lock:
             if any(state.stream_mode == stream_mode for state in self._streams.values()):
                 raise RuntimeError(f"one active {stream_mode} stream is allowed")
             self._streams[stream_id] = StreamState(
-                stream_id, capture_stream_id, emit_json, emit_binary, stream_mode
+                stream_id,
+                capture_stream_id,
+                emit_json,
+                emit_binary,
+                stream_mode,
+                adapter,
+                catalog,
+                {"backendId": str(catalog["backendId"]), "modelId": str(catalog["modelId"])},
+                fallback,
+                backend_id is not None or model_id is not None,
             )
-        emit_json({"type": "stream.opened", "payload": {"streamId": stream_id}})
+        payload: dict[str, object] = {
+            "streamId": stream_id,
+            "backendId": str(catalog["backendId"]),
+            "modelId": str(catalog["modelId"]),
+            "voiceCatalog": catalog,
+        }
+        if fallback is not None:
+            payload["fallback"] = fallback
+        emit_json({"type": "stream.opened", "payload": payload})
 
     def accept_audio(self, stream_id: str, frame: BinaryAudioFrame) -> None:
         state = self._state(stream_id)
@@ -339,20 +523,32 @@ class SelectedAudioRuntime:
         speed_modifier: object = None,
     ) -> None:
         state = self._state(stream_id)
-        voice_catalog = self.tts.voice_catalog()
+        adapter = state.tts_adapter
+        voice_catalog = state.tts_catalog
+        if adapter is None or voice_catalog is None:
+            raise RuntimeError("selected TTS model is not prepared")
         voices = {str(item["id"]): item for item in voice_catalog.get("voices", [])} if isinstance(voice_catalog.get("voices"), list) else {}
         if voice_id is None:
             voice_id = str(voice_catalog.get("defaultVoiceId", ""))
         if voice_id not in voices:
-            raise ValueError("requested voice is absent from the verified catalog")
+            raise ValueError("requested voice is absent from the selected model catalog")
+        capability = self._catalog_speed(voice_catalog)
+        minimum = float(capability["min"])
+        maximum = float(capability["max"])
+        default_speed = float(capability["default"])
         if speed_modifier is None:
-            speed = DEFAULT_VOICE_SPEED_MODIFIER
+            speed = default_speed
         elif isinstance(speed_modifier, bool) or not isinstance(speed_modifier, (int, float)):
             raise ValueError("invalid TTS speed modifier")
         else:
             speed = float(speed_modifier)
-            if not math.isfinite(speed) or speed < MIN_VOICE_SPEED_MODIFIER or speed > MAX_VOICE_SPEED_MODIFIER:
-                raise ValueError("invalid TTS speed modifier")
+            if (
+                not math.isfinite(speed)
+                or speed < minimum
+                or speed > maximum
+                or (not bool(capability["supported"]) and speed != default_speed)
+            ):
+                raise ValueError("TTS speed is unsupported or outside the selected model range")
         tts_key = _tts_key(response_id, part_index)
         # Admission is deliberately bounded, but a replacement must not turn a
         # short terminalization race into a session-fatal protocol error. Wait
@@ -436,6 +632,9 @@ class SelectedAudioRuntime:
                         "sampleRate": 24_000,
                         "voiceId": text_stream.voice_id,
                     }
+                    if state.announce_model:
+                        started_payload["backendId"] = state.tts_model.get("backendId", "")
+                        started_payload["modelId"] = state.tts_model.get("modelId", "")
                     if text_stream.part_index is not None:
                         started_payload["partIndex"] = text_stream.part_index
                     if text_stream.part_id is not None:
@@ -480,14 +679,14 @@ class SelectedAudioRuntime:
                     # single-active-synthesis guard.
                     while not self._tts_lock.acquire(timeout=0.05):
                         text_stream.token.raise_if_cancelled()
-                    previous_speed = getattr(self.tts, "speed", None)
+                    previous_speed = getattr(adapter, "speed", None)
                     if previous_speed is not None:
-                        self.tts.speed = text_stream.speed_modifier
+                        adapter.speed = text_stream.speed_modifier
                     try:
-                        self.tts.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
+                        adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
                     finally:
                         if previous_speed is not None:
-                            self.tts.speed = previous_speed
+                            adapter.speed = previous_speed
                         self._tts_lock.release()
                     text_stream.token.raise_if_cancelled()
 
@@ -505,7 +704,7 @@ class SelectedAudioRuntime:
                 if text_stream.part_id is not None:
                     ended_payload["partId"] = text_stream.part_id
                 state.emit_json({"type": "tts.ended", "payload": ended_payload})
-            except BaseException:
+            except BaseException as error:
                 if text_stream.token.cancelled:
                     cancelled_payload: dict[str, object] = {
                         "streamId": stream_id,
@@ -518,7 +717,10 @@ class SelectedAudioRuntime:
                         cancelled_payload["partId"] = text_stream.part_id
                     state.emit_json({"type": "tts.cancelled", "payload": cancelled_payload})
                 else:
-                    self._poison()
+                    if state.tts_adapter is not self.tts and state.tts_model.get("backendId") != KOKORO_BACKEND_ID:
+                        self._degrade_optional_tts(state, error)
+                    else:
+                        self._poison()
             finally:
                 with self._lock:
                     state.tts.pop(tts_key, None)
@@ -677,7 +879,11 @@ class SelectedAudioRuntime:
             self.close_stream(stream_id)
         for worker in tuple(self._workers):
             worker.join(timeout=10)
-        for adapter in (self.tts, self.stt):
+        seen: set[int] = set()
+        for adapter in (*self._tts_adapters.values(), self.stt):
+            if id(adapter) in seen:
+                continue
+            seen.add(id(adapter))
             if bool(getattr(adapter, "prepared", False)) and not bool(getattr(adapter, "closed", False)):
                 adapter.close()
 
@@ -825,6 +1031,43 @@ class SelectedAudioRuntime:
         config["modelPath"] = str(runtime_path)
         return config
 
+    def _verified_qwen_config(self) -> dict[str, object]:
+        config_bytes = self.qwen_config_path.read_bytes()
+        if hashlib.sha256(config_bytes).hexdigest() != self.expected_qwen_config_sha256:
+            raise RuntimeError("optional Qwen config checksum mismatch")
+        config = json.loads(config_bytes)
+        if config.get("id") != QWEN_TTS_CONFIG_ID or config.get("schemaVersion") != 1:
+            raise RuntimeError("optional Qwen config identity mismatch")
+        candidate = config.get("candidate")
+        if not isinstance(candidate, dict):
+            raise RuntimeError("optional Qwen candidate config is invalid")
+        manifest = json.loads(self.model_manifest_path.read_text())
+        models = manifest.get("models") if manifest.get("schemaVersion") == 1 else None
+        if not isinstance(models, list):
+            raise RuntimeError("selected model manifest is invalid")
+        matches = [entry for entry in models if isinstance(entry, dict) and entry.get("id") == candidate.get("modelId")]
+        if len(matches) != 1:
+            raise RuntimeError("optional Qwen model manifest identity mismatch")
+        model = matches[0]
+        for candidate_key, manifest_key in (("revision", "revision"), ("modelSha256", "sha256"), ("runtimeRevision", "streamingRuntimeRevision")):
+            if candidate.get(candidate_key) != model.get(manifest_key):
+                raise RuntimeError("optional Qwen manifest identity or digest mismatch")
+        configured_path = self._safe_model_path(str(config.get("modelPath", "")))
+        runtime_path = self._safe_model_path(str(model.get("runtimePath", "")))
+        if configured_path != runtime_path:
+            raise RuntimeError("optional Qwen configured path does not match manifest")
+        files = model.get("files")
+        if not isinstance(files, list) or not files:
+            raise RuntimeError("optional Qwen model manifest has no files")
+        for entry in files:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not isinstance(entry.get("sha256"), str):
+                raise RuntimeError("optional Qwen model manifest file is invalid")
+            path = self._safe_model_path(entry["path"])
+            if not path.is_file() or _sha256_file(path) != entry["sha256"]:
+                raise RuntimeError("optional Qwen model file checksum mismatch")
+        config["modelPath"] = str(runtime_path)
+        return config
+
     def _verified_tts_config(self) -> dict[str, object]:
         config_bytes = self.tts_config_path.read_bytes()
         if hashlib.sha256(config_bytes).hexdigest() != self.expected_tts_config_sha256:
@@ -888,6 +1131,24 @@ class SelectedAudioRuntime:
         if self.root.resolve() not in path.parents:
             raise RuntimeError("selected model path is unsafe")
         return path
+
+    def _degrade_optional_tts(self, state: StreamState, error: BaseException) -> None:
+        """Retire an optional model without taking Kokoro or capture down."""
+        key = self._model_key(state.tts_model.get("backendId", ""), state.tts_model.get("modelId", ""))
+        adapter = state.tts_adapter
+        with self._lock:
+            self._tts_catalogs.pop(key, None)
+            self._tts_adapters.pop(key, None)
+            self._tts_errors[key] = f"optional TTS model failed: {type(error).__name__}"
+        try:
+            if adapter is not None:
+                adapter.close()
+        except BaseException:
+            pass
+        state.emit_json({
+            "type": "sidecar.failure",
+            "payload": {"code": "runtime_unavailable", "recoverable": True},
+        })
 
     def _poison(self) -> None:
         with self._lock:

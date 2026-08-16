@@ -61,6 +61,14 @@
                           "type": "string",
                           "minLength": 1
                         },
+                        "backendId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "modelId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
                         "speedModifier": {
                           "type": "number",
                           "minimum": 0.5,

@@ -17,6 +17,8 @@ export interface SpeechSynthesisStart {
   partIndex?: number;
   partId?: string;
   outputStreamId?: number;
+  backendId?: string;
+  modelId?: string;
   completion?: Promise<{ generatedSamples: number }>;
 }
 export interface SpeechOutputStream {
@@ -314,7 +316,7 @@ export class SessionOrchestrator {
           if (meta.generatedSamples !== undefined && (!Number.isSafeInteger(meta.generatedSamples) || meta.generatedSamples <= 0)) { this.failResponse(active, "tts_failed"); return; }
           active.playbackId = meta.playbackId;
           this.playback.set(meta.playbackId, { outputEpoch: active.epoch, generatedSamples: Math.max(active.generatedSamples, meta.generatedSamples ?? 0), delivered: 0, terminal: false });
-          this.emit("tts.started", { responseId: active.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate });
+          this.emit("tts.started", { responseId: active.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, ...(meta.backendId ? { backendId: meta.backendId } : {}), ...(meta.modelId ? { modelId: meta.modelId } : {}) });
           this.setUnderlyingPhase(active, "playing");
           // Speech can begin while Pi/TTS is still warming up. In that race
           // there was no provisional barge-in at speech_start, so create one
@@ -541,7 +543,7 @@ export class SessionOrchestrator {
     part.started = true;
     state.partByPlayback.set(meta.playbackId, part);
     this.playback.set(meta.playbackId, { outputEpoch: state.epoch, generatedSamples: Math.max(part.generatedSamples, meta.generatedSamples ?? 0), delivered: 0, terminal: false });
-    this.emit("tts.started", { responseId: state.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, partIndex: part.partIndex, ...(meta.outputStreamId !== undefined ? { outputStreamId: meta.outputStreamId } : {}) });
+    this.emit("tts.started", { responseId: state.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, ...(meta.backendId ? { backendId: meta.backendId } : {}), ...(meta.modelId ? { modelId: meta.modelId } : {}), partIndex: part.partIndex, ...(meta.outputStreamId !== undefined ? { outputStreamId: meta.outputStreamId } : {}) });
     const parent = this.active;
     if (parent && parent.responseId === state.responseId && !parent.playbackId) parent.playbackId = meta.playbackId;
     if (this.multiPart?.responseId === state.responseId) {

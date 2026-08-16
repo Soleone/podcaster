@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Any, Protocol
 
-from .base import AudioCallback, AudioChunk, Cancellation, SynthesisResult
+from .base import AudioCallback, AudioChunk, Cancellation, SynthesisResult, speed_capability
 from .kokoro import segment_text, validate_text
 
 CANDIDATE_ID = "qwen3-0.6b"
@@ -734,6 +734,10 @@ class Qwen3StreamingAdapter:
                 "runtimeConfigId": TTS_CONFIG_ID,
                 "revision": MODEL_REVISION,
                 "defaultVoiceId": SPEAKER,
+                # faster-qwen's CustomVoice generator has no playback-speed
+                # parameter. Keep this explicit so a Kokoro speed is never
+                # silently presented as a Qwen capability.
+                "speed": speed_capability(supported=False, minimum=1.0, maximum=1.0, default=1.0),
                 "voices": [{"id": voice, "label": voice} for voice in self._voices],
             }
 

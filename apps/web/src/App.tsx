@@ -18,10 +18,10 @@ import { RecordingStore, type RecordingItemSummary } from './storage/recording-s
 import { StableTurnWriter } from './storage/stable-turn-writer';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, ttsModelKey, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
-import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
+import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { AppHeader } from './components/AppHeader';
 import { bootstrapCapability } from './sessions/session-archive';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
@@ -104,6 +104,8 @@ export function App() {
   const lastCheapRef = useRef<{ enabled: boolean; signature: string } | null>(null);
   const settingsStoreRef = useRef<SettingsStore | undefined>(undefined);
   const voiceCatalogRef = useRef<VoiceCatalog | undefined>(undefined);
+  const ttsModelsRef = useRef<TtsModelDescriptor[]>([]);
+  const [ttsModels, setTtsModels] = useState<TtsModelDescriptor[]>([]);
   const settingsFrozenRef = useRef<SettingsModel | undefined>(undefined);
   const [settingsModel, setSettingsModel] = useState<SettingsModel>(() => defaultSettingsModel(undefined));
   const settingsModelRef = useRef(settingsModel);
@@ -385,7 +387,7 @@ export function App() {
     if (!opened) throw new Error('Local session storage is not ready yet.');
     const id = existingId ?? uuidV7();
     const seed = uuidV7();
-    const frozen: SettingsModel = { agentName: settingsModel.agentName, persona: settingsModel.persona, voice: { ...settingsModel.voice } };
+    const frozen: SettingsModel = { agentName: settingsModel.agentName, persona: settingsModel.persona, selectedModel: { ...settingsModel.selectedModel }, voice: { ...settingsModel.voice }, voiceProfiles: { ...settingsModel.voiceProfiles } };
     settingsFrozenRef.current = frozen;
     const settings: SessionStartSettings = { version: 1, persona: frozen.persona, voice: { ...frozen.voice } };
     const personaDigest = settingsDigest(frozen);
@@ -567,25 +569,44 @@ export function App() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [sessionId, fetchRecordingSummaries, pollRecording]);
 
-  const onCatalog = useCallback((catalog: VoiceCatalog) => {
-    voiceCatalogRef.current = catalog;
-    setSettingsModel(prev => applyReconciled(prev, reconcileVoice(prev.voice, catalog)));
+  const reconcileCurrentSettings = useCallback((models: TtsModelDescriptor[], fallbackCatalog = voiceCatalogRef.current) => {
+    setSettingsModel(previous => applyReconciled(previous, reconcileSettings({ selectedModel: previous.selectedModel, voice: previous.voice, voiceProfiles: previous.voiceProfiles }, models, fallbackCatalog)));
   }, []);
 
-  const previewVoice = useCallback(async (voiceId: string, speedModifier: number) => {
+  const onCatalog = useCallback((catalog: VoiceCatalog) => {
+    voiceCatalogRef.current = catalog;
+    if (ttsModelsRef.current.length === 0) {
+      const fallbackModel: TtsModelDescriptor = { backendId: catalog.backendId, modelId: catalog.modelId, label: catalog.backendId === 'kokoro' ? 'Kokoro CUDA' : `${catalog.backendId} · ${catalog.modelId}`, status: 'ready', voiceCatalog: catalog, ...(catalog.speed ? { speed: catalog.speed } : {}) };
+      ttsModelsRef.current = [fallbackModel];
+      setTtsModels([fallbackModel]);
+    }
+    reconcileCurrentSettings(ttsModelsRef.current, catalog);
+  }, [reconcileCurrentSettings]);
+
+  const onModels = useCallback((models: TtsModelDescriptor[]) => {
+    ttsModelsRef.current = models;
+    setTtsModels(models);
+    const active = models.find(item => item.status === 'ready' && item.voiceCatalog);
+    if (active?.voiceCatalog) voiceCatalogRef.current = active.voiceCatalog;
+    reconcileCurrentSettings(models, voiceCatalogRef.current);
+  }, [reconcileCurrentSettings]);
+
+  const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string) => {
     if (!capability) throw new Error('The session capability is not ready yet.');
-    return startVoicePreview({ voiceId, speedModifier, capability });
+    return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), capability });
   }, [capability]);
 
-  const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference) => {
+  const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, voiceProfiles: Record<string, VoicePreference> = {}) => {
     setSettingsSaving(true);
     setSettingsSaveError(undefined);
     try {
       const store = settingsStoreRef.current ?? await SettingsStore.open();
       settingsStoreRef.current = store;
-      const ok = await store.save({ version: 1, agentName, persona, voice });
+      const activeVoice = { ...voice, backendId: selectedModel.backendId, modelId: selectedModel.modelId };
+      const profiles = { ...voiceProfiles, [ttsModelKey(selectedModel)]: activeVoice };
+      const ok = await store.save({ version: 1, agentName, persona, selectedModel, voice: activeVoice, voiceProfiles: profiles });
       if (!ok) throw new Error('Settings could not be saved on this device.');
-      setSettingsModel(applyReconciled({ agentName, persona }, { voice }));
+      setSettingsModel(applyReconciled({ agentName, persona, selectedModel, voiceProfiles: profiles }, { voice: activeVoice, selectedModel, voiceProfiles: profiles }));
       setSettingsOpen(false);
     } catch (error) {
       setSettingsSaveError(error instanceof Error ? error.message : 'Settings could not be saved.');
@@ -600,9 +621,12 @@ export function App() {
       settingsStoreRef.current = store;
       const stored = await store.load();
       if (cancelled) return;
-      const catalog = voiceCatalogRef.current;
-      const reconciled = reconcileVoice(stored?.voice, catalog);
-      setSettingsModel(applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA }, reconciled));
+      const selectedModel = stored?.selectedModel ?? {
+        backendId: stored?.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
+        modelId: stored?.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
+      };
+      const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, ttsModelsRef.current, voiceCatalogRef.current);
+      setSettingsModel(applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled));
     });
     return () => { cancelled = true; };
   }, []);
@@ -634,7 +658,7 @@ export function App() {
   }, [fetchRecordingSummaries]);
 
   const settingsDialog = settingsOpen ? <Suspense fallback={null}>
-    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} models={ttsModels} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
   </Suspense> : null;
   const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} />;
 
@@ -652,6 +676,7 @@ export function App() {
             elapsedSeconds={elapsed}
             onStart={start}
             onCatalog={onCatalog}
+            onModels={onModels}
             onCapability={setCapability}
             onContinueSession={id => void continueSession(id)}
           />

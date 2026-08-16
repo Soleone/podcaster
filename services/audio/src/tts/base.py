@@ -6,6 +6,15 @@ from typing import Protocol, TypeVar
 
 T = TypeVar("T")
 
+DEFAULT_VOICE_SPEED_MODIFIER = 1.0
+MIN_VOICE_SPEED_MODIFIER = 0.5
+MAX_VOICE_SPEED_MODIFIER = 2.0
+
+
+def speed_capability(*, supported: bool = True, minimum: float = MIN_VOICE_SPEED_MODIFIER, maximum: float = MAX_VOICE_SPEED_MODIFIER, default: float = DEFAULT_VOICE_SPEED_MODIFIER) -> dict[str, object]:
+    """Return the JSON-safe speed contract advertised by a TTS adapter."""
+    return {"supported": supported, "min": minimum, "max": maximum, "default": default}
+
 
 class TtsCancelled(RuntimeError):
     """Raised after the caller establishes the local no-more-audio cutoff."""

@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .base import AudioCallback, AudioChunk, Cancellation, SynthesisResult
+from .base import AudioCallback, AudioChunk, Cancellation, SynthesisResult, speed_capability
 
 MODEL_ID = "hexgrad/Kokoro-82M"
 MODEL_REVISION = "f3ff3571791e39611d31c381e3a41a3af07b4987"
@@ -391,6 +391,7 @@ class KokoroStreamingAdapter:
                 "runtimeConfigId": TTS_CONFIG_ID,
                 "revision": VOICES_SHA256[:12],
                 "defaultVoiceId": VOICE,
+                "speed": speed_capability(),
                 "voices": [{"id": voice, "label": voice} for voice in self._voices],
             }
 

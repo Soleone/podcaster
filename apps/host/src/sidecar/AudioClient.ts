@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { decodeBinaryAudioFrame, CONTRACT_VALIDATORS, DEFAULT_VOICE_SPEED_MODIFIER } from '@app/contracts';
+import { decodeBinaryAudioFrame, CONTRACT_VALIDATORS, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER } from '@app/contracts';
 import WebSocket, { type RawData } from 'ws';
 import type { SidecarProcess } from './process.js';
 import type { SpeechOutputPort, SpeechOutputStream, SpeechSynthesisStart } from '../session/SessionOrchestrator.js';
@@ -26,7 +26,7 @@ export interface VadStartEvent { streamId: string; utteranceId: string; captureS
 export interface VadEndEvent { streamId: string; utteranceId: string; captureStartSequence: number; captureEndSequence: number }
 export interface SttPartial { streamId: string; utteranceId: string; epoch: number; sequence: number; text: string; replacedCharacters: number }
 export interface SttFinal { streamId: string; utteranceId: string; epoch: number; text: string; endpointComplete: true }
-export interface AudioClientVoiceSelection { catalogId: string; voiceId: string; speedModifier?: number }
+export interface AudioClientVoiceSelection { catalogId: string; voiceId: string; speedModifier?: number; backendId?: string; modelId?: string }
 export interface AudioClientEvents {
   speechStart?(event: VadStartEvent): void;
   speechEnd?(event: VadEndEvent): void;
@@ -97,6 +97,9 @@ export class AudioClient implements SpeechOutputPort {
   private readonly selection: AudioClientVoiceSelection | undefined;
   private readonly voiceId: string;
   private readonly speedModifier: number;
+  private readonly backendId: string;
+  private readonly modelId: string;
+  private readonly explicitModelSelection: boolean;
 
   constructor(
     sidecar: SidecarProcess,
@@ -110,6 +113,9 @@ export class AudioClient implements SpeechOutputPort {
     this.selection = selection;
     this.voiceId = selection?.voiceId ?? 'af_heart';
     this.speedModifier = selection?.speedModifier ?? DEFAULT_VOICE_SPEED_MODIFIER;
+    this.backendId = selection?.backendId ?? DEFAULT_TTS_MODEL.backendId;
+    this.modelId = selection?.modelId ?? DEFAULT_TTS_MODEL.modelId;
+    this.explicitModelSelection = selection?.backendId !== undefined || selection?.modelId !== undefined;
   }
 
   connect(): Promise<void> {
@@ -151,7 +157,7 @@ export class AudioClient implements SpeechOutputPort {
     this.streamId = streamId;
     this.captureStreamId = captureStreamId;
     const opened = new Promise<void>((resolve, reject) => { this.openWaiter = { resolve, reject }; });
-    this.send('stream.open', { streamId, captureStreamId, sampleRate: 16_000, frameSamples: 320, streamMode });
+    this.send('stream.open', { streamId, captureStreamId, sampleRate: 16_000, frameSamples: 320, streamMode, ...(this.explicitModelSelection && (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) ? { backendId: this.backendId, modelId: this.modelId } : {}) });
     await opened;
     return streamId;
   }
@@ -359,15 +365,28 @@ export class AudioClient implements SpeechOutputPort {
       if (this.readinessSeen || this.streamId) return this.protocolFailure();
       this.readinessSeen = true;
       this.readyStatus = payload.status as typeof this.readyStatus;
-      // Fail closed when a session voice selection cannot be reconciled against
-      // the current verified catalog before any stream opens.
+      // Fail closed when a session voice/model selection cannot be reconciled
+      // against the current verified catalog before any stream opens. Older
+      // sidecars expose only the default Kokoro catalog, which remains valid for
+      // legacy clients.
       if (this.readyStatus === 'ready' && this.selection) {
         const selection = this.selection;
-        const catalog = payload.voiceCatalog as { catalogId?: unknown; voices?: Array<{ id?: unknown }> } | undefined;
+        const models = Array.isArray(payload.ttsModels) ? payload.ttsModels as Array<{ backendId?: unknown; modelId?: unknown; status?: unknown; voiceCatalog?: { catalogId?: unknown; voices?: Array<{ id?: unknown }> } }> : [];
+        const descriptor = models.find(model => model.backendId === this.backendId && model.modelId === this.modelId);
+        const catalog = descriptor?.voiceCatalog ?? (this.backendId === DEFAULT_TTS_MODEL.backendId && this.modelId === DEFAULT_TTS_MODEL.modelId
+          ? payload.voiceCatalog as { catalogId?: unknown; voices?: Array<{ id?: unknown }> } | undefined
+          : undefined);
         const voices = catalog?.voices;
+        const modelAvailable = descriptor === undefined || descriptor.status === 'ready';
         const catalogMatches = typeof catalog?.catalogId === 'string' && catalog.catalogId === selection.catalogId;
         const voicePresent = Array.isArray(voices) && voices.some(voice => voice.id === selection.voiceId);
-        if (!catalogMatches || !voicePresent) {
+        if (!modelAvailable) {
+          this.failed = true;
+          this.readyStatus = 'failed';
+          this.events.failure?.('tts_model_unavailable');
+          this.failAll(new Error('selected TTS model is unavailable; Kokoro remains available as the fallback'));
+          this.socket?.close(CLOSE_SIDECAR_FAILURE, 'selected TTS model unavailable');
+        } else if (!catalogMatches || !voicePresent) {
           this.failed = true;
           this.readyStatus = 'failed';
           this.events.failure?.('catalog_mismatch');
@@ -400,6 +419,10 @@ export class AudioClient implements SpeechOutputPort {
 
   private streamOpenedMessage(payload: JsonObject): void {
     if (!this.streamId || this.streamOpened || !this.openWaiter || payload.streamId !== this.streamId) return this.protocolFailure();
+    if (payload.backendId !== undefined && payload.backendId !== this.backendId) return this.protocolFailure();
+    if (payload.modelId !== undefined && payload.modelId !== this.modelId) return this.protocolFailure();
+    if ((this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)
+      && (payload.backendId !== this.backendId || payload.modelId !== this.modelId)) return this.protocolFailure();
     this.streamOpened = true;
     const waiter = this.openWaiter;
     this.openWaiter = undefined;
@@ -436,6 +459,10 @@ export class AudioClient implements SpeechOutputPort {
     const outputStreamId = Number(payload.outputStreamId);
     if (!pending || pending.sidecarStarted || pending.epoch !== payload.epoch || this.usedOutputStreams.has(outputStreamId)) return this.protocolFailure();
     if (this.selection && payload.voiceId !== this.selection.voiceId) return this.protocolFailure();
+    if (payload.backendId !== undefined && payload.backendId !== this.backendId) return this.protocolFailure();
+    if (payload.modelId !== undefined && payload.modelId !== this.modelId) return this.protocolFailure();
+    if ((this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)
+      && (payload.backendId !== this.backendId || payload.modelId !== this.modelId)) return this.protocolFailure();
     pending.playbackId = String(payload.playbackId);
     pending.outputStreamId = outputStreamId;
     pending.sampleRate = Number(payload.sampleRate);
@@ -444,7 +471,7 @@ export class AudioClient implements SpeechOutputPort {
     if (!pending.cutoff) {
       pending.startSettled = true;
       const completion = (pending as PendingTts & { completion: Promise<{ generatedSamples: number }> }).completion;
-      pending.resolveStart({ playbackId: pending.playbackId, sampleRate: pending.sampleRate, completion, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}), ...(pending.outputStreamId !== undefined ? { outputStreamId: pending.outputStreamId } : {}) });
+      pending.resolveStart({ playbackId: pending.playbackId, sampleRate: pending.sampleRate, completion, ...(payload.backendId !== undefined ? { backendId: String(payload.backendId) } : {}), ...(payload.modelId !== undefined ? { modelId: String(payload.modelId) } : {}), ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}), ...(pending.outputStreamId !== undefined ? { outputStreamId: pending.outputStreamId } : {}) });
     }
   }
 

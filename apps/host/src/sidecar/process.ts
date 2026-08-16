@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { isValidVoiceCatalog, type VoiceCatalog } from '@app/contracts';
+import { isValidTtsModelDescriptor, isValidVoiceCatalog, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog } from '@app/contracts';
 
 const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -52,6 +52,8 @@ export interface SidecarRuntimeSnapshot {
   stt: string;
   tts: string;
   voiceCatalog?: VoiceCatalog;
+  ttsModels?: TtsModelDescriptor[];
+  activeTtsModel?: TtsModelSelection;
 }
 
 /**
@@ -64,12 +66,21 @@ export async function sidecarSnapshot(sidecar: SidecarProcess): Promise<SidecarR
   try {
     const response = await fetch(`${sidecar.origin}/health`, { headers: { authorization: `Bearer ${sidecar.secret}` }, signal: AbortSignal.timeout(1000) });
     if (!response.ok) return undefined;
-    const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown; voiceCatalog?: unknown };
+    const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown; voiceCatalog?: unknown; ttsModels?: unknown; activeTtsModel?: unknown };
     if (value.status !== 'starting' && value.status !== 'ready' && value.status !== 'failed') return undefined;
     const snapshot: SidecarRuntimeSnapshot = { status: value.status, stt: String(value.stt ?? ''), tts: String(value.tts ?? '') };
     if (value.status === 'ready') {
       if (!isValidVoiceCatalog(value.voiceCatalog)) return undefined;
       snapshot.voiceCatalog = value.voiceCatalog;
+    }
+    if (value.ttsModels !== undefined) {
+      if (!Array.isArray(value.ttsModels) || !value.ttsModels.every(isValidTtsModelDescriptor)) return undefined;
+      snapshot.ttsModels = value.ttsModels;
+    }
+    if (value.activeTtsModel !== undefined) {
+      const active = value.activeTtsModel;
+      if (!active || typeof active !== 'object' || Array.isArray(active) || typeof (active as { backendId?: unknown }).backendId !== 'string' || typeof (active as { modelId?: unknown }).modelId !== 'string') return undefined;
+      snapshot.activeTtsModel = { backendId: (active as { backendId: string }).backendId, modelId: (active as { modelId: string }).modelId };
     }
     return snapshot;
   } catch { return undefined; }

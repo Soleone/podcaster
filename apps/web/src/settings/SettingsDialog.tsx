@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Square } from 'lucide-react';
-import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_TTS_MODEL, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, PODCASTER_SYSTEM_PROMPT, ttsModelKey, voiceSpeedCapability, utf8ByteLength, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
@@ -13,13 +13,15 @@ import { Spinner } from '../components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Textarea } from '../components/ui/textarea';
 import { cn } from '../lib/utils';
-import type { SettingsModel } from './settings-model';
+import { reconcileVoice, type SettingsModel } from './settings-model';
 import { stopVoicePreview, type VoicePreviewHandle } from './voice-preview';
 
 const VOICE_NOTICE_COPY = {
   rebase: 'Your saved voice is still available on the current audio engine. It was moved to the new catalog.',
   defaulted: 'Your saved voice is no longer available on the current audio engine. The verified default was selected instead.',
   missing_catalog: 'No verified voice catalog is available yet. Voice output is unavailable until the local audio engine is ready.',
+  model_unavailable: 'That TTS model is unavailable on this device. Kokoro remains selected as the usable local fallback.',
+  speed_defaulted: 'The saved speed is not supported by this TTS model, so its declared default was selected.',
 } as const;
 
 export interface SettingsDialogProps {
@@ -27,17 +29,21 @@ export interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   model: SettingsModel;
   catalog: VoiceCatalog | undefined;
+  models?: TtsModelDescriptor[];
   saving: boolean;
   saveError: string | undefined;
-  onSave: (agentName: string, persona: string, voice: VoicePreference) => Promise<void>;
-  onPreviewVoice?: (voiceId: string, speedModifier: number) => Promise<VoicePreviewHandle>;
+  onSave: (agentName: string, persona: string, voice: VoicePreference, selectedModel?: TtsModelSelection, voiceProfiles?: Record<string, VoicePreference>) => Promise<void>;
+  onPreviewVoice?: (voiceId: string, speedModifier: number, selectedModel?: TtsModelSelection, catalogId?: string) => Promise<VoicePreviewHandle>;
 }
 
-export function SettingsDialog({ open, onOpenChange, model, catalog, saving, saveError, onSave, onPreviewVoice }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, model, catalog, models = [], saving, saveError, onSave, onPreviewVoice }: SettingsDialogProps) {
   const [agentName, setAgentName] = useState(model.agentName);
   const [persona, setPersona] = useState(model.persona);
+  const [selectedModel, setSelectedModel] = useState<TtsModelSelection>(model.selectedModel ?? DEFAULT_TTS_MODEL);
+  const [voiceProfiles, setVoiceProfiles] = useState<Record<string, VoicePreference>>(model.voiceProfiles ?? {});
   const [voiceId, setVoiceId] = useState(model.voice.voiceId);
   const [speedModifier, setSpeedModifier] = useState(String(model.voice.speedModifier));
+  const [voiceNotice, setVoiceNotice] = useState(model.notice);
   const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing'>('idle');
   const [previewError, setPreviewError] = useState<string | undefined>(undefined);
   const previewHandleRef = useRef<VoicePreviewHandle | undefined>(undefined);
@@ -50,27 +56,54 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
     if (!open) return;
     setAgentName(model.agentName);
     setPersona(model.persona);
+    setSelectedModel(model.selectedModel ?? DEFAULT_TTS_MODEL);
+    setVoiceProfiles(model.voiceProfiles ?? {});
     setVoiceId(model.voice.voiceId);
     setSpeedModifier(String(model.voice.speedModifier));
+    setVoiceNotice(model.notice);
     setPreviewState('idle');
     setPreviewError(undefined);
-  }, [open, model.agentName, model.persona, model.voice.voiceId, model.voice.speedModifier]);
+  }, [open, model.agentName, model.persona, model.selectedModel?.backendId, model.selectedModel?.modelId, model.voice.voiceId, model.voice.speedModifier, model.notice, model.voiceProfiles]);
 
   useEffect(() => () => { previewHandleRef.current?.stop(); }, []);
 
   const agentNameInvalid = utf8ByteLength(agentName) > MAX_AGENT_NAME_BYTES;
   const personaBytes = useMemo(() => utf8ByteLength(persona), [persona]);
   const personaInvalid = personaBytes > MAX_PERSONA_BYTES;
+  const selectedDescriptor = models.find(item => item.backendId === selectedModel.backendId && item.modelId === selectedModel.modelId);
+  const selectedCatalog = selectedDescriptor?.voiceCatalog ?? (selectedModel.backendId === DEFAULT_TTS_MODEL.backendId && selectedModel.modelId === DEFAULT_TTS_MODEL.modelId ? catalog : undefined);
+  const speedCapability = selectedDescriptor?.speed ?? voiceSpeedCapability(selectedCatalog);
   const speedModifierValue = Number(speedModifier);
-  const speedModifierInvalid = !Number.isFinite(speedModifierValue) || speedModifierValue < MIN_VOICE_SPEED_MODIFIER || speedModifierValue > MAX_VOICE_SPEED_MODIFIER;
-  const catalogReady = Boolean(catalog && catalog.voices.length > 0);
-  const selectedVoice = catalog?.voices.find(voice => voice.id === voiceId);
-  const canSave = !agentNameInvalid && !personaInvalid && !speedModifierInvalid && !saving;
+  const speedModifierInvalid = !Number.isFinite(speedModifierValue)
+    || speedModifierValue < speedCapability.min
+    || speedModifierValue > speedCapability.max
+    || (!speedCapability.supported && speedModifierValue !== speedCapability.default);
+  const catalogReady = Boolean(selectedCatalog && selectedCatalog.voices.length > 0);
+  const selectedVoice = selectedCatalog?.voices.find(voice => voice.id === voiceId);
+  const canSave = !agentNameInvalid && !personaInvalid && !speedModifierInvalid && !saving && (!catalogReady || Boolean(voiceId));
+
+  const selectModel = (value: string | null) => {
+    const next = models.find(item => ttsModelKey(item) === value);
+    if (!next || next.status !== 'ready' || !next.voiceCatalog) return;
+    const nextModel = { backendId: next.backendId, modelId: next.modelId };
+    const key = ttsModelKey(nextModel);
+    const nextCatalog = next.speed && !next.voiceCatalog.speed ? { ...next.voiceCatalog, speed: next.speed } : next.voiceCatalog;
+    const reconciled = reconcileVoice(voiceProfiles[key], nextCatalog);
+    const nextVoice = { ...reconciled.voice, ...nextModel };
+    setSelectedModel(nextModel);
+    setVoiceProfiles(previous => ({ ...previous, [key]: nextVoice }));
+    setVoiceId(nextVoice.voiceId);
+    setSpeedModifier(String(nextVoice.speedModifier));
+    setVoiceNotice(reconciled.notice);
+    if (previewHandleRef.current) { previewHandleRef.current.stop(); previewHandleRef.current = undefined; setPreviewState('idle'); }
+  };
 
   const commit = async () => {
     if (!canSave) return;
-    const voice: VoicePreference = { catalogId: catalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '', speedModifier: speedModifierValue };
-    await onSave(agentName, persona, voice);
+    const selectedSpeed = speedCapability.supported ? speedModifierValue : speedCapability.default;
+    const voice: VoicePreference = { catalogId: selectedCatalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '', speedModifier: selectedSpeed, backendId: selectedModel.backendId, modelId: selectedModel.modelId };
+    const profiles = { ...voiceProfiles, [ttsModelKey(selectedModel)]: voice };
+    await onSave(agentName, persona, voice, selectedModel, profiles);
   };
 
   const togglePreview = async () => {
@@ -84,7 +117,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
     setPreviewError(undefined);
     setPreviewState('loading');
     try {
-      const handle = await onPreviewVoice(voiceId, speedModifierValue);
+      const handle = await onPreviewVoice(voiceId, speedCapability.supported ? speedModifierValue : speedCapability.default, selectedModel, selectedCatalog?.catalogId);
       // The dialog may have closed or moved on while the fetch was in flight.
       previewHandleRef.current = handle;
       setPreviewState('playing');
@@ -179,23 +212,39 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
             </Accordion>
           </TabsContent>
           <TabsContent value="voice" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1 pt-4 pb-1">
-            {model.notice ? <Alert variant={model.notice === 'missing_catalog' ? 'destructive' : 'default'}><AlertDescription>{VOICE_NOTICE_COPY[model.notice]}</AlertDescription></Alert> : null}
+            {voiceNotice ? <Alert variant={voiceNotice === 'missing_catalog' || voiceNotice === 'model_unavailable' ? 'destructive' : 'default'}><AlertDescription>{VOICE_NOTICE_COPY[voiceNotice]}</AlertDescription></Alert> : null}
             <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="settings-tts-model">Speech model</FieldLabel>
+                <FieldContent>
+                  {models.length > 0 ? <Select value={ttsModelKey(selectedModel)} onValueChange={selectModel}>
+                    <SelectTrigger id="settings-tts-model" className="w-full" aria-label="Speech model">
+                      <SelectValue>{selectedDescriptor?.label ?? `${selectedModel.backendId} · ${selectedModel.modelId}`}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {models.map(item => <SelectItem key={ttsModelKey(item)} value={ttsModelKey(item)} disabled={item.status !== 'ready'}>{item.label}{item.status !== 'ready' ? ' · unavailable' : ''}</SelectItem>)}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select> : <p className="text-sm text-muted-foreground">The local audio engine will report selectable models when it is ready.</p>}
+                  {selectedDescriptor?.status === 'unavailable' ? <FieldDescription className="text-destructive">{selectedDescriptor.reason ?? 'This model is unavailable.'} Kokoro remains the production fallback.</FieldDescription> : selectedDescriptor ? <FieldDescription>{selectedDescriptor.label} · backend {selectedDescriptor.backendId}</FieldDescription> : null}
+                </FieldContent>
+              </Field>
               <Field>
                 <FieldLabel htmlFor="settings-voice">Voice</FieldLabel>
                 <FieldContent>
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
-                      {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); if (previewHandleRef.current) { previewHandleRef.current.stop(); previewHandleRef.current = undefined; setPreviewState('idle'); } } }} disabled={!catalogReady}>
+                      {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: selectedCatalog!.catalogId, voiceId: value, speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default, ...selectedModel } })); if (previewHandleRef.current) { previewHandleRef.current.stop(); previewHandleRef.current = undefined; setPreviewState('idle'); } } }} disabled={!catalogReady}>
                         <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
                           <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectGroup>
-                            {catalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>{voice.label}</SelectItem>)}
+                            {selectedCatalog!.voices.map(voice => <SelectItem key={voice.id} value={voice.id}>{voice.label}</SelectItem>)}
                           </SelectGroup>
                         </SelectContent>
-                      </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the local audio engine reports its verified voices.</p>}
+                      </Select> : <p className="text-sm text-muted-foreground">Voice options appear once the selected model reports its verified catalog.</p>}
                     </div>
                     {catalogReady && onPreviewVoice ? <Button
                       variant="outline"
@@ -210,7 +259,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                     </Button> : null}
                   </div>
                   {previewError ? <p className="text-xs text-destructive" role="status">{previewError}</p> : null}
-                  {catalog ? <FieldDescription>Backend {catalog.backendId} · model {catalog.modelId} · revision {catalog.revision.slice(0, 8)}</FieldDescription> : null}
+                  {selectedCatalog ? <FieldDescription>Backend {selectedCatalog.backendId} · model {selectedCatalog.modelId} · revision {selectedCatalog.revision.slice(0, 8)}</FieldDescription> : null}
                 </FieldContent>
               </Field>
               <Field data-invalid={speedModifierInvalid || undefined}>
@@ -219,16 +268,17 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                   <Input
                     id="settings-voice-speed"
                     type="number"
-                    min={MIN_VOICE_SPEED_MODIFIER}
-                    max={MAX_VOICE_SPEED_MODIFIER}
+                    min={speedCapability.min}
+                    max={speedCapability.max}
                     step="0.05"
                     value={speedModifier}
-                    onChange={event => setSpeedModifier(event.target.value)}
+                    disabled={!speedCapability.supported}
+                    onChange={event => { setSpeedModifier(event.target.value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: selectedCatalog?.catalogId ?? '', voiceId, speedModifier: Number(event.target.value), ...selectedModel } })); }}
                     aria-invalid={speedModifierInvalid || undefined}
                     aria-describedby="settings-voice-speed-description"
                   />
-                  <FieldDescription id="settings-voice-speed-description">1.0 is normal speed. Use a value from {MIN_VOICE_SPEED_MODIFIER} to {MAX_VOICE_SPEED_MODIFIER}.</FieldDescription>
-                  {speedModifierInvalid ? <FieldError>Speed modifier must be between {MIN_VOICE_SPEED_MODIFIER} and {MAX_VOICE_SPEED_MODIFIER}.</FieldError> : null}
+                  <FieldDescription id="settings-voice-speed-description">{speedCapability.supported ? `Use this model's declared range ${speedCapability.min} to ${speedCapability.max}. ${speedCapability.default} is its normal speed.` : 'This model does not declare playback-speed control; its normal speed is fixed at 1.0.'}</FieldDescription>
+                  {speedModifierInvalid ? <FieldError>Speed modifier is outside this model's declared capability.</FieldError> : null}
                 </FieldContent>
               </Field>
             </FieldGroup>
