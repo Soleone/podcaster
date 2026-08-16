@@ -5,6 +5,26 @@ let server: DevServer;
 test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
 test.afterAll(async () => { await stopDevServer(server); });
 
+test('the shared app header returns home from a session and stays anchored across routes', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+  const header = page.locator('[data-slot="app-header"]');
+  const sessionHeaderBox = await header.boundingBox();
+  await expect(header.getByRole('link', { name: 'Podcaster home' })).toBeVisible();
+  await expect(header.getByRole('button', { name: /Open settings/ })).toBeVisible();
+
+  await header.getByRole('link', { name: 'Podcaster home' }).click();
+  await expect(page.getByRole('heading', { name: 'Your sessions' })).toBeVisible();
+  const indexHeaderBox = await header.boundingBox();
+  expect(indexHeaderBox).not.toBeNull();
+  expect(sessionHeaderBox).not.toBeNull();
+  expect(indexHeaderBox).toMatchObject({ x: sessionHeaderBox?.x, y: sessionHeaderBox?.y, width: sessionHeaderBox?.width, height: sessionHeaderBox?.height });
+
+  await page.getByRole('link', { name: 'Open session' }).click();
+  await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
+  await header.getByRole('button', { name: /Open settings/ }).click();
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+});
+
 test('each session lives at its own URL and appears on the index', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   const sessionUrl = page.url();

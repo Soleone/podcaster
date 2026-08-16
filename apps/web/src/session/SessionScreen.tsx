@@ -15,7 +15,6 @@ import { MessageScroller, MessageScrollerButton, MessageScrollerContent, Message
 import { activityLog, type ActivityEntry } from './activity-log';
 import type { RecordingSessionViewState, RecordingTrimTargetId } from '../recording/trim-state';
 import type { SessionViewState } from './state';
-import { SettingsButtonGroup } from '../settings/SettingsDialog';
 import './session.css';
 
 const headings: Record<SessionViewState['dominant'], string> = {
@@ -25,7 +24,7 @@ const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> =
   idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-type SessionScreenProps = { state: SessionViewState; agentName: string; elapsedSeconds: number; sessionPaused: boolean; onTogglePause: () => void; onStop: () => void; onCancelAssistant: () => void; onOpenSettings: () => void; darkMode: boolean; onToggleDarkMode: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>; readOnly?: boolean; onExportRecording?: () => Promise<void>; onDeleteRecording?: () => Promise<void>; exporting?: boolean; deleting?: boolean };
+type SessionScreenProps = { state: SessionViewState; agentName: string; elapsedSeconds: number; sessionPaused: boolean; onTogglePause: () => void; onStop: () => void; onCancelAssistant: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>; readOnly?: boolean; onExportRecording?: () => Promise<void>; onDeleteRecording?: () => Promise<void>; exporting?: boolean; deleting?: boolean };
 
 export function SessionScreen(props: SessionScreenProps) {
   const [trimAnnouncement, setTrimAnnouncement] = useState('');
@@ -69,7 +68,6 @@ export function SessionScreen(props: SessionScreenProps) {
             </Button>
             <Button variant="outline" size="sm" disabled={!canDelete} title="Delete recording" aria-label="Delete recording" onClick={() => void props.onDeleteRecording?.()}><Trash data-icon="inline-start" aria-hidden="true" /></Button>
           </ButtonGroup>
-          <SettingsButtonGroup darkMode={props.darkMode} onToggleDarkMode={props.onToggleDarkMode} onOpenSettings={props.onOpenSettings} settingsTitle="Settings · applies next session" />
         </>}
       </div>
     </header>

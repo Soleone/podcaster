@@ -20,8 +20,6 @@ export interface StoppedSessionProps {
   writer: StableTurnWriter;
   sessionId: string;
   agentName: string;
-  darkMode: boolean;
-  onToggleDarkMode: () => void;
   onContinue: () => void;
   onBack: () => void;
 }
@@ -108,7 +106,6 @@ export function StoppedSession(props: StoppedSessionProps) {
     return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
       <Card className="mx-auto max-w-md text-center">
         <CardHeader className="items-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Podcaster</p>
           <CardTitle><h1 className="m-0 text-base leading-snug font-medium">Session not found</h1></CardTitle>
           <CardDescription>This session may have been removed from this device.</CardDescription>
         </CardHeader>
@@ -133,9 +130,6 @@ export function StoppedSession(props: StoppedSessionProps) {
       onTogglePause={() => undefined}
       onStop={props.onBack}
       onCancelAssistant={() => undefined}
-      onOpenSettings={() => undefined}
-      darkMode={props.darkMode}
-      onToggleDarkMode={props.onToggleDarkMode}
       settingsOpen={false}
       recording={recording}
       onToggleBubbleTrim={toggleTrim}

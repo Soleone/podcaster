@@ -24,6 +24,7 @@ import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { SettingsDialog } from './settings/SettingsDialog';
+import { AppHeader } from './components/AppHeader';
 import { SessionIndex } from './sessions/SessionIndex';
 import { StoppedSession } from './sessions/StoppedSession';
 import { bootstrapCapability } from './sessions/session-archive';
@@ -628,10 +629,12 @@ export function App() {
   }, [fetchRecordingSummaries]);
 
   const settingsDialog = <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />;
+  const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} />;
 
   if (!writer) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading…</main>;
 
   return <>
+    {appHeader}
     <Routes>
       <Route path="/" element={
         <SessionIndex
@@ -641,9 +644,6 @@ export function App() {
           elapsedSeconds={elapsed}
           onStart={start}
           onCatalog={onCatalog}
-          darkMode={darkMode}
-          onToggleDarkMode={toggleDarkMode}
-          onOpenSettings={() => setSettingsOpen(true)}
           onCapability={setCapability}
           onContinueSession={id => void continueSession(id)}
         />
@@ -658,13 +658,10 @@ export function App() {
           elapsed={elapsed}
           sessionPaused={sessionPaused}
           recordingView={recordingView}
-          darkMode={darkMode}
-          onToggleDarkMode={toggleDarkMode}
           settingsOpen={settingsOpen}
           onTogglePause={() => void togglePause()}
           onStop={() => void stop()}
           onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
-          onOpenSettings={() => setSettingsOpen(true)}
           onToggleBubbleTrim={toggleBubbleTrim}
           onDeleteRecording={deleteRecording}
           buildExport={buildExport}
@@ -692,13 +689,10 @@ interface SessionRouteProps {
   elapsed: number;
   sessionPaused: boolean;
   recordingView: RecordingSessionViewState;
-  darkMode: boolean;
-  onToggleDarkMode: () => void;
   settingsOpen: boolean;
   onTogglePause: () => void;
   onStop: () => void;
   onCancelAssistant: () => void;
-  onOpenSettings: () => void;
   onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
   onDeleteRecording: () => Promise<void>;
   buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>;
@@ -746,9 +740,6 @@ function SessionRoute(props: SessionRouteProps) {
       onTogglePause={props.onTogglePause}
       onStop={props.onStop}
       onCancelAssistant={props.onCancelAssistant}
-      onOpenSettings={props.onOpenSettings}
-      darkMode={props.darkMode}
-      onToggleDarkMode={props.onToggleDarkMode}
       settingsOpen={props.settingsOpen}
       recording={props.recordingView}
       onToggleBubbleTrim={props.onToggleBubbleTrim}
@@ -764,8 +755,6 @@ function SessionRoute(props: SessionRouteProps) {
     writer={props.writer}
     sessionId={routeSessionId}
     agentName={props.agentName}
-    darkMode={props.darkMode}
-    onToggleDarkMode={props.onToggleDarkMode}
     onContinue={() => props.onContinueSession(routeSessionId)}
     onBack={props.onBack}
   />;

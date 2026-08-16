@@ -12,7 +12,6 @@ import type { ExportOnProgress } from '../recording/splice';
 import { Readiness } from '../readiness/Readiness';
 import { RecordingStore } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
-import { SettingsButtonGroup } from '../settings/SettingsDialog';
 import { exportSessionRecording, loadSessionArchive, sessionDurationSeconds, type SessionSummary } from './session-archive';
 
 function formatWhen(iso: string): string {
@@ -38,9 +37,6 @@ export interface SessionIndexProps {
   elapsedSeconds: number;
   onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void;
   onCatalog: (catalog: VoiceCatalog) => void;
-  darkMode: boolean;
-  onToggleDarkMode: () => void;
-  onOpenSettings: () => void;
   onCapability: (capability: string) => void;
   onContinueSession: (sessionId: string) => void;
 }
@@ -69,12 +65,8 @@ export function SessionIndex(props: SessionIndexProps) {
 
   const rows = summaries ?? [];
   return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
-    <header className="mb-5 flex items-start justify-between gap-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Podcaster</p>
-        <h1 className="mt-1 text-2xl font-semibold leading-tight tracking-tight">Your sessions</h1>
-      </div>
-      <SettingsButtonGroup darkMode={props.darkMode} onToggleDarkMode={props.onToggleDarkMode} onOpenSettings={props.onOpenSettings} />
+    <header className="mb-5">
+      <h1 className="text-2xl font-semibold leading-tight tracking-tight">Your sessions</h1>
     </header>
 
     {props.liveSessionId ? <Card aria-label="Active session" className="mb-8">
