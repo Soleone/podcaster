@@ -397,3 +397,53 @@ The generated `listening.json` and `listening-media/` use only opaque prompt/sam
 labels. Candidate identity remains in the mode-0600 private mapping outside the public
 projection. Do not run `reveal` for this baseline. A later T4.2 paired comparison will
 create a fresh package over matched Kokoro and Qwen runs.
+
+## T4.2 faster-Qwen Base voice-clone spike
+
+The evaluation-only Base candidate is the official
+`Qwen/Qwen3-TTS-12Hz-0.6B-Base` snapshot at immutable revision
+`5d83992436eae1d760afd27aff78a71d676296fc` under Apache-2.0. All 13 snapshot file
+hashes are recorded in `docs/model-manifest.json` and acquired with:
+
+```sh
+uv run python scripts/acquire-qwen3-tts-base.py
+uv run python scripts/verify-models.py docs/model-manifest.json
+```
+
+The Torch backend is `andimarafioti/faster-qwen3-tts` at commit
+`a70afc0f81f7f5f8801c3227968f1102f43f211c` (MIT), using the isolated
+`services/audio/qwen-requirements.lock` environment: Python 3.12, Torch
+2.12.1+cu130, Transformers 4.57.3, eager attention, and bfloat16. The optional
+GGML/qwentts.cpp backend, `franken_tts`, and any hosted fallback are excluded.
+
+The reference is `item-005-clean.wav` from the tracked LibriSpeech test-clean
+manifest: CC BY 4.0, source archive SHA-256
+`39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23`, recording
+SHA-256 `3690ab91ce574f4becf1b03ff9d03bdc2e3f674dcef6b21d7c87ebae2199c6e8`, and
+its committed transcript. The runner records the exact source, license,
+transcript, recording format, and effective ICL reference after the wrapper's
+0.5-second trailing silence.
+
+Run the standalone evidence capture on the WSL RTX 4090:
+
+```sh
+run_dir=$(date -u +%Y%m%dT%H%M%SZ)
+/tmp/qwen-env/bin/python scripts/faster-qwen3-tts-base-clone-spike.py \
+  --faster-repo /tmp/faster-qwen3-tts \
+  --output-dir "benchmarks/results/faster-qwen3-tts-base-clone-$run_dir"
+```
+
+The runner verifies model and reference provenance before model load, measures
+one-time x-vector/ICL prompt extraction, CPU serialization and device transfer,
+uncached and cached path prompts, serialized prompts, repeated requests, buffered
+and true chunked streaming, native chunk duration, first packet/TTFA, total
+processing, both RTF directions, signed PCM16LE/WAV validity, process-attributed
+VRAM/RSS peaks, and exact failures. Its bounded queue probe starts a simulated
+24-kHz playback consumer and requires at least 10 seconds of generated audio with
+zero dropped packets and zero underruns. Native packets are not the project's
+20-ms transport frames; an eventual adapter must rechunk them.
+
+The accepted spike artifact and full comparison are documented in
+`artifacts/evidence/2026-08-16-faster-qwen3-tts-base-voice-clone.md`. Kokoro CUDA
+remains the production fallback and this spike does not authorize replacing the
+official Qwen dependency.
