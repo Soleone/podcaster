@@ -22,11 +22,14 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   const dialog = page.getByRole('dialog');
   const persona = page.getByLabel('Persona');
   await expect(persona).toBeVisible();
+  await expect(persona).toHaveCSS('max-height', '192px');
+  await expect(persona).toHaveCSS('overflow-y', 'auto');
   const initial = await page.locator('#settings-persona-counter').innerText();
 
   // Agent name sits at the top of the Agent tab and defaults to Oliver.
   const agentName = page.getByLabel('Agent name');
   await expect(agentName).toBeVisible();
+  await expect(page.locator('#settings-agent-name-counter')).toHaveCount(0);
   await expect(agentName).toHaveValue('Oliver');
   await agentName.fill('Ada');
   const agentFocus = await agentName.evaluate(element => {
@@ -45,15 +48,23 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
 
   // Oversized persona disables Save with an inline error.
   await persona.fill('x'.repeat(9000));
+  const personaScroll = await persona.evaluate(element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+  expect(personaScroll.scrollHeight).toBeGreaterThan(personaScroll.clientHeight);
   await expect(page.getByText('Persona exceeds the 8 KiB limit.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save settings' })).toBeDisabled();
 
   // Restore a valid persona and inspect the read-only base prompt.
   await persona.fill('You are a terse, curious night-owl host who loves coastal weather.');
   await page.getByRole('button', { name: 'View base system prompt' }).click();
-  const basePrompt = page.getByText('You are the voice of a live podcast companion.');
+  const basePrompt = page.getByRole('textbox', { name: 'Base system prompt' });
   await expect(basePrompt).toBeVisible();
-  await expect(basePrompt.locator('..')).toHaveCSS('overflow-y', 'visible');
+  await expect(basePrompt).toBeDisabled();
+  await expect(basePrompt).toHaveCSS('overflow-y', 'auto');
+  await expect(basePrompt).toHaveCSS('cursor', 'default');
+  await expect(basePrompt).toHaveValue(/You are the voice of a live podcast companion\./);
+  const baseDescription = page.getByText('Your saved persona is appended to this base prompt when the next session starts.');
+  await baseDescription.scrollIntoViewIfNeeded();
+  await expect(baseDescription).toBeVisible();
 
   // Voice tab reflects that no verified catalog exists in fake services.
   await page.getByRole('tab', { name: 'Voice' }).click();

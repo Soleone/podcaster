@@ -7,6 +7,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '..
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field';
 import { Input } from '../components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupText, InputGroupTextarea } from '../components/ui/input-group';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Spinner } from '../components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -57,8 +58,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
 
   useEffect(() => () => { previewHandleRef.current?.stop(); }, []);
 
-  const agentNameBytes = useMemo(() => utf8ByteLength(agentName), [agentName]);
-  const agentNameInvalid = agentNameBytes > MAX_AGENT_NAME_BYTES;
+  const agentNameInvalid = utf8ByteLength(agentName) > MAX_AGENT_NAME_BYTES;
   const personaBytes = useMemo(() => utf8ByteLength(persona), [persona]);
   const personaInvalid = personaBytes > MAX_PERSONA_BYTES;
   const speedModifierValue = Number(speedModifier);
@@ -109,7 +109,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
         <DialogTitle>Settings</DialogTitle>
         <DialogDescription id="settings-description">These apply to the next session you start. The active session is never changed mid-turn.</DialogDescription>
       </DialogHeader>
-      <div className="min-h-0 flex flex-col gap-4">
+      <div className="min-h-0 min-w-0 flex flex-col gap-4">
         <Tabs defaultValue="agent" className="min-h-0 min-w-0 flex-1">
           <TabsList aria-label="Settings sections" className="w-full shrink-0">
             <TabsTrigger value="agent">Agent</TabsTrigger>
@@ -119,57 +119,61 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
             <FieldGroup>
               <Field data-invalid={agentNameInvalid || undefined}>
                 <FieldLabel htmlFor="settings-agent-name">Agent name</FieldLabel>
-                <FieldContent>
-                  <Input
-                    id="settings-agent-name"
-                    value={agentName}
-                    onChange={event => setAgentName(event.target.value)}
-                    aria-invalid={agentNameInvalid || undefined}
-                    aria-describedby="settings-agent-name-description settings-agent-name-counter"
-                    placeholder="e.g. Oliver"
-                    maxLength={MAX_AGENT_NAME_BYTES}
-                  />
-                  <FieldDescription id="settings-agent-name-description">Name shown above the assistant's messages in the conversation. It is kept out of the system prompt.</FieldDescription>
-                  <p id="settings-agent-name-counter" className={cn('text-xs text-muted-foreground', agentNameInvalid && 'text-destructive')} aria-live="polite">
-                    {agentNameBytes.toLocaleString()} / {MAX_AGENT_NAME_BYTES.toLocaleString()} bytes
-                  </p>
-                  {agentNameInvalid ? <FieldError>Agent name exceeds the {MAX_AGENT_NAME_BYTES}-byte limit.</FieldError> : null}
-                </FieldContent>
+                <Input
+                  id="settings-agent-name"
+                  value={agentName}
+                  onChange={event => setAgentName(event.target.value)}
+                  aria-invalid={agentNameInvalid || undefined}
+                  aria-describedby="settings-agent-name-description"
+                  placeholder="e.g. Oliver"
+                  maxLength={MAX_AGENT_NAME_BYTES}
+                />
+                <FieldDescription id="settings-agent-name-description">Name shown above the assistant's messages in the conversation. It is kept out of the system prompt.</FieldDescription>
+                {agentNameInvalid ? <FieldError>Agent name exceeds the {MAX_AGENT_NAME_BYTES}-byte limit.</FieldError> : null}
               </Field>
             </FieldGroup>
-            <Accordion multiple defaultValue={['persona']} className="rounded-xl">
+            <Accordion multiple defaultValue={['persona']} className="shrink-0 rounded-xl">
               <AccordionItem value="persona">
                 <AccordionTrigger>Persona</AccordionTrigger>
-                <AccordionContent className="pt-4" aria-labelledby="settings-persona-panel-label">
+                <AccordionContent aria-labelledby="settings-persona-panel-label">
                   <span id="settings-persona-panel-label" className="sr-only">Agent behavior settings</span>
                   <Field data-invalid={personaInvalid || undefined}>
                     <FieldLabel className="sr-only" htmlFor="settings-persona">Persona</FieldLabel>
-                    <FieldContent>
-                      <Textarea
+                    <InputGroup>
+                      <InputGroupTextarea
                         id="settings-persona"
                         value={persona}
                         onChange={event => setPersona(event.target.value)}
                         aria-invalid={personaInvalid || undefined}
                         aria-describedby="settings-persona-description settings-persona-counter"
                         placeholder="Describe how the assistant should behave…"
-                        className="h-48 min-h-40 resize-none"
+                        className="h-48 max-h-48 min-h-40 min-w-0 overflow-y-auto"
                       />
-                      <FieldDescription id="settings-persona-description" className="mt-2">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
-                      <p id="settings-persona-counter" className={cn('text-xs text-muted-foreground', personaInvalid && 'text-destructive')} aria-live="polite">
-                        {personaBytes.toLocaleString()} / {MAX_PERSONA_BYTES.toLocaleString()} bytes
-                      </p>
-                      {personaInvalid ? <FieldError>Persona exceeds the {MAX_PERSONA_BYTES / 1024} KiB limit.</FieldError> : null}
-                    </FieldContent>
+                      <InputGroupAddon align="block-end">
+                        <InputGroupText id="settings-persona-counter" className={cn('text-xs', personaInvalid && 'text-destructive')} aria-live="polite">
+                          {personaBytes.toLocaleString()} / {MAX_PERSONA_BYTES.toLocaleString()}
+                        </InputGroupText>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    <FieldDescription id="settings-persona-description">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
+                    {personaInvalid ? <FieldError>Persona exceeds the {MAX_PERSONA_BYTES / 1024} KiB limit.</FieldError> : null}
                   </Field>
                 </AccordionContent>
               </AccordionItem>
               <AccordionItem value="system-prompt">
                 <AccordionTrigger>View base system prompt</AccordionTrigger>
                 <AccordionContent>
-                  <div className="rounded-lg border border-border bg-muted/40 p-3">
-                    <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">Your saved persona is appended to this base prompt when the next session starts.</p>
+                  <Field data-disabled>
+                    <FieldLabel className="sr-only" htmlFor="settings-system-prompt">Base system prompt</FieldLabel>
+                    <Textarea
+                      id="settings-system-prompt"
+                      className="h-48 max-h-48 min-h-48 overflow-y-auto disabled:cursor-default"
+                      disabled
+                      value={PODCASTER_SYSTEM_PROMPT}
+                      aria-describedby="settings-system-prompt-description"
+                    />
+                    <FieldDescription id="settings-system-prompt-description">Your saved persona is appended to this base prompt when the next session starts.</FieldDescription>
+                  </Field>
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
