@@ -240,7 +240,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
   </Dialog>;
 }
 
-export function ThemeToggle({ darkMode, onToggle }: { darkMode: boolean; onToggle: () => void }) {
+export function ThemeToggle({ darkMode, onToggle, className }: { darkMode: boolean; onToggle: () => void; className?: string }) {
   const label = darkMode ? 'Dark mode on. Switch to light mode' : 'Dark mode off. Switch to dark mode';
   return <Button
     variant="outline"
@@ -249,23 +249,25 @@ export function ThemeToggle({ darkMode, onToggle }: { darkMode: boolean; onToggl
     aria-label={label}
     aria-pressed={darkMode}
     onClick={onToggle}
+    className={className}
   >
     {darkMode ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
   </Button>;
 }
 
-export function SettingsButton({ onClick, title = 'Open settings' }: { onClick: () => void; title?: string }) {
-  return <Button variant="outline" size="icon" title={title} aria-label={title} onClick={onClick}><Settings aria-hidden="true" /></Button>;
+export function SettingsButton({ onClick, title = 'Open settings', className }: { onClick: () => void; title?: string; className?: string }) {
+  return <Button variant="outline" size="icon" title={title} aria-label={title} onClick={onClick} className={className}><Settings aria-hidden="true" /></Button>;
 }
 
-export function SettingsButtonGroup({ darkMode, onToggleDarkMode, onOpenSettings, settingsTitle = 'Open settings' }: {
+export function SettingsButtonGroup({ darkMode, onToggleDarkMode, onOpenSettings, settingsTitle = 'Open settings', buttonClassName }: {
   darkMode: boolean;
   onToggleDarkMode: () => void;
   onOpenSettings: () => void;
   settingsTitle?: string;
+  buttonClassName?: string;
 }) {
   return <ButtonGroup aria-label="Appearance and settings controls">
-    <ThemeToggle darkMode={darkMode} onToggle={onToggleDarkMode} />
-    <SettingsButton onClick={onOpenSettings} title={settingsTitle} />
+    <ThemeToggle darkMode={darkMode} onToggle={onToggleDarkMode} {...(buttonClassName ? { className: buttonClassName } : {})} />
+    <SettingsButton onClick={onOpenSettings} title={settingsTitle} {...(buttonClassName ? { className: buttonClassName } : {})} />
   </ButtonGroup>;
 }

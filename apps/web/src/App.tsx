@@ -749,7 +749,7 @@ function SessionRoute(props: SessionRouteProps) {
       deleting={deleting}
     />;
   }
-  if (props.resuming) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Resuming session…</main>;
+  if (props.resuming) return <main className="mx-auto mt-5 mb-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Resuming session…</main>;
   if (!routeSessionId) return null;
   return <StoppedSession
     writer={props.writer}

@@ -54,7 +54,7 @@ export function SessionScreen(props: SessionScreenProps) {
   const hasAssistantText = props.state.conversationItems.some(item => item.kind === 'assistant' && item.text.trim() !== '');
   const showAssistantActivity = props.state.dominant === 'speaking' || (props.state.dominant === 'reasoning' && !hasAssistantText);
   const StateIcon = stateIcons[props.state.dominant];
-  return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
+  return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
     <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{readOnly ? 'Ended session' : 'Active voice session'}</p>
       <div className="flex flex-wrap items-center gap-2">

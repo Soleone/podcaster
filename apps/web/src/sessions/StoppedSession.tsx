@@ -103,7 +103,7 @@ export function StoppedSession(props: StoppedSessionProps) {
   }, [props.sessionId, loadRecording]);
 
   if (!session) {
-    return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
+    return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
       <Card className="mx-auto max-w-md text-center">
         <CardHeader className="items-center">
           <CardTitle><h1 className="m-0 text-base leading-snug font-medium">Session not found</h1></CardTitle>
@@ -117,11 +117,11 @@ export function StoppedSession(props: StoppedSessionProps) {
   }
 
   if (!view || !recording) {
-    return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading session…</main>;
+    return <main className="mx-auto mt-5 mb-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading session…</main>;
   }
 
   const elapsed = sessionDurationSeconds(session);
-  return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
+  return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
     <SessionScreen
       state={view}
       agentName={props.agentName}

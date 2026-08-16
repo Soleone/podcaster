@@ -64,7 +64,7 @@ export function SessionIndex(props: SessionIndexProps) {
     exportSessionRecording(sessionId, props.writer, onProgress), [props.writer]);
 
   const rows = summaries ?? [];
-  return <main className="mx-auto my-8 w-[min(56rem,calc(100%_-_2rem))]">
+  return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
     <header className="mb-5">
       <h1 className="text-2xl font-semibold leading-tight tracking-tight">Your sessions</h1>
     </header>
