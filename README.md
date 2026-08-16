@@ -12,7 +12,9 @@ corepack pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-`pnpm dev` builds the web app, starts the host-owned selected audio runtime, and opens the host at `http://127.0.0.1:43127`. Keeping this browser origin stable preserves microphone permission across restarts. The internal Python sidecar still uses an OS-assigned IPv4 loopback port. Override the host port with `PODCASTER_PORT` when necessary; startup fails safely if the selected port is already occupied. Press `Ctrl-C` to stop the host and its owned sidecar.
+`pnpm dev` starts the host-owned selected audio runtime and Vite's HMR server at `http://127.0.0.1:5173`. Edit the web source or `apps/web/index.html` and the browser updates without restarting. Vite proxies `/api` and `/ws` to the host, while the internal Python sidecar still uses an OS-assigned IPv4 loopback port. The frontend port can be changed with `PODCASTER_WEB_PORT`, and the host port with `PODCASTER_PORT`; startup fails safely if a selected port is already occupied. Press `Ctrl-C` to stop the host, Vite, and the owned sidecar.
+
+For the production-like build-first workflow, use `pnpm dev:build`. It builds the web app and host, then serves the generated bundle from the host at `http://127.0.0.1:43127`. `pnpm build` creates both build artifacts without starting a server. Keeping either browser origin stable preserves microphone permission across restarts.
 
 This milestone is readiness infrastructure only. It does not request microphone permission, capture audio, load speech models, connect Pi, or retain history. After disclosure acknowledgement the page reports **Voice input**, **Voice output**, and **Cloud reasoning**, with corrective actions.
 
@@ -26,7 +28,7 @@ pnpm exec playwright test readiness.spec.ts
 pnpm check
 ```
 
-For a manual boundary check, keep `pnpm dev` running, use the exact printed host/port and Origin header for `/api/readiness`, and inspect listeners:
+For a manual host-boundary check, keep `pnpm dev:build` running, use the exact printed host/port and Origin header for `/api/readiness`, and inspect listeners:
 
 ```bash
 ORIGIN=http://127.0.0.1:43127 # or your PODCASTER_PORT override
