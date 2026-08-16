@@ -138,7 +138,9 @@ def _failure_item(
     }
 
 
-def _summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+def _summary(
+    items: list[dict[str, Any]], timing: dict[str, Any] | None = None
+) -> dict[str, Any]:
     passed = [item for item in items if item["status"] == "passed"]
 
     def values(key: str) -> list[float]:
@@ -234,16 +236,23 @@ def _summary(items: list[dict[str, Any]]) -> dict[str, Any]:
                 ),
             }
         )
+        item_peak_rss = max(
+            (
+                item["metrics"].get("peakRssBytes")
+                for item in items
+                if item["metrics"].get("peakRssBytes") is not None
+            ),
+            default=None,
+        )
+        if item_peak_rss is not None:
+            result["peakRssBytes"] = item_peak_rss
         if not has_scoped_rss:
             result.pop("synthesisWindowWholeProcessPeakRssBytes")
-            result["peakRssBytes"] = max(
-                (
-                    item["metrics"].get("peakRssBytes")
-                    for item in items
-                    if item["metrics"].get("peakRssBytes") is not None
-                ),
-                default=None,
-            )
+    if timing is not None:
+        result["prepareSeconds"] = timing.get("prepareSeconds")
+        result["cold"] = timing.get("cold")
+        result["peakRssBytes"] = timing.get("peakRssBytes")
+        result["peakVramBytes"] = timing.get("peakVramBytes")
     return result
 
 
@@ -1127,6 +1136,25 @@ def _validate_tts_provenance(run: dict[str, Any]) -> None:
     if len(entries) != 1:
         raise ValidationError("TTS model provenance does not resolve to one manifest entry")
     model = entries[0]
+    if candidate.get("id") == "kokoro":
+        provider = candidate.get("provider")
+        if provider == "CPUExecutionProvider":
+            expected_runtime = model.get("cpuRuntime")
+            expected_provider = model.get("cpuProvider")
+            expected_precision = model.get("cpuPrecision")
+        elif provider == "CUDAExecutionProvider":
+            expected_runtime = model.get("runtime")
+            expected_provider = model.get("provider")
+            expected_precision = model.get("precision")
+        else:
+            raise ValidationError("TTS Kokoro provider is not attested")
+        if (
+            expected_runtime is None
+            or candidate.get("runtime") != expected_runtime
+            or candidate.get("provider") != expected_provider
+            or candidate.get("precision") != expected_precision
+        ):
+            raise ValidationError("TTS Kokoro runtime variant does not match model manifest")
     if (
         model.get("revision") != model_record.get("revision")
         or model.get("sha256") != model_record.get("sha256")
@@ -1213,6 +1241,7 @@ def _validate_tts_audio(
             if event["detail"].get("sourceId") == item["sourceId"]
             and event["detail"].get("candidateId") == item["candidateId"]
             and event["detail"].get("attempt") == item["attempt"]
+            and event["detail"].get("phase", "measured") == "measured"
         ]
         first = [event for event in correlated if event["type"] == "first_audio"]
         finals = [event for event in correlated if event["type"] == "final"]
@@ -1238,6 +1267,120 @@ def _validate_tts_audio(
             or finals[0]["detail"].get("outputSha256") != metadata["sha256"]
         ):
             raise ValidationError("TTS request/first-audio/final ordering or timing mismatch")
+
+
+def _validate_tts_timing(
+    run: dict[str, Any],
+    summary: dict[str, Any],
+    items: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> None:
+    timing = run.get("timing")
+    if timing is None:
+        # Runs produced before the matched cold/prepare timing contract remain
+        # valid historical fixtures. New runs always persist this object.
+        return
+    if not isinstance(timing, dict):
+        raise ValidationError("TTS timing record is invalid")
+
+    prepare_seconds = timing.get("prepareSeconds")
+    if not isinstance(prepare_seconds, (int, float)) or isinstance(prepare_seconds, bool):
+        raise ValidationError("TTS prepare timing is missing")
+    if prepare_seconds < 0 or summary.get("prepareSeconds") != prepare_seconds:
+        raise ValidationError("TTS prepare timing does not match summary")
+
+    def optional_peak(value: object, label: str) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValidationError(f"TTS {label} is invalid")
+        return value
+
+    prepare_rss = optional_peak(timing.get("preparePeakRssBytes"), "prepare RSS peak")
+    prepare_vram = optional_peak(timing.get("preparePeakVramBytes"), "prepare VRAM peak")
+    cold = timing.get("cold")
+    cold_rss = cold_vram = None
+    if cold is None:
+        if summary.get("cold") is not None:
+            raise ValidationError("TTS cold timing does not match summary")
+    elif not isinstance(cold, dict):
+        raise ValidationError("TTS cold timing is invalid")
+    else:
+        required = {
+            "sourceId",
+            "ttsTimeToFirstAudioMs",
+            "processingSeconds",
+            "rtf",
+            "audioDurationSeconds",
+            "totalSamples",
+            "peakRssBytes",
+            "peakVramBytes",
+        }
+        if not required.issubset(cold):
+            raise ValidationError("TTS cold timing is incomplete")
+        if summary.get("cold") != cold:
+            raise ValidationError("TTS cold timing does not match summary")
+        for key in (
+            "ttsTimeToFirstAudioMs",
+            "processingSeconds",
+            "rtf",
+            "audioDurationSeconds",
+        ):
+            value = cold[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                raise ValidationError(f"TTS cold {key} is invalid")
+        if isinstance(cold["totalSamples"], bool) or not isinstance(cold["totalSamples"], int) or cold["totalSamples"] <= 0:
+            raise ValidationError("TTS cold sample count is invalid")
+        cold_rss = optional_peak(cold["peakRssBytes"], "cold RSS peak")
+        cold_vram = optional_peak(cold["peakVramBytes"], "cold VRAM peak")
+        cold_id = cold["sourceId"]
+        correlated = [
+            event
+            for event in events
+            if event["detail"].get("sourceId") == cold_id
+            and event["detail"].get("candidateId") == run["models"][0]["id"]
+            and event["detail"].get("attempt") == 1
+            and event["detail"].get("phase") == "cold"
+        ]
+        requested = [event for event in correlated if event["type"] == "tts_requested"]
+        first = [event for event in correlated if event["type"] == "first_audio"]
+        finals = [event for event in correlated if event["type"] == "final"]
+        if len(requested) != 1 or len(first) != 1 or len(finals) != 1:
+            raise ValidationError("TTS cold timing requires one request, first-audio, and final event")
+        measured_ttfa = first[0]["monotonicMs"] - requested[0]["monotonicMs"]
+        measured_processing = (finals[0]["monotonicMs"] - requested[0]["monotonicMs"]) / 1000
+        if (
+            abs(measured_ttfa - cold["ttsTimeToFirstAudioMs"]) > 0.01
+            or abs(measured_processing - cold["processingSeconds"]) > 1e-6
+            or abs(cold["rtf"] - measured_processing / cold["audioDurationSeconds"]) > 1e-6
+            or finals[0]["detail"].get("sampleCount") != cold["totalSamples"]
+        ):
+            raise ValidationError("TTS cold timing arithmetic is inconsistent")
+        if first[0]["monotonicMs"] < requested[0]["monotonicMs"] or finals[0]["monotonicMs"] < first[0]["monotonicMs"]:
+            raise ValidationError("TTS cold timing event order is invalid")
+
+    # Include measured-item resource maxima with the prepare and cold windows,
+    # without deriving a number from ambient nvidia-smi state.
+    measured_rss_values = [
+        item["metrics"].get("peakRssBytes")
+        for item in items
+        if item["metrics"].get("peakRssBytes") is not None
+    ]
+    measured_vram_values = [
+        item["metrics"].get("peakVramBytes")
+        for item in items
+        if item["metrics"].get("peakVramBytes") is not None
+    ]
+    measured_rss = max(measured_rss_values, default=None)
+    measured_vram = max(measured_vram_values, default=None)
+    rss_values = [value for value in (prepare_rss, cold_rss, measured_rss) if value is not None]
+    vram_values = [value for value in (prepare_vram, cold_vram, measured_vram) if value is not None]
+    expected_rss = max(rss_values) if rss_values else None
+    expected_vram = max(vram_values) if vram_values else None
+    if timing.get("peakRssBytes") != expected_rss or summary.get("peakRssBytes") != expected_rss:
+        raise ValidationError("TTS whole-run RSS peak does not match phase peaks")
+    if timing.get("peakVramBytes") != expected_vram or summary.get("peakVramBytes") != expected_vram:
+        raise ValidationError("TTS whole-run VRAM peak does not match phase peaks")
 
 
 def _recompute_tts_soak(
@@ -1423,7 +1566,8 @@ def validate_run(run_dir: Path) -> dict[str, int]:
     items = _read_jsonl(run_dir / "items.jsonl", "item.json")
     events = _read_jsonl(run_dir / "events.jsonl", "event.json")
     ratings = _read_jsonl(run_dir / "ratings.jsonl", "rating.json")
-    recomputed = _summary(items)
+    timing = run.get("timing") if run["kind"] == "tts" else None
+    recomputed = _summary(items, timing if isinstance(timing, dict) else None)
     if run["kind"] == "stt":
         references = _tracked_stt_references(run)
         recomputed["wer"], recomputed["cer"] = _recompute_stt_rates(items, references)
@@ -1432,6 +1576,7 @@ def validate_run(run_dir: Path) -> dict[str, int]:
         _validate_tts_provenance(run)
         _validate_tts_semantics(run)
         _validate_tts_audio(run_dir, run, items, events)
+        _validate_tts_timing(run, summary, items, events)
         recomputed["soak"] = _recompute_tts_soak(run, events, summary["soak"])
     elif set(summary["soak"]) == {
         "durationSeconds",

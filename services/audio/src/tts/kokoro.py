@@ -23,7 +23,12 @@ RUNTIME_VERSION = "0.5.0"
 SAMPLE_RATE = 24_000
 VOICE = "af_heart"
 LANGUAGE = "en-us"
-PROVIDER = "CUDAExecutionProvider"
+CPU_PROVIDER = "CPUExecutionProvider"
+CUDA_PROVIDER = "CUDAExecutionProvider"
+# The model files are identical for both execution providers. Keep the CUDA
+# contract as the production default, while retaining a separately attested CPU
+# contract for matched benchmark comparisons.
+PROVIDER = CUDA_PROVIDER
 PRECISION = "float32"
 OUTPUT_FORMAT = "pcm_s16le_mono"
 MAX_TEXT_CHARACTERS = 4_000
@@ -36,14 +41,20 @@ OWNED_THREAD_PREFIXES = ("kokoro-inference", "kokoro-output", "kokoro-runtime-ex
 # Stable identity for the voice catalog's runtimeConfigId, aligned with the
 # readiness tts id without importing runtime (avoids a circular import).
 TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
+CPU_TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cpu-v1"
 
+CPU_RUNTIME_CONTRACT = (
+    "kokoro-onnx==0.5.0; git=98ea02a5692534c2ba496708e2f19de25028412b; "
+    "onnxruntime==1.22.1"
+)
 # onnxruntime-gpu 1.22.0 (cu12). onnxruntime 1.22.1 has no GPU wheel; the proxy
 # wheel vendor/onnxruntime-1.22.0-py3-none-any.whl satisfies the onnxruntime
 # requirement with the GPU build only (see scripts/build-ort-proxy-wheel.py).
-RUNTIME_CONTRACT = (
+CUDA_RUNTIME_CONTRACT = (
     "kokoro-onnx==0.5.0; git=98ea02a5692534c2ba496708e2f19de25028412b; "
     "onnxruntime-gpu==1.22.0 (cu12; onnxruntime proxy wheel)"
 )
+RUNTIME_CONTRACT = CUDA_RUNTIME_CONTRACT
 
 # Ordered so each library's own DT_NEEDED dependencies load first.
 _NVIDIA_CUDA12_PACKAGES = (
@@ -104,7 +115,9 @@ def _verify_asset(path: Path, expected_path: Path, expected_sha256: str, label: 
         raise ValueError(f"Kokoro {label} bytes do not match the pinned SHA-256")
 
 
-def _verify_runtime_distribution() -> None:
+def _verify_runtime_distribution(provider: str = PROVIDER) -> None:
+    if provider not in {CPU_PROVIDER, CUDA_PROVIDER}:
+        raise RuntimeError("unsupported Kokoro execution provider")
     kokoro = importlib.metadata.distribution("kokoro-onnx")
     if kokoro.version != RUNTIME_VERSION:
         raise RuntimeError("kokoro-onnx runtime version does not match the pinned contract")
@@ -120,6 +133,10 @@ def _verify_runtime_distribution() -> None:
         or vcs.get("requested_revision") != RUNTIME_REVISION
     ):
         raise RuntimeError("kokoro-onnx origin/revision does not match the pinned contract")
+    if provider == CPU_PROVIDER:
+        if importlib.metadata.version("onnxruntime") != "1.22.1":
+            raise RuntimeError("onnxruntime CPU version does not match the pinned contract")
+        return
     gpu = importlib.metadata.distribution("onnxruntime-gpu")
     if gpu.version != "1.22.0":
         raise RuntimeError("onnxruntime-gpu version does not match the pinned contract")
@@ -153,14 +170,15 @@ class KokoroOnnxBackend:
     poisoned: bool = False
     voices: list[str] = field(default_factory=list)
 
-    runtime_verifier: Callable[[], None] = _verify_runtime_distribution
+    runtime_verifier: Callable[[str], None] = _verify_runtime_distribution
 
     def prepare(self, model_path: str, voices_path: str, provider: str) -> None:
         from kokoro_onnx import Kokoro
         import onnxruntime as ort
 
-        preload_cuda_runtime()
-        self.runtime_verifier()
+        if provider == CUDA_PROVIDER:
+            preload_cuda_runtime()
+        self.runtime_verifier(provider)
         if provider not in ort.get_available_providers():
             raise RuntimeError("configured ONNX provider is unavailable")
         session_options = ort.SessionOptions()
@@ -285,6 +303,8 @@ class KokoroStreamingAdapter:
     _active: bool = False
     _poisoned: bool = False
     _voices: tuple[str, ...] = ()
+    provider: str = PROVIDER
+    config_id: str = TTS_CONFIG_ID
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _workers: set[threading.Thread] = field(default_factory=set)
 
@@ -299,16 +319,23 @@ class KokoroStreamingAdapter:
             candidate = config.get("candidate")
             if not isinstance(candidate, dict) or candidate.get("id") != "kokoro":
                 raise ValueError("Kokoro candidate config is required")
+            provider = candidate.get("provider")
+            runtime_contract = {
+                CPU_PROVIDER: CPU_RUNTIME_CONTRACT,
+                CUDA_PROVIDER: CUDA_RUNTIME_CONTRACT,
+            }.get(provider)
+            if runtime_contract is None:
+                raise ValueError("Kokoro candidate provider is unsupported")
             expected = {
                 "modelId": MODEL_ID,
                 "revision": MODEL_REVISION,
                 "onnxReleaseRevision": ONNX_RELEASE_REVISION,
                 "runtimeRevision": RUNTIME_REVISION,
-                "runtime": RUNTIME_CONTRACT,
+                "runtime": runtime_contract,
                 "modelSha256": MODEL_SHA256,
                 "voicesSha256": VOICES_SHA256,
                 "voice": VOICE,
-                "provider": PROVIDER,
+                "provider": provider,
                 "precision": PRECISION,
             }
             for key, value in expected.items():
@@ -345,13 +372,15 @@ class KokoroStreamingAdapter:
             )
             backend = self.backend_factory()
             try:
-                backend.prepare(model_path, voices_path, PROVIDER)
+                backend.prepare(model_path, voices_path, str(provider))
             except BaseException:
                 try:
                     backend.close()
                 finally:
                     raise
             self.backend = backend
+            self.provider = str(provider)
+            self.config_id = str(config.get("id", TTS_CONFIG_ID))
             voices = tuple(sorted(set(backend.get_voices())))
             if not voices or VOICE not in voices:
                 raise ValueError("verified voices file exposed no usable catalog")
@@ -382,13 +411,13 @@ class KokoroStreamingAdapter:
             if not self.prepared or not self._voices:
                 raise RuntimeError("voice catalog is unavailable until the adapter is prepared")
             digest = hashlib.sha256()
-            for part in ("kokoro", "kokoro-82m-onnx", TTS_CONFIG_ID, VOICES_SHA256):
+            for part in ("kokoro", "kokoro-82m-onnx", self.config_id, self.provider, VOICES_SHA256):
                 digest.update(part.encode("utf-8"))
             return {
                 "catalogId": digest.hexdigest()[:16],
                 "backendId": "kokoro",
                 "modelId": "kokoro-82m-onnx",
-                "runtimeConfigId": TTS_CONFIG_ID,
+                "runtimeConfigId": self.config_id,
                 "revision": VOICES_SHA256[:12],
                 "defaultVoiceId": VOICE,
                 "speed": speed_capability(),

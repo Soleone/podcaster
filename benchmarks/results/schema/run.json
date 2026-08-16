@@ -182,6 +182,12 @@
           },
           "onnxReleaseRevision": {
             "type": "string"
+          },
+          "device": {
+            "type": "string"
+          },
+          "backend": {
+            "type": "string"
           }
         }
       }
@@ -305,6 +311,10 @@
     },
     "provenance": {
       "type": "object"
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": true
     }
   },
   "if": {

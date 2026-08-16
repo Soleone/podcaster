@@ -12,6 +12,8 @@ import pytest
 
 from benchmarks.harness.adapter import CancelToken, Cancelled
 from services.audio.src.tts.kokoro import (
+    CPU_PROVIDER,
+    CPU_RUNTIME_CONTRACT,
     KokoroStreamingAdapter,
     MODEL_ID,
     MODEL_REVISION,
@@ -243,6 +245,24 @@ def test_prepare_passes_verified_paths_and_cuda_provider() -> None:
         "/verified/kokoro-v1.0.onnx",
         "/verified/voices-v1.0.bin",
         "CUDAExecutionProvider",
+    )
+    adapter.close()
+
+
+def test_prepare_passes_verified_paths_and_cpu_provider() -> None:
+    value = config()
+    value["candidate"]["provider"] = CPU_PROVIDER
+    value["candidate"]["runtime"] = CPU_RUNTIME_CONTRACT
+    fake = FakeBackend()
+    adapter = KokoroStreamingAdapter(
+        backend_factory=lambda: fake,
+        asset_verifier=lambda path, expected, digest, label: None,
+    )
+    adapter.prepare(value)
+    assert fake.prepared == (
+        "/verified/kokoro-v1.0.onnx",
+        "/verified/voices-v1.0.bin",
+        CPU_PROVIDER,
     )
     adapter.close()
 

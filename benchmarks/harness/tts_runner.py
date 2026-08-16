@@ -133,6 +133,56 @@ class RssSampler:
         self.peak = max(self.peak, _rss_bytes())
 
 
+@dataclass
+class VramTracker:
+    """Track process-attributed CUDA allocator peaks, never ambient device use."""
+
+    enabled: bool
+    peak: int | None = None
+    current: int | None = None
+    reason: str | None = None
+    _torch: Any = None
+
+    @classmethod
+    def for_config(cls, config: dict[str, Any]) -> "VramTracker":
+        candidate = config.get("candidate")
+        provider = candidate.get("provider") if isinstance(candidate, dict) else None
+        # Qwen exposes PyTorch allocator counters. Kokoro's CUDA path uses the
+        # ONNX Runtime CUDA allocator, which is not process-attributed here, so
+        # report VRAM as unmeasured rather than fabricating zero.
+        return cls(provider == "CUDA")
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                self.reason = "CUDA unavailable"
+                self.enabled = False
+                return
+            self._torch = torch
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+        except BaseException as error:
+            self.reason = f"CUDA allocator unavailable: {type(error).__name__}"
+            self.enabled = False
+            self._torch = None
+
+    def close(self) -> None:
+        if not self.enabled or self._torch is None:
+            return
+        try:
+            self._torch.cuda.synchronize()
+            self.peak = int(self._torch.cuda.max_memory_reserved())
+            self.current = int(self._torch.cuda.memory_reserved())
+        except BaseException as error:
+            self.reason = f"CUDA allocator sampling failed: {type(error).__name__}"
+            self.peak = None
+            self.current = None
+
+
 def _worker_names() -> list[str]:
     return sorted(
         thread.name
@@ -212,15 +262,26 @@ def _verified_tts_config(
     model = matches[0]
 
     if candidate == "kokoro":
+        provider = candidate_config.get("provider")
+        if provider == "CPUExecutionProvider":
+            runtime = model.get("cpuRuntime")
+            expected_provider = model.get("cpuProvider")
+            precision = model.get("cpuPrecision")
+        elif provider == "CUDAExecutionProvider":
+            runtime = model.get("runtime")
+            expected_provider = model.get("provider")
+            precision = model.get("precision")
+        else:
+            raise ValueError("unsupported Kokoro execution provider")
         model_pairs = {
             "revision": model.get("revision"),
             "onnxReleaseRevision": model.get("onnxReleaseRevision"),
             "runtimeRevision": model.get("runtimeRevision"),
-            "runtime": model.get("runtime"),
+            "runtime": runtime,
             "modelSha256": model.get("sha256"),
             "voice": model.get("voice"),
-            "provider": model.get("provider"),
-            "precision": model.get("precision"),
+            "provider": expected_provider,
+            "precision": precision,
         }
         voices_path_value = model.get("voicesPath")
         voices_file = next(
@@ -309,6 +370,70 @@ def _write_wav(path: Path, pcm: bytes, sample_rate: int) -> None:
         target.writeframes(pcm)
 
 
+def _timed_synthesis(adapter: Any, text: str, config: dict[str, Any]) -> dict[str, Any]:
+    """Measure one request using the shared request/20-ms acceptance boundary."""
+    pcm_parts: list[bytes] = []
+    first_audio_at: list[float] = []
+    expected_sequence = 0
+    expected_sample_offset = 0
+    expected_chunk_samples = (
+        int(config["comparisonSampleRate"]) * int(config["chunkMs"]) // 1000
+    )
+    rss = RssSampler()
+    vram = VramTracker.for_config(config)
+    rss.start()
+    vram.start()
+    requested_at = time.perf_counter()
+
+    def audio(chunk: Any) -> None:
+        nonlocal expected_sequence, expected_sample_offset
+        if chunk.sample_rate != config["comparisonSampleRate"]:
+            raise RuntimeError("TTS audio chunk sample rate mismatches comparison contract")
+        if chunk.sequence != expected_sequence or chunk.sample_offset != expected_sample_offset:
+            raise RuntimeError("TTS audio chunks are not contiguous")
+        if chunk.samples <= 0:
+            raise RuntimeError("TTS audio chunk is empty")
+        if not first_audio_at:
+            if chunk.samples != expected_chunk_samples:
+                raise RuntimeError("TTS first audio chunk is not one configured transport chunk")
+            first_audio_at.append(time.perf_counter())
+        pcm_parts.append(chunk.pcm16)
+        expected_sequence += 1
+        expected_sample_offset += chunk.samples
+
+    try:
+        result = adapter.synthesize_stream(text, CancelToken(), audio)
+        completed_at = time.perf_counter()
+    finally:
+        rss.close()
+        vram.close()
+    if not first_audio_at:
+        raise RuntimeError("TTS result lacks first non-empty audio")
+    pcm = b"".join(pcm_parts)
+    if result.sample_rate != config["comparisonSampleRate"]:
+        raise RuntimeError("TTS result sample rate disagrees with comparison contract")
+    if result.total_samples <= 0 or result.audio_seconds <= 0:
+        raise RuntimeError("TTS result has no positive audio duration")
+    if len(pcm) != result.total_samples * 2:
+        raise RuntimeError("TTS result sample metadata disagrees with PCM")
+    if result.sha256 != sha256_bytes(pcm):
+        raise RuntimeError("TTS result checksum disagrees with accepted PCM")
+    processing_seconds = completed_at - requested_at
+    return {
+        "pcm": pcm,
+        "result": result,
+        "requestedAt": requested_at,
+        "firstAudioAt": first_audio_at[0],
+        "completedAt": completed_at,
+        "ttsTimeToFirstAudioMs": (first_audio_at[0] - requested_at) * 1000,
+        "processingSeconds": processing_seconds,
+        "rtf": processing_seconds / result.audio_seconds,
+        "peakRssBytes": rss.peak,
+        "peakVramBytes": vram.peak,
+        "steadyVramBytes": vram.current,
+    }
+
+
 def compare_tts_runs(run_dirs: list[Path]) -> dict[str, Any]:
     if len(run_dirs) < 2:
         raise ValueError("compare requires at least two TTS runs")
@@ -375,6 +500,8 @@ def compare_tts_runs(run_dirs: list[Path]) -> dict[str, Any]:
                 "provider": run["models"][0].get("provider"),
                 "ttsTimeToFirstAudioMs": summary["ttsTimeToFirstAudioMs"],
                 "rtf": summary["rtf"],
+                "prepareSeconds": summary.get("prepareSeconds"),
+                "cold": summary.get("cold"),
                 "totalAudioDurationSeconds": summary.get("totalAudioDurationSeconds"),
                 "totalSamples": summary.get("totalSamples"),
                 "failures": summary["failures"],
@@ -382,9 +509,12 @@ def compare_tts_runs(run_dirs: list[Path]) -> dict[str, Any]:
                 "underruns": summary["underruns"],
                 "peakVramBytes": summary["peakVramBytes"],
                 "steadyVramBytes": summary["steadyVramBytes"],
+                "peakRssBytes": summary.get("peakRssBytes"),
                 "synthesisWindowWholeProcessPeakRssBytes": summary.get(
                     "synthesisWindowWholeProcessPeakRssBytes"
                 ),
+                "preparePeakRssBytes": run.get("timing", {}).get("preparePeakRssBytes") if isinstance(run.get("timing"), dict) else None,
+                "preparePeakVramBytes": run.get("timing", {}).get("preparePeakVramBytes") if isinstance(run.get("timing"), dict) else None,
                 "soak": summary["soak"],
             }
             for path, run, summary in loaded
@@ -583,6 +713,8 @@ def run_tts(
                         "voicesSha256": config["candidate"].get("voicesSha256"),
                         "runtimeRevision": config["candidate"].get("runtimeRevision"),
                         "onnxReleaseRevision": config["candidate"].get("onnxReleaseRevision"),
+                        "device": config["candidate"].get("device") or config.get("device"),
+                        "backend": config["candidate"].get("backend") or config.get("backend"),
                     }.items()
                     if value is not None
                 },
@@ -616,6 +748,14 @@ def run_tts(
         "expectedItems": expected,
         "randomization": {"method": "single-candidate-v1", "blind": True, "revealLocked": True},
         "status": "running",
+        "timing": {
+            "prepareSeconds": 0.0,
+            "preparePeakRssBytes": None,
+            "preparePeakVramBytes": None,
+            "cold": None,
+            "peakRssBytes": None,
+            "peakVramBytes": None,
+        },
         "provenance": {
             "modelManifestPath": "docs/model-manifest.json",
             "modelManifestSha256": sha256_file(ROOT / "docs/model-manifest.json"),
@@ -635,6 +775,7 @@ def run_tts(
     run_started = time.perf_counter()
     adapter: Any | None = None
     primary_stage: str | None = None
+    timing = run["timing"]
     soak = {
         "durationSeconds": 0.0,
         "passed": True,
@@ -694,6 +835,11 @@ def run_tts(
         sequence += 1
 
     try:
+        prepare_started = time.perf_counter()
+        prepare_rss = RssSampler()
+        prepare_vram = VramTracker.for_config(config)
+        prepare_rss.start()
+        prepare_vram.start()
         try:
             adapter = factory()
             adapter.prepare(config)
@@ -701,10 +847,87 @@ def run_tts(
             primary_stage = "prepare"
             for entry in expected:
                 fail(entry["sourceId"], primary_stage, error)
-        if adapter is not None and primary_stage is None and config["warmups"]:
+        finally:
+            prepare_rss.close()
+            prepare_vram.close()
+            timing["prepareSeconds"] = time.perf_counter() - prepare_started
+            timing["preparePeakRssBytes"] = prepare_rss.peak
+            timing["preparePeakVramBytes"] = prepare_vram.peak
+            timing["peakRssBytes"] = prepare_rss.peak
+            timing["peakVramBytes"] = prepare_vram.peak
+
+        if adapter is not None and primary_stage is None:
             try:
                 adapter.reset()
-                adapter.synthesize_stream(prompts["items"][0]["text"], CancelToken())
+                cold = _timed_synthesis(adapter, prompts["items"][0]["text"], config)
+                cold_context = {
+                    "sourceId": prompts["items"][0]["sourceId"],
+                    "candidateId": candidate,
+                    "attempt": 1,
+                    "phase": "cold",
+                }
+                events.append(
+                    _event(
+                        sequence,
+                        (cold["requestedAt"] - run_started) * 1000,
+                        "tts_requested",
+                        cold_context,
+                    )
+                )
+                sequence += 1
+                events.append(
+                    _event(
+                        sequence,
+                        (cold["firstAudioAt"] - run_started) * 1000,
+                        "first_audio",
+                        {
+                            **cold_context,
+                            "latencyMs": cold["ttsTimeToFirstAudioMs"],
+                            "sampleOffset": 0,
+                        },
+                    )
+                )
+                sequence += 1
+                cold_result = cold["result"]
+                events.append(
+                    _event(
+                        sequence,
+                        (cold["completedAt"] - run_started) * 1000,
+                        "final",
+                        {
+                            **cold_context,
+                            "sampleCount": cold_result.total_samples,
+                            "outputSha256": cold_result.sha256,
+                            "audioDurationSeconds": cold_result.audio_seconds,
+                            "processingSeconds": cold["processingSeconds"],
+                            "adapterProcessingSeconds": cold_result.processing_seconds,
+                            "synthesisWindowWholeProcessPeakRssBytes": cold["peakRssBytes"],
+                            "peakVramBytes": cold["peakVramBytes"],
+                        },
+                    )
+                )
+                sequence += 1
+                timing["cold"] = {
+                    "sourceId": prompts["items"][0]["sourceId"],
+                    "ttsTimeToFirstAudioMs": cold["ttsTimeToFirstAudioMs"],
+                    "processingSeconds": cold["processingSeconds"],
+                    "rtf": cold["rtf"],
+                    "audioDurationSeconds": cold_result.audio_seconds,
+                    "totalSamples": cold_result.total_samples,
+                    "peakRssBytes": cold["peakRssBytes"],
+                    "peakVramBytes": cold["peakVramBytes"],
+                }
+                if cold["peakRssBytes"] is not None:
+                    timing["peakRssBytes"] = max(timing["peakRssBytes"], cold["peakRssBytes"])
+                if cold["peakVramBytes"] is not None:
+                    timing["peakVramBytes"] = max(
+                        timing["peakVramBytes"] or 0, cold["peakVramBytes"]
+                    )
+                # The measured run starts after the configured cold probe. Any
+                # additional configured warmups remain excluded from aggregates.
+                for _ in range(1, max(1, int(config["warmups"]))):
+                    adapter.reset()
+                    adapter.synthesize_stream(prompts["items"][0]["text"], CancelToken())
             except BaseException as error:
                 primary_stage = "warmup"
                 for entry in expected:
@@ -712,7 +935,12 @@ def run_tts(
         if adapter is not None and primary_stage is None:
             for prompt in benchmark_prompts:
                 source = prompt["sourceId"]
-                context = {"sourceId": source, "candidateId": candidate, "attempt": 1}
+                context = {
+                    "sourceId": source,
+                    "candidateId": candidate,
+                    "attempt": 1,
+                    "phase": "measured",
+                }
                 try:
                     adapter.reset()
                     token = CancelToken()
@@ -724,7 +952,9 @@ def run_tts(
                         int(config["comparisonSampleRate"]) * int(config["chunkMs"]) // 1000
                     )
                     rss = RssSampler()
+                    vram = VramTracker.for_config(config)
                     rss.start()
+                    vram.start()
                     requested_at = time.perf_counter()
                     events.append(
                         _event(
@@ -755,6 +985,11 @@ def run_tts(
                     result = adapter.synthesize_stream(prompt["text"], token, audio)
                     completed_at = time.perf_counter()
                     rss.close()
+                    vram.close()
+                    if rss.peak is not None:
+                        timing["peakRssBytes"] = max(timing["peakRssBytes"], rss.peak)
+                    if vram.peak is not None:
+                        timing["peakVramBytes"] = max(timing["peakVramBytes"] or 0, vram.peak)
                     if not first_audio_at:
                         raise RuntimeError("TTS result lacks first non-empty audio")
                     pcm = b"".join(pcm_parts)
@@ -790,6 +1025,7 @@ def run_tts(
                                 "processingSeconds": harness_processing,
                                 "adapterProcessingSeconds": result.processing_seconds,
                                 "synthesisWindowWholeProcessPeakRssBytes": rss.peak,
+                                "peakVramBytes": vram.peak,
                             },
                         )
                     )
@@ -803,6 +1039,9 @@ def run_tts(
                             "totalSamples": result.total_samples,
                             "droppedOutputChunks": 0,
                             "synthesisWindowWholeProcessPeakRssBytes": rss.peak,
+                            "peakRssBytes": rss.peak,
+                            "peakVramBytes": vram.peak,
+                            "steadyVramBytes": vram.current,
                         }
                     )
                     items[source] = {
@@ -837,6 +1076,10 @@ def run_tts(
                 except BaseException as error:
                     try:
                         rss.close()
+                    except (NameError, RuntimeError):
+                        pass
+                    try:
+                        vram.close()
                     except (NameError, RuntimeError):
                         pass
                     fail(source, "synthesize", error)
@@ -978,7 +1221,7 @@ def run_tts(
     events.sort(key=lambda event: (event["monotonicMs"], event["sequence"]))
     for index, event in enumerate(events):
         event["sequence"] = index
-    summary = _summary(ordered_items)
+    summary = _summary(ordered_items, timing)
     summary["soak"] = soak
     _write_jsonl(run_dir / "items.jsonl", ordered_items)
     _write_jsonl(run_dir / "events.jsonl", events)
@@ -995,9 +1238,12 @@ def run_tts(
         "adapter preparation. Output is signed little-endian PCM16 mono at 24 kHz in WAV "
         "containers. TTFA begins at tts_requested and ends at the first accepted non-empty "
         "20-ms PCM chunk. RTF is harness processing seconds divided by generated audio "
-        "seconds, and RSS is sampled over the synthesis window for the whole process. Gain "
-        "is fixed at 0.9 with no per-item normalization or resampling. Soak mode consumes a "
-        "bounded queue at playback pace.\n"
+        "seconds. Prepare time and the first after-prepare cold request are reported "
+        "separately from warm item aggregates. RSS is sampled over each whole-process "
+        "phase window. VRAM is process-attributed only for the Qwen PyTorch allocator; "
+        "CPU and ONNX Runtime CUDA candidates report it as unmeasured. Gain is fixed at "
+        "0.9 with no per-item normalization or resampling. Soak mode consumes a bounded "
+        "queue at playback pace.\n"
     )
     validate_run(run_dir)
     return run_dir

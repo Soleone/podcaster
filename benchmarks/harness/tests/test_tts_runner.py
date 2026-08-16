@@ -21,6 +21,7 @@ from benchmarks.harness.tts_runner import (
 from services.audio.src.tts.base import AudioChunk, SynthesisResult
 
 CONFIG = ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml"
+CPU_CONFIG = ROOT / "benchmarks/configs/tts/kokoro.yaml"
 QWEN_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-0.6b.yaml"
 PROMPTS = ROOT / "benchmarks/datasets/tts-prompts-v1.manifest.json"
 
@@ -131,7 +132,7 @@ def test_qwen_candidate_run_and_cancellation_probe_validate(tmp_path: Path) -> N
         tmp_path,
         adapter_factory=FakeQwenTtsAdapter,
     )
-    assert validate_run(run) == {"items": 24, "events": 72, "ratings": 0}
+    assert validate_run(run) == {"items": 24, "events": 75, "ratings": 0}
     run_data = json.loads((run / "run.json").read_text())
     assert run_data["models"][0]["id"] == "qwen3-0.6b"
     assert run_data["comparisonSemantics"]["language"] == "en-us"
@@ -162,6 +163,12 @@ def test_qwen_candidate_run_and_cancellation_probe_validate(tmp_path: Path) -> N
     assert '"rateable":true' in view_text
 
 
+def test_cpu_kokoro_config_resolves_to_the_attested_cpu_variant() -> None:
+    config, _, _, model = tts_runner._verified_tts_config("kokoro", CPU_CONFIG, PROMPTS)
+    assert config["candidate"]["provider"] == "CPUExecutionProvider"
+    assert config["candidate"]["runtime"] == model["cpuRuntime"]
+
+
 def test_qwen_config_rejects_pinned_runtime_contract_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     config = json.loads(QWEN_CONFIG.read_text())
     config["candidate"]["runtime"] = "untrusted-qwen-runtime"
@@ -172,7 +179,7 @@ def test_qwen_config_rejects_pinned_runtime_contract_mismatch(monkeypatch: pytes
 
 def test_tts_runner_writes_valid_pcm_metadata_and_recomputable_summary(tmp_path: Path) -> None:
     run = run_tts("kokoro", CONFIG, PROMPTS, tmp_path, adapter_factory=FakeTtsAdapter)
-    assert validate_run(run) == {"items": 24, "events": 72, "ratings": 0}
+    assert validate_run(run) == {"items": 24, "events": 75, "ratings": 0}
     data = json.loads((run / "run.json").read_text())
     summary = json.loads((run / "summary.json").read_text())
     items = [json.loads(line) for line in (run / "items.jsonl").read_text().splitlines()]

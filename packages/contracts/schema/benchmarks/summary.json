@@ -298,6 +298,71 @@
         "null"
       ],
       "minimum": 0
+    },
+    "prepareSeconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "cold": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sourceId",
+            "ttsTimeToFirstAudioMs",
+            "processingSeconds",
+            "rtf",
+            "audioDurationSeconds",
+            "totalSamples",
+            "peakRssBytes",
+            "peakVramBytes"
+          ],
+          "properties": {
+            "sourceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ttsTimeToFirstAudioMs": {
+              "type": "number",
+              "minimum": 0
+            },
+            "processingSeconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "rtf": {
+              "type": "number",
+              "minimum": 0
+            },
+            "audioDurationSeconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "totalSamples": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "peakRssBytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "peakVramBytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   }
 }

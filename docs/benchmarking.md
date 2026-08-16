@@ -483,6 +483,54 @@ semantics, repetitions, or terminal statuses. A single-candidate projection is
 not rateable; it is evidence that the admitted candidate run is valid, not a
 selection result.
 
+## QW-5 Matched Qwen/Kokoro comparison
+
+The primary comparison is **Qwen CUDA versus Kokoro CPU** on the same 24 exact
+prompts. The CPU Kokoro config uses the same verified model files and an
+independently pinned `onnxruntime==1.22.1` runtime; the CUDA Kokoro config remains
+available for the optional post-KOK-1 GPU-versus-GPU rerun. Candidate provider and
+runtime identity are recorded in each run and are not part of shared comparison
+semantics.
+
+The harness records these phases separately:
+
+- `prepareSeconds`: adapter construction and `prepare()` through model readiness;
+- `cold`: the first request after preparation, before the measured prompt loop;
+- warm item TTFA: request to the first accepted 480-sample, 20-ms PCM chunk;
+- RTF: monotonic request-to-adapter-return seconds divided by generated audio seconds;
+- RSS: 10-ms samples of whole-process RSS over prepare, cold, and each synthesis
+  window; the reported run peak is the maximum of those phase windows;
+- VRAM: process-attributed `torch.cuda.max_memory_reserved()` for Qwen. Kokoro CPU
+  is `null`; Kokoro's CUDA path uses ONNX Runtime's allocator and is intentionally
+  also `null` because no process-attributed ONNX VRAM counter is claimed.
+
+Use isolated runtimes and validate both runs before comparing them:
+
+```sh
+cpu_run=$(/tmp/kokoro-cpu-env/bin/python -m benchmarks.harness run --kind tts \
+  --candidate kokoro --config benchmarks/configs/tts/kokoro.yaml \
+  --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
+qwen_run=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
+  --candidate qwen3-0.6b --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
+/tmp/kokoro-cpu-env/bin/python -m benchmarks.harness validate "$cpu_run"
+/tmp/qwen-env/bin/python -m benchmarks.harness validate "$qwen_run"
+.venv/bin/python -m benchmarks.harness compare --runs "$cpu_run" "$qwen_run"
+```
+
+The production-shape interpretation is Nemotron STT on CPU with Qwen TTS on GPU.
+These TTS-only runs do not load Nemotron, do not run the two services together, and
+do not establish GPU co-residency or a universal RTX 4090 claim. `nvidia-smi` GPU
+identity is retained as machine context; candidate execution provider and
+process-attributed counters are the evidence.
+
+After KOK-1, the optional GPU-versus-GPU comparison is run by replacing the CPU
+config with `benchmarks/configs/tts/kokoro-cuda.yaml` and retaining the same Qwen
+run. It is a separate labeled result, not a replacement for the primary
+production-shape comparison. A failed prompt remains in `items.jsonl` and
+`summary.json`; no aggregate is presented as passed when either terminal run is
+failed.
+
 ## T4.3 faster-Qwen Base voice-clone spike
 
 The evaluation-only Base candidate is the official

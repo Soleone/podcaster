@@ -2,12 +2,12 @@
 
 export const PROTOCOL_VERSION = 1 as const;
 
-export type BenchmarkEvent = { "monotonicMs": number; "type": "audio_received" | "speech_start" | "partial" | "revision" | "endpoint" | "final" | "tts_requested" | "first_audio" | "cancel_requested" | "silence_observed" | "underrun" | "frame_dropped" | "failure" | "vram_sample" | "soak_started" | "soak_iteration" | "soak_completed"; "sequence": number; "epoch": number; "detail": { "sourceId"?: string; "attempt"?: number; "stage"?: "construct" | "prepare" | "reset" | "warmup" | "transcribe" | "synthesize" | "close" | "finalize" | "playback" | "soak"; "text"?: string; "previousText"?: string; "replacedCharacters"?: number; "latencyMs"?: number; "sampleOffset"?: number; "vramBytes"?: number; "failureCode"?: string; "reason"?: string; "candidateId"?: string; "iteration"?: number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "droppedFrames"?: number; "workerLeaks"?: number; "resetCount"?: number; "severeFailures"?: number; "deadlineLatenessMs"?: Array<number>; "sampleCount"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "outputSha256"?: string; "audioDurationSeconds"?: number; "processingSeconds"?: number; "peakRssBytes"?: number; "droppedOutputChunks"?: number; "underruns"?: number; "adapterProcessingSeconds"?: number; "synthesisWindowWholeProcessPeakRssBytes"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; "chunkTelemetry"?: Array<{ "sequence": number; "sampleOffset": number; "sampleCount": number; "acceptedMonotonicNs": number; "queuedMonotonicNs": number; "deadlineMonotonicNs": number; "consumeMonotonicNs": number; "arrivalLatenessNs": number; "missedSamples": number; }>; }; };
+export type BenchmarkEvent = { "monotonicMs": number; "type": "audio_received" | "speech_start" | "partial" | "revision" | "endpoint" | "final" | "tts_requested" | "first_audio" | "cancel_requested" | "silence_observed" | "underrun" | "frame_dropped" | "failure" | "vram_sample" | "soak_started" | "soak_iteration" | "soak_completed"; "sequence": number; "epoch": number; "detail": { "sourceId"?: string; "attempt"?: number; "phase"?: "cold" | "measured"; "stage"?: "construct" | "prepare" | "reset" | "warmup" | "transcribe" | "synthesize" | "close" | "finalize" | "playback" | "soak"; "text"?: string; "previousText"?: string; "replacedCharacters"?: number; "latencyMs"?: number; "sampleOffset"?: number; "vramBytes"?: number; "peakVramBytes"?: number | null; "failureCode"?: string; "reason"?: string; "candidateId"?: string; "iteration"?: number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "droppedFrames"?: number; "workerLeaks"?: number; "resetCount"?: number; "severeFailures"?: number; "deadlineLatenessMs"?: Array<number>; "sampleCount"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "outputSha256"?: string; "audioDurationSeconds"?: number; "processingSeconds"?: number; "peakRssBytes"?: number; "droppedOutputChunks"?: number; "underruns"?: number; "adapterProcessingSeconds"?: number; "synthesisWindowWholeProcessPeakRssBytes"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; "chunkTelemetry"?: Array<{ "sequence": number; "sampleOffset": number; "sampleCount": number; "acceptedMonotonicNs": number; "queuedMonotonicNs": number; "deadlineMonotonicNs": number; "consumeMonotonicNs": number; "arrivalLatenessNs": number; "missedSamples": number; }>; }; };
 export type BenchmarkItem = { "candidateId": string; "configId": string; "sourceId": string; "blindLabel": string; "attempt": number; "status": "passed" | "failed" | "cancelled"; "failure": null | { "code": string; "message": string; "stage": "construct" | "prepare" | "reset" | "warmup" | "transcribe" | "synthesize" | "playback" | "score" | "soak" | "close" | "finalize"; "recoverable": boolean; }; "transcript": string | null; "audioPath": string | null; "normalizationVersion": string; "revisionTrace": Array<{ "sequence": number; "monotonicMs": number; "text": string; "replacedCharacters": number; }>; "metrics": { "speechStartToFirstPartialMs": number | null; "endpointToFinalMs": number | null; "ttsTimeToFirstAudioMs": number | null; "rtf": number | null; "wer": number | null; "cer": number | null; "partialRevisionCount": number; "partialChurnCharacters": number; "underruns": number; "droppedFrames": number; "peakVramBytes": number | null; "steadyVramBytes": number | null; "totalAudioDurationSeconds"?: number; "totalSamples"?: number; "droppedOutputChunks"?: number; "peakRssBytes"?: number | null; "synthesisWindowWholeProcessPeakRssBytes"?: number | null; }; "promptSha256"?: string; "audioMetadata"?: { "sampleRate": number; "nativeSampleRate": number; "channels": 1; "sampleWidthBytes": 2; "format": "pcm_s16le_mono"; "totalSamples": number; "durationSeconds": number; "processingSeconds": number; "sha256": string; "chunkCount": number; "adapterProcessingSeconds"?: number; "timingBoundary"?: string; }; };
 export type BenchmarkRating = { "assessorId": string; "sessionId": string; "order": Array<string>; "promptLabel": string; "sampleLabels": Array<string>; "sampleRatings": Array<{ "label": string; "naturalness": number; "intelligibility": number; "listenability": number; }>; "preference": string; "note"?: string; "replayCount": number; "submittedAt": string; "revealLocked": boolean; "revealedAt": string | null; };
-export type BenchmarkRun = { "schemaVersion": 1; "runId": string; "kind": "synthetic" | "stt" | "tts" | "policy"; "startedAt": string; "endedAt": string | null; "sourceId": string; "dirty": boolean; "machine": { "hostname": string; "os": string; "kernel": string; "cpu": string; "ramBytes": number; "gpu": string; "driverVersion": string; }; "runtimes": { "python": string; "node": string; "cuda": string; "cudnn": string; "pytorch": string; }; "models": Array<{ "id": string; "revision": string; "sha256": string; "runtime": string; "precision": string; "voice"?: string; "provider"?: string; "nativeSampleRate"?: number; "modelSha256"?: string; "voicesSha256"?: string; "runtimeRevision"?: string; "onnxReleaseRevision"?: string; }>; "configId": string; "configSha256": string; "datasetId": string; "datasetSha256": string; "seed": number; "command": Array<string>; "environment": { "cudaVisibleDevices"?: string; "ompNumThreads"?: string; "tokenizersParallelism"?: "true" | "false"; }; "warmups": number; "repetitions": number; "randomization": { "method": string; "blind": boolean; "revealLocked": boolean; }; "status": "running" | "passed" | "failed" | "cancelled"; "comparisonSemantics"?: Record<string, unknown>; "comparisonSemanticsSha256": string; "expectedItems": Array<{ "sourceId": string; "candidateId": string; "attempt": number; }>; "sourceManifestSha256"?: string; "provenance"?: Record<string, unknown>; };
+export type BenchmarkRun = { "schemaVersion": 1; "runId": string; "kind": "synthetic" | "stt" | "tts" | "policy"; "startedAt": string; "endedAt": string | null; "sourceId": string; "dirty": boolean; "machine": { "hostname": string; "os": string; "kernel": string; "cpu": string; "ramBytes": number; "gpu": string; "driverVersion": string; }; "runtimes": { "python": string; "node": string; "cuda": string; "cudnn": string; "pytorch": string; }; "models": Array<{ "id": string; "revision": string; "sha256": string; "runtime": string; "precision": string; "voice"?: string; "provider"?: string; "nativeSampleRate"?: number; "modelSha256"?: string; "voicesSha256"?: string; "runtimeRevision"?: string; "onnxReleaseRevision"?: string; "device"?: string; "backend"?: string; }>; "configId": string; "configSha256": string; "datasetId": string; "datasetSha256": string; "seed": number; "command": Array<string>; "environment": { "cudaVisibleDevices"?: string; "ompNumThreads"?: string; "tokenizersParallelism"?: "true" | "false"; }; "warmups": number; "repetitions": number; "randomization": { "method": string; "blind": boolean; "revealLocked": boolean; }; "status": "running" | "passed" | "failed" | "cancelled"; "comparisonSemantics"?: Record<string, unknown>; "comparisonSemanticsSha256": string; "expectedItems": Array<{ "sourceId": string; "candidateId": string; "attempt": number; }>; "sourceManifestSha256"?: string; "provenance"?: Record<string, unknown>; "timing"?: Record<string, unknown>; };
 export type BenchmarkSummaryDistribution = { "p50": number; "p95": number; "p99": number; };
-export type BenchmarkSummary = { "counts": { "total": number; "passed": number; "failed": number; "cancelled": number; }; "speechStartToFirstPartialMs": BenchmarkSummaryDistribution | null; "endpointToFinalMs": BenchmarkSummaryDistribution | null; "ttsTimeToFirstAudioMs": BenchmarkSummaryDistribution | null; "rtf": BenchmarkSummaryDistribution | null; "wer": number | null; "cer": number | null; "partialRevisionCount": number; "partialChurnCharacters": number; "underruns": number; "droppedFrames": number; "peakVramBytes": number | null; "steadyVramBytes": number | null; "failures": Array<{ "sourceId": string; "code": string; "stage": string; "message": string; }>; "soak": { "durationSeconds": number; "passed": boolean; "severeFailures": number; "underruns": number; "droppedFrames": number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "deadlineLatenessP95Ms"?: number; "deadlineLatenessMaxMs"?: number; "timingConformance"?: boolean; "resetCount"?: number; "workerLeaks"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; }; "totalAudioDurationSeconds"?: number; "totalSamples"?: number; "droppedOutputChunks"?: number; "peakRssBytes"?: number | null; "synthesisWindowWholeProcessPeakRssBytes"?: number | null; };
+export type BenchmarkSummary = { "counts": { "total": number; "passed": number; "failed": number; "cancelled": number; }; "speechStartToFirstPartialMs": BenchmarkSummaryDistribution | null; "endpointToFinalMs": BenchmarkSummaryDistribution | null; "ttsTimeToFirstAudioMs": BenchmarkSummaryDistribution | null; "rtf": BenchmarkSummaryDistribution | null; "wer": number | null; "cer": number | null; "partialRevisionCount": number; "partialChurnCharacters": number; "underruns": number; "droppedFrames": number; "peakVramBytes": number | null; "steadyVramBytes": number | null; "failures": Array<{ "sourceId": string; "code": string; "stage": string; "message": string; }>; "soak": { "durationSeconds": number; "passed": boolean; "severeFailures": number; "underruns": number; "droppedFrames": number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "deadlineLatenessP95Ms"?: number; "deadlineLatenessMaxMs"?: number; "timingConformance"?: boolean; "resetCount"?: number; "workerLeaks"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; }; "totalAudioDurationSeconds"?: number; "totalSamples"?: number; "droppedOutputChunks"?: number; "peakRssBytes"?: number | null; "synthesisWindowWholeProcessPeakRssBytes"?: number | null; "prepareSeconds"?: number; "cold"?: { "sourceId": string; "ttsTimeToFirstAudioMs": number; "processingSeconds": number; "rtf": number; "audioDurationSeconds": number; "totalSamples": number; "peakRssBytes": number | null; "peakVramBytes": number | null; } | null; };
 export type BargeInEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out"; "monotonicMs": number; "payload": { "responseId": string; "outputEpoch": number; "resumable": boolean; "rewindMs"?: number; "partIndex"?: number; "partId"?: string; "playbackId"?: string; }; };
 export type BrowserCommand = ({ "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; }) & ({ "type": "session.start"; "payload": { "sessionSeed": string; "reasoningMode": "full" | "transcript_only"; "settings": { "version": 1; "persona": string; "voice": { "catalogId": string; "voiceId": string; "backendId"?: string; "modelId"?: string; "speedModifier"?: number; }; }; }; } | { "type": "audio.start"; "payload": { "streamId": number; "sampleRate": 16000; "channels": 1; "frameSamples": 320; }; } | { "type": "audio.stop"; "payload": { "streamId": number; }; } | { "type": "turn.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "barge_in.confirm" | "barge_in.reject"; "payload": { "responseId": string; "outputEpoch": number; }; } | { "type": "turn.persisted"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; }; } | { "type": "turn.persistence_failed"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; "reasonCode": "quota" | "unavailable" | "aborted"; }; } | { "type": "session.stop"; "payload": { "reason": "user" | "expired" | "disconnect"; }; } | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent);
 export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.paused" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "interruption.decision" | "reasoning.started" | "reasoning.delta" | "reasoning.final" | "response.part_final" | "response.part_started" | "tts.started" | "tts.ended" | "response.failed" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
@@ -149,6 +149,12 @@ export const CONTRACT_SCHEMAS = {
             "type": "integer",
             "minimum": 1
           },
+          "phase": {
+            "enum": [
+              "cold",
+              "measured"
+            ]
+          },
           "stage": {
             "enum": [
               "construct",
@@ -183,6 +189,13 @@ export const CONTRACT_SCHEMAS = {
           },
           "vramBytes": {
             "type": "integer",
+            "minimum": 0
+          },
+          "peakVramBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0
           },
           "failureCode": {
@@ -972,6 +985,12 @@ export const CONTRACT_SCHEMAS = {
             },
             "onnxReleaseRevision": {
               "type": "string"
+            },
+            "device": {
+              "type": "string"
+            },
+            "backend": {
+              "type": "string"
             }
           }
         }
@@ -1095,6 +1114,10 @@ export const CONTRACT_SCHEMAS = {
       },
       "provenance": {
         "type": "object"
+      },
+      "timing": {
+        "type": "object",
+        "additionalProperties": true
       }
     },
     "if": {
@@ -1419,6 +1442,71 @@ export const CONTRACT_SCHEMAS = {
           "null"
         ],
         "minimum": 0
+      },
+      "prepareSeconds": {
+        "type": "number",
+        "minimum": 0
+      },
+      "cold": {
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceId",
+              "ttsTimeToFirstAudioMs",
+              "processingSeconds",
+              "rtf",
+              "audioDurationSeconds",
+              "totalSamples",
+              "peakRssBytes",
+              "peakVramBytes"
+            ],
+            "properties": {
+              "sourceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ttsTimeToFirstAudioMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "processingSeconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "rtf": {
+                "type": "number",
+                "minimum": 0
+              },
+              "audioDurationSeconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "totalSamples": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "peakRssBytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "peakVramBytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     }
   },
