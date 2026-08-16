@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Download, Ear, MessageCircleQuestion, Pause, Play, Trash, Volume2, type LucideIcon } from 'lucide-react';
+import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
@@ -61,22 +62,26 @@ export function SessionScreen(props: SessionScreenProps) {
         {readOnly ? <Button variant="outline" size="sm" onClick={props.onStop}><ArrowLeft data-icon="inline-start" aria-hidden="true" />All sessions</Button> : <>
           <ButtonGroup aria-label="Session controls" className="session-controls">
             <Button variant="outline" size="icon" aria-label={props.sessionPaused ? 'Resume session' : 'Pause session'} title={props.sessionPaused ? 'Resume session' : 'Pause session'} onClick={props.onTogglePause}>{props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</Button>
-            <Button variant="destructive" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button>
+            <Button variant="outline" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button>
             <ButtonGroupSeparator />
             <Button variant="secondary" size="icon" disabled={!canExport} title={props.exporting ? 'Exporting recording' : 'Export recording'} aria-label={props.exporting ? 'Exporting…' : 'Export recording'} onClick={() => void props.onExportRecording?.()}>
               {props.exporting ? <Spinner aria-hidden="true" /> : <Download aria-hidden="true" />}
             </Button>
-            <Button variant="outline" size="icon" disabled={!canDelete} title="Delete recording" aria-label="Delete recording" onClick={() => void props.onDeleteRecording?.()}><Trash aria-hidden="true" /></Button>
+            <ConfirmDeleteDialog
+              deleting={props.deleting ?? false}
+              onConfirm={async () => { await props.onDeleteRecording?.(); }}
+              trigger={<Button variant="outline" size="icon" disabled={!canDelete} title="Delete recording" aria-label="Delete recording"><Trash aria-hidden="true" /></Button>}
+            />
           </ButtonGroup>
         </>}
       </div>
     </header>
     <Card size="sm" data-state={props.state.dominant} className="mt-4 flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <CardContent className="flex min-w-0 flex-1 items-center gap-2">
-        {StateIcon ? <StateIcon className={cn('size-5 shrink-0', props.state.dominant === 'degraded' ? 'text-destructive' : 'text-primary')} aria-hidden="true" /> : <Spinner className="size-5 shrink-0 text-muted-foreground" />}
+        {StateIcon ? <StateIcon className={cn('size-5 shrink-0', props.state.dominant === 'degraded' ? 'text-destructive' : 'text-muted-foreground')} aria-hidden="true" /> : <Spinner className="size-5 shrink-0 text-muted-foreground" />}
         <h1 id="session-status-heading" className="min-w-0 text-sm font-medium leading-snug">{headings[props.state.dominant]}</h1>
       </CardContent>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 pr-(--card-spacing)">
         <Badge variant="secondary" className="font-mono tabular-nums" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>
         {assistantActive && !readOnly ? <Button variant="secondary" size="sm" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}
       </div>

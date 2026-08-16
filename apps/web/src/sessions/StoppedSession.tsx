@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Mic2, Trash } from 'lucide-react';
 import { Alert, AlertDescription } from '../components/ui/alert';
+import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
@@ -144,7 +145,11 @@ export function StoppedSession(props: StoppedSessionProps) {
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button className="min-h-11" onClick={props.onContinue}><Mic2 data-icon="inline-start" aria-hidden="true" />Continue session</Button>
             <ExportPopover sessionId={props.sessionId} buildExport={buildExport} disabled={recording.includedCount === 0} label="Export recording" variant="secondary" />
-            <Button variant="outline" disabled={deleting || recording.totalCount === 0} onClick={() => void deleteRecording()}><Trash data-icon="inline-start" aria-hidden="true" />Delete recording</Button>
+            <ConfirmDeleteDialog
+              deleting={deleting}
+              onConfirm={deleteRecording}
+              trigger={<Button variant="outline" disabled={deleting || recording.totalCount === 0}><Trash data-icon="inline-start" aria-hidden="true" />Delete recording</Button>}
+            />
           </div>
         </div>
         {recordingError ? <Alert variant="destructive"><AlertDescription>{recordingError}</AlertDescription></Alert> : null}
