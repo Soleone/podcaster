@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { BrowserCapture, type CaptureHandle } from './audio/capture';
 import { BrowserPlayback } from './audio/playback';
 import type { PlaybackStopReason } from './audio/playback-ledger';
@@ -6,7 +6,6 @@ import { createEncoderClient } from './recording/encoder-client';
 import { RecordingRecorder } from './recording/recorder';
 import { offlineResample } from './recording/resample';
 import { buildRecording, createBrowserDecoder, type ExportOnProgress } from './recording/splice';
-import { SessionScreen } from './session/SessionScreen';
 import { activityLog } from './session/activity-log';
 import { SessionController, type ControlledPlayback } from './session/controller';
 import { sessionViewStateFromTurns } from './sessions/session-archive';
@@ -23,16 +22,18 @@ import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type Voic
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileVoice, settingsDigest, type SettingsModel } from './settings/settings-model';
-import { SettingsDialog } from './settings/SettingsDialog';
 import { AppHeader } from './components/AppHeader';
-import { SessionIndex } from './sessions/SessionIndex';
-import { StoppedSession } from './sessions/StoppedSession';
 import { bootstrapCapability } from './sessions/session-archive';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
 import { Spinner } from './components/ui/spinner';
 import { persistTheme, readTheme } from './theme';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
+
+const SessionIndex = lazy(() => import('./sessions/SessionIndex').then(({ SessionIndex: component }) => ({ default: component })));
+const SessionScreen = lazy(() => import('./session/SessionScreen').then(({ SessionScreen: component }) => ({ default: component })));
+const StoppedSession = lazy(() => import('./sessions/StoppedSession').then(({ StoppedSession: component }) => ({ default: component })));
+const SettingsDialog = lazy(() => import('./settings/SettingsDialog').then(({ SettingsDialog: component }) => ({ default: component })));
 type SessionStartSettings = { version: 1; persona: string; voice: VoicePreference };
 
 interface FakeRuntimeStats {
@@ -628,7 +629,9 @@ export function App() {
     return true;
   }, [fetchRecordingSummaries]);
 
-  const settingsDialog = <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />;
+  const settingsDialog = settingsOpen ? <Suspense fallback={null}>
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
+  </Suspense> : null;
   const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} />;
 
   if (!writer) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading…</main>;
@@ -637,16 +640,18 @@ export function App() {
     {appHeader}
     <Routes>
       <Route path="/" element={
-        <SessionIndex
-          writer={writer}
-          sessionAvailable={fakeServices}
-          liveSessionId={sessionId}
-          elapsedSeconds={elapsed}
-          onStart={start}
-          onCatalog={onCatalog}
-          onCapability={setCapability}
-          onContinueSession={id => void continueSession(id)}
-        />
+        <Suspense fallback={<RouteLoading />}>
+          <SessionIndex
+            writer={writer}
+            sessionAvailable={fakeServices}
+            liveSessionId={sessionId}
+            elapsedSeconds={elapsed}
+            onStart={start}
+            onCatalog={onCatalog}
+            onCapability={setCapability}
+            onContinueSession={id => void continueSession(id)}
+          />
+        </Suspense>
       } />
       <Route path="/session/:sessionId" element={
         <SessionRoute
@@ -732,31 +737,39 @@ function SessionRoute(props: SessionRouteProps) {
   }, [props.onDeleteRecording]);
 
   if (props.liveSessionId === routeSessionId) {
-    return <SessionScreen
-      state={props.view ?? initialSessionState}
-      agentName={props.agentName}
-      elapsedSeconds={props.elapsed}
-      sessionPaused={props.sessionPaused}
-      onTogglePause={props.onTogglePause}
-      onStop={props.onStop}
-      onCancelAssistant={props.onCancelAssistant}
-      settingsOpen={props.settingsOpen}
-      recording={props.recordingView}
-      onToggleBubbleTrim={props.onToggleBubbleTrim}
-      onExportRecording={exportRecording}
-      onDeleteRecording={deleteRecording}
-      exporting={exporting}
-      deleting={deleting}
-    />;
+    return <Suspense fallback={<RouteLoading label="Loading session…" />}>
+      <SessionScreen
+        state={props.view ?? initialSessionState}
+        agentName={props.agentName}
+        elapsedSeconds={props.elapsed}
+        sessionPaused={props.sessionPaused}
+        onTogglePause={props.onTogglePause}
+        onStop={props.onStop}
+        onCancelAssistant={props.onCancelAssistant}
+        settingsOpen={props.settingsOpen}
+        recording={props.recordingView}
+        onToggleBubbleTrim={props.onToggleBubbleTrim}
+        onExportRecording={exportRecording}
+        onDeleteRecording={deleteRecording}
+        exporting={exporting}
+        deleting={deleting}
+      />
+    </Suspense>;
   }
   if (props.resuming) return <main className="mx-auto mt-5 mb-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Resuming session…</main>;
   if (!routeSessionId) return null;
-  return <StoppedSession
-    writer={props.writer}
-    sessionId={routeSessionId}
-    agentName={props.agentName}
-    onContinue={() => props.onContinueSession(routeSessionId)}
-    onBack={props.onBack}
-  />;
+  return <Suspense fallback={<RouteLoading label="Loading session…" />}>
+    <StoppedSession
+      writer={props.writer}
+      sessionId={routeSessionId}
+      agentName={props.agentName}
+      onContinue={() => props.onContinueSession(routeSessionId)}
+      onBack={props.onBack}
+    />
+  </Suspense>;
+}
+
+function RouteLoading({ label = 'Loading…' }: { label?: string }) {
+  return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />{label}</main>;
 }
 

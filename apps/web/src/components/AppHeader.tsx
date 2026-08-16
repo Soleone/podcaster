@@ -1,6 +1,6 @@
 import { Radio } from 'lucide-react';
 import { Link } from 'react-router';
-import { SettingsButtonGroup } from '../settings/SettingsDialog';
+import { SettingsButtonGroup } from '../settings/SettingsControls';
 
 export interface AppHeaderProps {
   darkMode: boolean;

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Moon, Play, Settings, Square, Sun } from 'lucide-react';
+import { Play, Square } from 'lucide-react';
 import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
-import { ButtonGroup } from '../components/ui/button-group';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field';
@@ -241,36 +240,4 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
       </DialogFooter>
     </DialogContent>
   </Dialog>;
-}
-
-export function ThemeToggle({ darkMode, onToggle, className }: { darkMode: boolean; onToggle: () => void; className?: string }) {
-  const label = darkMode ? 'Dark mode on. Switch to light mode' : 'Dark mode off. Switch to dark mode';
-  return <Button
-    variant="outline"
-    size="icon"
-    title={label}
-    aria-label={label}
-    aria-pressed={darkMode}
-    onClick={onToggle}
-    className={className}
-  >
-    {darkMode ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-  </Button>;
-}
-
-export function SettingsButton({ onClick, title = 'Open settings', className }: { onClick: () => void; title?: string; className?: string }) {
-  return <Button variant="outline" size="icon" title={title} aria-label={title} onClick={onClick} className={className}><Settings aria-hidden="true" /></Button>;
-}
-
-export function SettingsButtonGroup({ darkMode, onToggleDarkMode, onOpenSettings, settingsTitle = 'Open settings', buttonClassName }: {
-  darkMode: boolean;
-  onToggleDarkMode: () => void;
-  onOpenSettings: () => void;
-  settingsTitle?: string;
-  buttonClassName?: string;
-}) {
-  return <ButtonGroup aria-label="Appearance and settings controls">
-    <ThemeToggle darkMode={darkMode} onToggle={onToggleDarkMode} {...(buttonClassName ? { className: buttonClassName } : {})} />
-    <SettingsButton onClick={onOpenSettings} title={settingsTitle} {...(buttonClassName ? { className: buttonClassName } : {})} />
-  </ButtonGroup>;
 }
