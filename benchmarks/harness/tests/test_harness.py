@@ -442,12 +442,7 @@ def test_two_normal_runs_cli_listen_submit_reveal(tmp_path: Path) -> None:
             {
                 "promptLabel": prompt["promptLabel"],
                 "samples": [
-                    {
-                        "label": sample["label"],
-                        "naturalness": 4,
-                        "intelligibility": 4,
-                        "listenability": 4,
-                    }
+                    {"label": sample["label"]}
                     for sample in prompt["samples"]
                 ],
                 "preference": "tie",

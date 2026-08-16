@@ -96,13 +96,20 @@ run contains only its SHA-256 commitment.
 ```sh
 view=$(uv run python -m benchmarks.harness listen --runs <candidate-run-a> <candidate-run-b> --assessor <opaque-id> --attempt 1 | tail -1)
 comparison_dir=$(dirname "$view")
-# Fill a JSON file with dimensions for every presented sample:
+# Fill a JSON file with the preference for every prompt. Per-sample quality
+# dimensions are optional:
 # {"ratings":[{"promptLabel":"Prompt 1","samples":[
-# {"label":"A","naturalness":1..5,"intelligibility":1..5,"listenability":1..5},
-# {"label":"B","naturalness":1..5,"intelligibility":1..5,"listenability":1..5}],
+# {"label":"A"},{"label":"B"}],
 # "preference":"A|B|tie","replayCount":0,"note":"optional"}, ...]}
 uv run python -m benchmarks.harness submit-ratings --run "$comparison_dir" --view "$view" --responses responses.json
 uv run python -m benchmarks.harness reveal --run "$comparison_dir"
+```
+
+For a local interactive review that plays each opaque A/B pair, offers whole-pair replay,
+and writes the harness-compatible `responses.json` (with resumable checkpoints), use:
+
+```sh
+uv run python scripts/review-tts-listening.py "$comparison_dir"
 ```
 
 The comparison command first validates every source run, requires matching kind,

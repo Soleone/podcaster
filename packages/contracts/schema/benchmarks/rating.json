@@ -29,7 +29,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["label", "naturalness", "intelligibility", "listenability"],
+        "required": ["label"],
         "properties": {
           "label": {"type": "string", "minLength": 1},
           "naturalness": {"type": "integer", "minimum": 1, "maximum": 5},

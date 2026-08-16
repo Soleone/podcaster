@@ -291,15 +291,14 @@ def submit_ratings(run_dir: Path, view_path: Path, responses_path: Path) -> None
             raise RevealLockedError(
                 f"ratings for {prompt['promptLabel']} must cover every sample label exactly once"
             )
-        sample_ratings = [
-            {
-                "label": label,
-                "naturalness": by_label[label].get("naturalness"),
-                "intelligibility": by_label[label].get("intelligibility"),
-                "listenability": by_label[label].get("listenability"),
-            }
-            for label in labels
-        ]
+        sample_ratings = []
+        for label in labels:
+            submitted_sample = by_label[label]
+            sample_rating = {"label": label}
+            for dimension in ("naturalness", "intelligibility", "listenability"):
+                if dimension in submitted_sample:
+                    sample_rating[dimension] = submitted_sample[dimension]
+            sample_ratings.append(sample_rating)
         record = {
             "assessorId": view["assessorId"],
             "sessionId": view["sessionId"],
