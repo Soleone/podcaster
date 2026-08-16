@@ -16,6 +16,19 @@ async function recordUserTurn(page: import('@playwright/test').Page): Promise<vo
   await emit(page, 'transcript.final', { turnId: UTTERANCE, text: 'Recorded words', endpointComplete: true });
 }
 
+async function waitForStoredRecording(page: import('@playwright/test').Page): Promise<void> {
+  await page.waitForFunction(() => new Promise<boolean>(resolve => {
+    const request = indexedDB.open('podcaster-local-v1');
+    request.onerror = () => resolve(false);
+    request.onsuccess = () => {
+      const db = request.result;
+      const count = db.transaction('recordingItems', 'readonly').objectStore('recordingItems').count();
+      count.onsuccess = () => { db.close(); resolve(count.result > 0); };
+      count.onerror = () => { db.close(); resolve(false); };
+    };
+  }));
+}
+
 test('trims completed agent output with a compact in-bubble action', async ({ page }) => {
   await enterFakeSession(page, server.origin);
 
@@ -66,6 +79,23 @@ test('trims one assistant part without removing the rest of its bubble', async (
 
   await page.getByRole('button', { name: "Undo removal of Assistant's part 2" }).click();
   await expect(page.getByRole('button', { name: "Remove Assistant's part 2 from recording" })).toBeVisible();
+});
+
+test('refreshes the remove control when a persisted user clip gets its turn id late', async ({ page }) => {
+  await enterFakeSession(page, server.origin);
+
+  // Let the recorder persist the clip before delivering its transcript. This
+  // leaves a temporary null turnId, which must not strand the visible message
+  // without a trim target after the late repair.
+  await emit(page, 'vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 });
+  await page.evaluate(() => window.__podcasterTest!.capture());
+  await emit(page, 'vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 1 });
+  await waitForStoredRecording(page);
+  await page.waitForTimeout(1_500);
+  await emit(page, 'transcript.final', { turnId: UTTERANCE, text: 'Late transcript', endpointComplete: true });
+
+  await expect(page.getByText('Late transcript')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible({ timeout: 3_000 });
 });
 
 test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page }) => {
@@ -119,5 +149,5 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   await deleteDialog.getByRole('button', { name: 'Delete recording' }).click();
   await expect(deleteDialog).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Delete recording', exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Delete recording', { exact: true })).toBeDisabled();
 });

@@ -60,6 +60,43 @@ describe('RecordingRecorder', () => {
     store.close();
   });
 
+  it('keeps a transcript identity when it arrives before speech_end', async () => {
+    const { store, recorder } = await setup();
+    await recorder.start();
+    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onCaptureAudio(captureFrame(0));
+    recorder.onSessionEvent(event('transcript.final', { turnId: UTTERANCE, text: 'hello', endpointComplete: true }));
+    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
+    expect((await store.getSessionItems(SESSION))[0]!.turnId).toBe(UTTERANCE);
+    store.close();
+  });
+
+  it('waits for a late turn-id repair before stopping', async () => {
+    const { store, recorder } = await setup();
+    await recorder.start();
+    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onCaptureAudio(captureFrame(0));
+    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
+
+    let release!: () => void;
+    const updateReady = new Promise<void>(resolve => { release = resolve; });
+    let updateFinished = false;
+    vi.spyOn(store, 'updateTurnId').mockImplementation(async () => {
+      await updateReady;
+      updateFinished = true;
+    });
+    recorder.onSessionEvent(event('transcript.final', { turnId: UTTERANCE, text: 'hello', endpointComplete: true }));
+    const stopped = recorder.stop(false);
+    await Promise.resolve();
+    expect(updateFinished).toBe(false);
+    release();
+    await stopped;
+    expect(updateFinished).toBe(true);
+    store.close();
+  });
+
   it('buffers the full generated agent PCM and finalizes at playback.stopped with delivered extent and interruption', async () => {
     const { store, recorder } = await setup();
     await store.setRecordingEnabled(true);

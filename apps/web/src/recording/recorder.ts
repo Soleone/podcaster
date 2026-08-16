@@ -50,6 +50,7 @@ export class RecordingRecorder {
   private recordSeq = 0;
   private readonly userSlices = new Map<string, OpenUserSlice>();
   private readonly pendingUserItems = new Map<string, PendingUserItem>();
+  private readonly pendingTranscriptTurns = new Map<string, string>();
   private readonly committedUserItems = new Map<string, string>();
   private readonly agentBuffers = new Map<string, AgentBuffer>();
   private readonly responseTurns = new Map<string, string>();
@@ -118,10 +119,18 @@ export class RecordingRecorder {
         const turnId = String(payload.turnId ?? '');
         if (!turnId) return;
         const entry = this.pendingUserItems.get(turnId);
-        if (entry) entry.turnId = turnId;
-        else {
-          const itemId = this.committedUserItems.get(turnId);
-          if (itemId) void this.deps.store.updateTurnId(itemId, turnId).catch(() => undefined);
+        if (entry) {
+          entry.turnId = turnId;
+          return;
+        }
+        const itemId = this.committedUserItems.get(turnId);
+        if (itemId) {
+          this.trackPending(this.deps.store.updateTurnId(itemId, turnId));
+        } else {
+          // VAD and STT normally arrive in this order, but the transcript can
+          // win the race when a short utterance is finalized quickly. Keep the
+          // identity until speech_end creates the recording row.
+          this.pendingTranscriptTurns.set(turnId, turnId);
         }
         break;
       }
@@ -189,7 +198,8 @@ export class RecordingRecorder {
 
   private commitUserSlice(slice: OpenUserSlice, captureEndSequence: number | null, truncated: boolean): void {
     this.userSlices.delete(slice.utteranceId);
-    const entry: PendingUserItem = { itemId: slice.itemId, turnId: null };
+    const entry: PendingUserItem = { itemId: slice.itemId, turnId: this.pendingTranscriptTurns.get(slice.utteranceId) ?? null };
+    this.pendingTranscriptTurns.delete(slice.utteranceId);
     this.pendingUserItems.set(slice.utteranceId, entry);
     const commit = (async () => {
       const endSeq = captureEndSequence ?? Math.max(slice.startSeq, slice.frames.length ? slice.frames[slice.frames.length - 1]!.sequence : slice.startSeq);
@@ -225,11 +235,8 @@ export class RecordingRecorder {
       await this.deps.store.put(item);
       this.committedUserItems.set(slice.utteranceId, slice.itemId);
     })().catch(() => undefined)
-      .finally(() => {
-        this.pendingUserItems.delete(slice.utteranceId);
-        this.pendingCommits.delete(commit);
-      });
-    this.pendingCommits.add(commit);
+      .finally(() => this.pendingUserItems.delete(slice.utteranceId));
+    this.trackPending(commit);
   }
 
   private commitAgentBuffer(buffer: AgentBuffer, terminal: { cancelledEpoch: number; finalPlayedSampleOffset: number; reason: string }): void {
@@ -265,8 +272,15 @@ export class RecordingRecorder {
         data: new Blob([mp3], { type: 'audio/mpeg' }),
       };
       await this.deps.store.put(item);
-    })().catch(() => undefined)
-      .finally(() => { this.pendingCommits.delete(commit); });
-    this.pendingCommits.add(commit);
+    })().catch(() => undefined);
+    this.trackPending(commit);
+  }
+
+  private trackPending(operation: Promise<void>): void {
+    this.pendingCommits.add(operation);
+    void operation.then(
+      () => this.pendingCommits.delete(operation),
+      () => this.pendingCommits.delete(operation),
+    );
   }
 }

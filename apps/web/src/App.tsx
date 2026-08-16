@@ -101,7 +101,7 @@ export function App() {
   const recordingSessionRef = useRef<string | undefined>(undefined);
   recordingSessionRef.current = sessionId;
   const recordingGenRef = useRef(0);
-  const lastCheapRef = useRef<{ enabled: boolean; count: number } | null>(null);
+  const lastCheapRef = useRef<{ enabled: boolean; signature: string } | null>(null);
   const settingsStoreRef = useRef<SettingsStore | undefined>(undefined);
   const voiceCatalogRef = useRef<VoiceCatalog | undefined>(undefined);
   const settingsFrozenRef = useRef<SettingsModel | undefined>(undefined);
@@ -313,7 +313,7 @@ export function App() {
       return;
     }
     if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
-    lastCheapRef.current = { enabled, count: summaries.length };
+    lastCheapRef.current = { enabled, signature: recordingSummarySignature(summaries) };
     setRecordingView(prev => ({ ...projectRecordingTrim(summaries, enabled), pendingTargetId: prev.pendingTargetId, notice: prev.notice, error: '' }));
   }, []);
 
@@ -541,13 +541,17 @@ export function App() {
     const store = recordingStoreRef.current;
     if (!store) return;
     let enabled: boolean;
-    let count: number;
+    let summaries: RecordingItemSummary[];
     try {
-      [enabled, count] = await Promise.all([store.getRecordingEnabled(), store.countSessionItems(targetSession)]);
+      [enabled, summaries] = await Promise.all([store.getRecordingEnabled(), store.getSessionItemSummaries(targetSession)]);
     } catch { return; }
     if (recordingSessionRef.current !== targetSession) return;
     const last = lastCheapRef.current;
-    if (!last || last.enabled !== enabled || last.count !== count) {
+    if (!last || last.enabled !== enabled || last.signature !== recordingSummarySignature(summaries)) {
+      // The number of rows is not enough to detect a late transcript.final:
+      // the recorder may persist a user clip first and attach its turnId just
+      // afterward. Compare the metadata as well so the matching X appears
+      // without waiting for another recording item to be created.
       await fetchRecordingSummaries(targetSession);
     } else {
       setRecordingView(prev => (prev.enabled === enabled && prev.hydrated) ? prev : { ...prev, enabled });
@@ -678,6 +682,12 @@ export function App() {
     </Routes>
     {settingsDialog}
   </>;
+}
+
+function recordingSummarySignature(summaries: readonly RecordingItemSummary[]): string {
+  return JSON.stringify([...summaries]
+    .map(summary => [summary.itemId, summary.role, summary.turnId, summary.responseId, summary.partIndex, summary.trimmed])
+    .sort((left, right) => String(left[0]).localeCompare(String(right[0]))));
 }
 
 function sessionIdFromPath(pathname: string): string | undefined {
