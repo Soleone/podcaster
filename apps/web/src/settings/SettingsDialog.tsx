@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Moon, Play, Settings, Square, Sun } from 'lucide-react';
+import { Moon, Play, Settings, Square, Sun } from 'lucide-react';
 import { MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, PODCASTER_SYSTEM_PROMPT, utf8ByteLength, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { ButtonGroup } from '../components/ui/button-group';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../components/ui/collapsible';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field';
 import { Input } from '../components/ui/input';
@@ -38,7 +38,6 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
   const [persona, setPersona] = useState(model.persona);
   const [voiceId, setVoiceId] = useState(model.voice.voiceId);
   const [speedModifier, setSpeedModifier] = useState(String(model.voice.speedModifier));
-  const [promptOpen, setPromptOpen] = useState(false);
   const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing'>('idle');
   const [previewError, setPreviewError] = useState<string | undefined>(undefined);
   const previewHandleRef = useRef<VoicePreviewHandle | undefined>(undefined);
@@ -53,7 +52,6 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
     setPersona(model.persona);
     setVoiceId(model.voice.voiceId);
     setSpeedModifier(String(model.voice.speedModifier));
-    setPromptOpen(false);
     setPreviewState('idle');
     setPreviewError(undefined);
   }, [open, model.agentName, model.persona, model.voice.voiceId, model.voice.speedModifier]);
@@ -139,38 +137,43 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                   {agentNameInvalid ? <FieldError>Agent name exceeds the {MAX_AGENT_NAME_BYTES}-byte limit.</FieldError> : null}
                 </FieldContent>
               </Field>
-              <Field data-invalid={personaInvalid || undefined}>
-                <FieldLabel htmlFor="settings-persona">Persona</FieldLabel>
-                <FieldContent>
-                  <Textarea
-                    id="settings-persona"
-                    value={persona}
-                    onChange={event => setPersona(event.target.value)}
-                    aria-invalid={personaInvalid || undefined}
-                    aria-describedby="settings-persona-description settings-persona-counter"
-                    placeholder="Describe how the assistant should behave…"
-                    className="h-48 min-h-40 resize-none"
-                  />
-                  <FieldDescription id="settings-persona-description">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
-                  <p id="settings-persona-counter" className={cn('text-xs text-muted-foreground', personaInvalid && 'text-destructive')} aria-live="polite">
-                    {personaBytes.toLocaleString()} / {MAX_PERSONA_BYTES.toLocaleString()} bytes
-                  </p>
-                  {personaInvalid ? <FieldError>Persona exceeds the {MAX_PERSONA_BYTES / 1024} KiB limit.</FieldError> : null}
-                </FieldContent>
-              </Field>
             </FieldGroup>
-            <Collapsible open={promptOpen} onOpenChange={setPromptOpen}>
-              <CollapsibleTrigger render={<Button variant="outline" className="w-full justify-between" />}>
-                View base system prompt
-                <ChevronDown data-icon="inline-end" className={cn('transition-transform', promptOpen && 'rotate-180')} aria-hidden="true" />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2">
-                <div className="rounded-lg border border-border bg-muted/40 p-3">
-                  <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">Your saved persona is appended to this base prompt when the next session starts.</p>
-              </CollapsibleContent>
-            </Collapsible>
+            <Accordion multiple defaultValue={['persona']} className="rounded-xl">
+              <AccordionItem value="persona">
+                <AccordionTrigger>Persona</AccordionTrigger>
+                <AccordionContent aria-labelledby="settings-persona-panel-label">
+                  <span id="settings-persona-panel-label" className="sr-only">Agent behavior settings</span>
+                  <Field data-invalid={personaInvalid || undefined}>
+                    <FieldLabel className="sr-only" htmlFor="settings-persona">Persona</FieldLabel>
+                    <FieldContent>
+                      <Textarea
+                        id="settings-persona"
+                        value={persona}
+                        onChange={event => setPersona(event.target.value)}
+                        aria-invalid={personaInvalid || undefined}
+                        aria-describedby="settings-persona-description settings-persona-counter"
+                        placeholder="Describe how the assistant should behave…"
+                        className="h-48 min-h-40 resize-none"
+                      />
+                      <FieldDescription id="settings-persona-description">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
+                      <p id="settings-persona-counter" className={cn('text-xs text-muted-foreground', personaInvalid && 'text-destructive')} aria-live="polite">
+                        {personaBytes.toLocaleString()} / {MAX_PERSONA_BYTES.toLocaleString()} bytes
+                      </p>
+                      {personaInvalid ? <FieldError>Persona exceeds the {MAX_PERSONA_BYTES / 1024} KiB limit.</FieldError> : null}
+                    </FieldContent>
+                  </Field>
+                </AccordionContent>
+              </AccordionItem>
+              <AccordionItem value="system-prompt">
+                <AccordionTrigger>View base system prompt</AccordionTrigger>
+                <AccordionContent>
+                  <div className="rounded-lg border border-border bg-muted/40 p-3">
+                    <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-foreground">{PODCASTER_SYSTEM_PROMPT}</pre>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">Your saved persona is appended to this base prompt when the next session starts.</p>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           </TabsContent>
           <TabsContent value="voice" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1 pt-4 pb-1">
             {model.notice ? <Alert variant={model.notice === 'missing_catalog' ? 'destructive' : 'default'}><AlertDescription>{VOICE_NOTICE_COPY[model.notice]}</AlertDescription></Alert> : null}
