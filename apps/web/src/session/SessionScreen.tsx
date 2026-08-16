@@ -63,10 +63,10 @@ export function SessionScreen(props: SessionScreenProps) {
             <Button variant="outline" size="icon" aria-label={props.sessionPaused ? 'Resume session' : 'Pause session'} title={props.sessionPaused ? 'Resume session' : 'Pause session'} onClick={props.onTogglePause}>{props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</Button>
             <Button variant="destructive" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button>
             <ButtonGroupSeparator />
-            <Button variant="secondary" size="sm" disabled={!canExport} title="Export recording" aria-label={props.exporting ? 'Exporting…' : 'Export recording'} onClick={() => void props.onExportRecording?.()}>
-              {props.exporting ? <><Spinner aria-hidden="true" />Exporting…</> : <><Download data-icon="inline-start" aria-hidden="true" />Export</>}
+            <Button variant="secondary" size="icon" disabled={!canExport} title={props.exporting ? 'Exporting recording' : 'Export recording'} aria-label={props.exporting ? 'Exporting…' : 'Export recording'} onClick={() => void props.onExportRecording?.()}>
+              {props.exporting ? <Spinner aria-hidden="true" /> : <Download aria-hidden="true" />}
             </Button>
-            <Button variant="outline" size="sm" disabled={!canDelete} title="Delete recording" aria-label="Delete recording" onClick={() => void props.onDeleteRecording?.()}><Trash data-icon="inline-start" aria-hidden="true" /></Button>
+            <Button variant="outline" size="icon" disabled={!canDelete} title="Delete recording" aria-label="Delete recording" onClick={() => void props.onDeleteRecording?.()}><Trash aria-hidden="true" /></Button>
           </ButtonGroup>
         </>}
       </div>
