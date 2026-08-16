@@ -395,10 +395,95 @@ uv run python -m benchmarks.harness listen --runs "$run_dir" \
 
 The generated `listening.json` and `listening-media/` use only opaque prompt/sample
 labels. Candidate identity remains in the mode-0600 private mapping outside the public
-projection. Do not run `reveal` for this baseline. A later T4.2 paired comparison will
-create a fresh package over matched Kokoro and Qwen runs.
+projection. Do not run `reveal` for this baseline. A later Qwen paired comparison will create a fresh package over matched Kokoro
+and Qwen runs.
 
-## T4.2 faster-Qwen Base voice-clone spike
+## T4.2 Qwen3-TTS CustomVoice harness admission
+
+The admitted Qwen candidate is `qwen3-0.6b`, the official
+`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` snapshot at immutable revision
+`85e237c12c027371202489a0ec509ded67b5e4b5`. Its benchmark config binds the
+faster-Qwen streaming runtime, lockfile, CUDA device, bfloat16 precision, `Ryan`
+voice, and every model asset hash recorded in `docs/model-manifest.json`. The
+harness verifies the selected model and all attested files before preparing the
+adapter; it does not accept a config or model path that merely has the right
+primary filename.
+
+Qwen uses the same 24-prompt `tts-prompts-v1` manifest and exact 20-ms, 24-kHz
+PCM16 mono comparison contract as Kokoro. The model API language label `English`
+is normalized only for this shared manifest's `en-us` locale; source text is
+never rewritten. TTFA is request to the first accepted non-empty 20-ms chunk,
+RTF is the monotonic harness request-to-completion window divided by generated
+audio duration, and RSS is sampled over the whole synthesis window. Candidate
+runtime, voice, provider, and model identity remain outside shared listening
+semantics. The isolated Qwen lock intentionally contains the model runtime only;
+install the pinned faster-Qwen checkout and the small harness validation closure
+into that environment without changing the recorded Qwen lock:
+
+```sh
+uv pip install --python /tmp/qwen-env/bin/python --no-deps \
+  -e /tmp/faster-qwen3-tts
+uv pip install --python /tmp/qwen-env/bin/python \
+  'jsonschema==4.25.1' 'rfc3339-validator==0.1.4'
+```
+
+Run and validate one candidate before comparison:
+
+```sh
+run_dir=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
+  --candidate qwen3-0.6b \
+  --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
+uv run python -m benchmarks.harness validate "$run_dir"
+```
+
+Run the cancellation-after-first-audio probe against the validated run. It
+requires the local cancellation cutoff to be honored, records the accepted
+chunk/sample boundary, checks Qwen-owned workers before and after close, and
+fails closed on a mismatched run/config/model/prompt identity:
+
+```sh
+/tmp/qwen-env/bin/python -m benchmarks.harness probe-cancel \
+  --candidate qwen3-0.6b \
+  --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --prompts benchmarks/datasets/tts-prompts-v1.manifest.json \
+  --run "$run_dir"
+```
+
+The bounded playback-paced soak uses the same raw per-iteration telemetry as
+Kokoro. For the Qwen reliability gate, run the five-minute override, then
+validate the artifact. Validation recomputes sample/chunk continuity, reset
+counts, underrun episodes, missed samples, deadline lateness, severe failures,
+and worker cleanup from raw events rather than trusting the submitted summary:
+
+```sh
+soak_dir=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
+  --candidate qwen3-0.6b \
+  --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --prompts benchmarks/datasets/tts-prompts-v1.manifest.json \
+  --soak-minutes 5 | tail -1)
+uv run python -m benchmarks.harness validate "$soak_dir"
+```
+
+Create the assessor-safe single-candidate projection, or the paired blinded
+comparison once a matched Kokoro run is available:
+
+```sh
+uv run python -m benchmarks.harness listen --runs "$run_dir" \
+  --assessor qwen-t4.2 --attempt 1
+uv run python -m benchmarks.harness listen --runs "$kokoro_run" "$run_dir" \
+  --assessor qwen-paired --attempt 1
+```
+
+The projection exposes only opaque prompt/sample labels and copied audio paths.
+Candidate identity, machine metrics, seed, and the committed mapping stay
+hidden until a paired rating submission is locked. `compare` and
+`prepare_listening_runs` refuse mismatched prompt hashes, source sets, shared
+semantics, repetitions, or terminal statuses. A single-candidate projection is
+not rateable; it is evidence that the admitted candidate run is valid, not a
+selection result.
+
+## T4.3 faster-Qwen Base voice-clone spike
 
 The evaluation-only Base candidate is the official
 `Qwen/Qwen3-TTS-12Hz-0.6B-Base` snapshot at immutable revision

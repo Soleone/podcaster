@@ -1038,6 +1038,128 @@ def _tracked_tts_prompts(run: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(item["sourceId"]): item for item in matches[0]["items"]}
 
 
+def _validate_tts_semantics(run: dict[str, Any]) -> None:
+    semantics = run.get("comparisonSemantics")
+    if not isinstance(semantics, dict):
+        raise ValidationError("TTS comparison semantics are missing")
+    expected = {
+        "kind": "tts",
+        "promptManifestId": "tts-prompts-v1",
+        "promptManifestSha256": run.get("datasetSha256"),
+        "language": "en-us",
+        "nativeSampleRate": 24_000,
+        "comparisonSampleRate": 24_000,
+        "outputFormat": "pcm_s16le_mono",
+        "channels": 1,
+        "sampleWidthBytes": 2,
+        "chunkMs": 20,
+        "gain": 0.9,
+        "speed": 1.0,
+        "resampler": "none",
+        "timingMode": "harness-monotonic-request-first-audio-completion-v2",
+        "timingBoundary": "harness-before-adapter-call-through-adapter-return-v1",
+        "playbackBufferMs": 100,
+        "rssScope": "synthesis-window-whole-process-rss-v1",
+        "listeningVersion": "tts-blinded-paired-v1",
+    }
+    if semantics != expected:
+        differing = sorted(
+            key for key in set(expected) | set(semantics) if semantics.get(key) != expected.get(key)
+        )
+        detail = ", ".join(
+            f"{key}={semantics.get(key)!r}, expected {expected.get(key)!r}" for key in differing
+        )
+        raise ValidationError(f"unmatched TTS comparison semantics: {detail}")
+    if run.get("comparisonSemanticsSha256") != sha256_bytes(canonical_json(semantics)):
+        raise ValidationError("unmatched TTS comparison semantics: hash is missing or invalid")
+
+
+def _validate_tts_provenance(run: dict[str, Any]) -> None:
+    provenance = run.get("provenance")
+    models = run.get("models")
+    if not isinstance(provenance, dict) or not isinstance(models, list) or len(models) != 1:
+        raise ValidationError("TTS run lacks one model and complete provenance")
+    model_record = models[0]
+
+    def tracked_path(value: object, root: Path, label: str) -> Path:
+        if not isinstance(value, str) or not value:
+            raise ValidationError(f"TTS {label} provenance path is invalid")
+        path = (ROOT / value).resolve()
+        if root not in path.parents:
+            raise ValidationError(f"TTS {label} provenance path is unsafe")
+        return path
+
+    config_path = tracked_path(
+        provenance.get("configPath"), (ROOT / "benchmarks/configs/tts").resolve(), "config"
+    )
+    prompts_path = tracked_path(
+        provenance.get("datasetPath"), (ROOT / "benchmarks/datasets").resolve(), "dataset"
+    )
+    manifest_path = tracked_path(
+        provenance.get("modelManifestPath"), ROOT, "model manifest"
+    )
+    if manifest_path != (ROOT / "docs/model-manifest.json").resolve():
+        raise ValidationError("TTS model manifest provenance path is not canonical")
+    if not config_path.is_file() or sha256_file(config_path) != run.get("configSha256"):
+        raise ValidationError("TTS config provenance hash does not match run identity")
+    if not manifest_path.is_file() or sha256_file(manifest_path) != provenance.get("modelManifestSha256"):
+        raise ValidationError("TTS model manifest provenance hash does not match run identity")
+
+    config = load_yaml_subset(config_path)
+    candidate = config.get("candidate")
+    if (
+        config.get("schemaVersion") != 1
+        or config.get("kind") != "tts"
+        or config.get("id") != run.get("configId")
+        or not isinstance(candidate, dict)
+        or candidate.get("id") != model_record.get("id")
+    ):
+        raise ValidationError("TTS config provenance does not match run identity")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_models = manifest.get("models")
+    if not isinstance(manifest_models, list):
+        raise ValidationError("TTS model manifest provenance is not a model manifest")
+    entries = [
+        entry
+        for entry in manifest_models
+        if isinstance(entry, dict) and entry.get("id") == provenance.get("modelManifestId")
+    ]
+    if len(entries) != 1:
+        raise ValidationError("TTS model provenance does not resolve to one manifest entry")
+    model = entries[0]
+    if (
+        model.get("revision") != model_record.get("revision")
+        or model.get("sha256") != model_record.get("sha256")
+        or candidate.get("modelId") != model.get("id")
+        or candidate.get("revision") != model.get("revision")
+        or candidate.get("modelSha256") != model.get("sha256")
+    ):
+        raise ValidationError("TTS model provenance does not match config or run identity")
+    for key in (
+        "runtime",
+        "runtimeRevision",
+        "voice",
+        "provider",
+        "precision",
+        "onnxReleaseRevision",
+        "voicesSha256",
+    ):
+        if key in model_record and model_record.get(key) != candidate.get(key):
+            raise ValidationError(f"TTS model provenance {key} does not match config")
+    if model_record.get("nativeSampleRate") != config.get("nativeSampleRate"):
+        raise ValidationError("TTS model provenance sample rate does not match config")
+
+    if not prompts_path.is_file():
+        raise ValidationError("TTS dataset provenance path is missing")
+    prompts, digest = verify_dataset(prompts_path, ROOT)
+    if (
+        prompts.get("id") != run.get("datasetId")
+        or digest != run.get("datasetSha256")
+        or prompts.get("id") != config.get("promptManifestId")
+    ):
+        raise ValidationError("TTS dataset provenance does not match run identity")
+
+
 def _validate_tts_audio(
     run_dir: Path,
     run: dict[str, Any],
@@ -1066,6 +1188,10 @@ def _validate_tts_audio(
                     or source.getsampwidth() != 2
                     or source.getframerate() != metadata["sampleRate"]
                     or source.getnframes() != metadata["totalSamples"]
+                    or metadata["sampleRate"]
+                    != run["comparisonSemantics"]["comparisonSampleRate"]
+                    or metadata["nativeSampleRate"]
+                    != run["comparisonSemantics"]["nativeSampleRate"]
                 ):
                     raise ValidationError("TTS WAV header disagrees with signed PCM16 mono metadata")
                 pcm = source.readframes(source.getnframes())
@@ -1149,6 +1275,8 @@ def _recompute_tts_soak(
     if [event["detail"].get("iteration") for event in ordered] != list(range(1, len(ordered) + 1)):
         raise ValidationError("TTS soak iterations are not contiguous")
     details = [event["detail"] for event in ordered]
+    if not all("chunkTelemetry" in detail for detail in details):
+        raise ValidationError("TTS soak raw chunk telemetry is incomplete")
     if all("chunkTelemetry" in detail for detail in details):
         expected_samples = expected_chunks = episodes = missed_samples = 0
         drops = leaks = resets = 0
@@ -1193,7 +1321,10 @@ def _recompute_tts_soak(
         p95 = percentile(lateness, 0.95) if lateness else 0.0
         maximum = max(lateness, default=0.0)
         timing = p95 <= 20 and maximum <= 100
-        return {"durationSeconds": duration, "passed": bool(duration >= requested and not severe and not episodes and not missed_samples and not drops and not leaks), "severeFailures": severe, "underruns": episodes, "underrunEpisodes": episodes, "missedSamples": missed_samples, "droppedFrames": drops, "expectedFrames": expected_samples, "consumedFrames": expected_samples, "expectedChunks": expected_chunks, "consumedChunks": expected_chunks, "deadlineOverruns": sum(value > 20 for value in lateness), "deadlineLatenessP95Ms": p95, "deadlineLatenessMaxMs": maximum, "timingConformance": timing, "resetCount": resets, "workerLeaks": leaks, "expectedSamples": expected_samples, "consumedSamples": expected_samples}
+        completion = completions[0]["detail"]
+        if completion.get("workerLeaks") != leaks or completion.get("severeFailures") != severe:
+            raise ValidationError("TTS soak cleanup summary disagrees with raw events")
+        return {"durationSeconds": duration, "passed": bool(duration >= requested and not severe and not episodes and not missed_samples and not drops and not leaks and timing), "severeFailures": severe, "underruns": episodes, "underrunEpisodes": episodes, "missedSamples": missed_samples, "droppedFrames": drops, "expectedFrames": expected_samples, "consumedFrames": expected_samples, "expectedChunks": expected_chunks, "consumedChunks": expected_chunks, "deadlineOverruns": sum(value > 20 for value in lateness), "deadlineLatenessP95Ms": p95, "deadlineLatenessMaxMs": maximum, "timingConformance": timing, "resetCount": resets, "workerLeaks": leaks, "expectedSamples": expected_samples, "consumedSamples": expected_samples}
     required = {
         "expectedSamples",
         "consumedSamples",
@@ -1282,7 +1413,12 @@ def validate_run(run_dir: Path) -> dict[str, int]:
         raise ValidationError(f"missing run artifacts: {', '.join(missing)}")
     run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-    _validate_json("run.json", run, "run.json")
+    try:
+        _validate_json("run.json", run, "run.json")
+    except ValidationError as error:
+        if run.get("kind") == "tts":
+            raise ValidationError(f"unmatched TTS comparison semantics: {error}") from error
+        raise
     _validate_json("summary.json", summary, "summary.json")
     items = _read_jsonl(run_dir / "items.jsonl", "item.json")
     events = _read_jsonl(run_dir / "events.jsonl", "event.json")
@@ -1293,6 +1429,8 @@ def validate_run(run_dir: Path) -> dict[str, int]:
         recomputed["wer"], recomputed["cer"] = _recompute_stt_rates(items, references)
         recomputed["soak"] = _recompute_stt_soak(run_dir, run, events, summary["soak"])
     elif run["kind"] == "tts":
+        _validate_tts_provenance(run)
+        _validate_tts_semantics(run)
         _validate_tts_audio(run_dir, run, items, events)
         recomputed["soak"] = _recompute_tts_soak(run, events, summary["soak"])
     elif set(summary["soak"]) == {
@@ -1323,7 +1461,24 @@ def validate_run(run_dir: Path) -> dict[str, int]:
         if not checksum_path.is_file() or checksum_path.read_text().split()[0] != sha256_file(probe_path):
             raise ValidationError("cancellation probe checksum is missing or invalid")
         probe = json.loads(probe_path.read_text())
-        if probe.get("runId") != run["runId"] or probe.get("sourceId") != run["sourceId"] or probe.get("configSha256") != run["configSha256"] or probe.get("outcome") != "cancelled" or probe.get("postCloseSurvivingWorkers") != []:
+        if (
+            probe.get("runId") != run["runId"]
+            or probe.get("sourceId") != run["sourceId"]
+            or probe.get("candidateId") != run["models"][0]["id"]
+            or probe.get("configId") != run["configId"]
+            or probe.get("configSha256") != run["configSha256"]
+            or probe.get("promptManifestId") != run["datasetId"]
+            or probe.get("promptManifestSha256") != run["datasetSha256"]
+            or probe.get("modelRevision") != run["models"][0]["revision"]
+            or probe.get("modelSha256") != run["models"][0]["sha256"]
+            or probe.get("outcome") != "cancelled"
+            or probe.get("acceptedChunks") != 1
+            or not isinstance(probe.get("cutoffSamples"), int)
+            or probe.get("cutoffSamples", 0) <= 0
+            or probe.get("backendPoisoned") is not False
+            or probe.get("preCloseSurvivingWorkers") != []
+            or probe.get("postCloseSurvivingWorkers") != []
+        ):
             raise ValidationError("cancellation probe identity/outcome/cleanup evidence is invalid")
     sequences = [event["sequence"] for event in events]
     times = [event["monotonicMs"] for event in events]

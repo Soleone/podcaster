@@ -9,16 +9,62 @@ import pytest
 
 from benchmarks.harness.adapter import CancelToken
 from benchmarks.harness.checksums import ChecksumError, verify_dataset
+from benchmarks.harness.randomization import prepare_listening_runs
 from benchmarks.harness.runner import ROOT, ValidationError, validate_run
+from benchmarks.harness import tts_runner
 from benchmarks.harness.tts_runner import (
     compare_tts_runs,
     probe_kokoro_cancellation,
+    probe_qwen_cancellation,
     run_tts,
 )
 from services.audio.src.tts.base import AudioChunk, SynthesisResult
 
 CONFIG = ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml"
+QWEN_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-0.6b.yaml"
 PROMPTS = ROOT / "benchmarks/datasets/tts-prompts-v1.manifest.json"
+
+
+class FakeQwenTtsAdapter:
+    def __init__(self) -> None:
+        self.prepared = False
+        self.closed = False
+        self.generation = 0
+        self._poisoned = False
+
+    def prepare(self, config: dict[str, Any]) -> None:
+        assert config["candidate"]["id"] == "qwen3-0.6b"
+        assert config["candidate"]["voice"] == "Ryan"
+        assert config["language"] == "English"
+        self.prepared = True
+
+    def synthesize_stream(self, text: str, cancel: CancelToken, on_audio=None) -> SynthesisResult:  # type: ignore[no-untyped-def]
+        cancel.raise_if_cancelled()
+        pcm = (b"\x00\x01" * 480) + (b"\x00\xff" * 120)
+        chunks = [pcm[:960], pcm[960:]]
+        offset = 0
+        for sequence, value in enumerate(chunks):
+            cancel.raise_if_cancelled()
+            if on_audio:
+                on_audio(AudioChunk(sequence, value, 24_000, offset))
+            offset += len(value) // 2
+        cancel.raise_if_cancelled()
+        import hashlib
+
+        return SynthesisResult(
+            sample_rate=24_000,
+            total_samples=600,
+            audio_seconds=0.025,
+            processing_seconds=0.005,
+            sha256=hashlib.sha256(pcm).hexdigest(),
+            chunk_count=2,
+        )
+
+    def reset(self) -> None:
+        self.generation += 1
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeTtsAdapter:
@@ -75,6 +121,53 @@ def test_prompt_manifest_is_tracked_complete_and_hash_verified(tmp_path: Path) -
     path.write_text(json.dumps(changed))
     with pytest.raises(ChecksumError, match="checksum mismatch"):
         verify_dataset(path, ROOT)
+
+
+def test_qwen_candidate_run_and_cancellation_probe_validate(tmp_path: Path) -> None:
+    run = run_tts(
+        "qwen3-0.6b",
+        QWEN_CONFIG,
+        PROMPTS,
+        tmp_path,
+        adapter_factory=FakeQwenTtsAdapter,
+    )
+    assert validate_run(run) == {"items": 24, "events": 72, "ratings": 0}
+    run_data = json.loads((run / "run.json").read_text())
+    assert run_data["models"][0]["id"] == "qwen3-0.6b"
+    assert run_data["comparisonSemantics"]["language"] == "en-us"
+    assert run_data["models"][0]["voice"] == "Ryan"
+    probe = probe_qwen_cancellation(
+        QWEN_CONFIG,
+        PROMPTS,
+        run,
+        adapter_factory=FakeQwenTtsAdapter,
+    )
+    assert probe["outcome"] == "cancelled"
+    assert probe["candidateId"] == "qwen3-0.6b"
+    assert probe["postCloseSurvivingWorkers"] == []
+
+    kokoro = run_tts(
+        "kokoro",
+        CONFIG,
+        PROMPTS,
+        tmp_path / "paired",
+        adapter_factory=FakeTtsAdapter,
+    )
+    comparison = compare_tts_runs([kokoro, run])
+    assert {entry["candidateId"] for entry in comparison["runs"]} == {"kokoro", "qwen3-0.6b"}
+    view = prepare_listening_runs([kokoro, run], "opaque-qwen-listener")
+    view_text = view.read_text()
+    assert "qwen3-0.6b" not in view_text
+    assert "kokoro" not in view_text
+    assert '"rateable":true' in view_text
+
+
+def test_qwen_config_rejects_pinned_runtime_contract_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = json.loads(QWEN_CONFIG.read_text())
+    config["candidate"]["runtime"] = "untrusted-qwen-runtime"
+    monkeypatch.setattr(tts_runner, "load_yaml_subset", lambda _path: config)
+    with pytest.raises(ValueError, match="runtime mismatch"):
+        tts_runner._verified_tts_config("qwen3-0.6b", QWEN_CONFIG, PROMPTS)
 
 
 def test_tts_runner_writes_valid_pcm_metadata_and_recomputable_summary(tmp_path: Path) -> None:

@@ -15,7 +15,7 @@ from .randomization import (
 )
 from .runner import ROOT, ValidationError, normalize_summary, run_synthetic, validate_run
 from .stt_runner import compare_stt_runs, run_stt
-from .tts_runner import compare_tts_runs, probe_kokoro_cancellation, run_tts
+from .tts_runner import compare_tts_runs, probe_tts_cancellation, run_tts
 from .util import canonical_json
 
 
@@ -26,7 +26,7 @@ def parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="run a benchmark")
     run.add_argument("--kind", choices=["synthetic", "stt", "tts"], required=True)
     run.add_argument("--config", type=Path)
-    run.add_argument("--candidate", choices=["nemotron", "parakeet", "kokoro"])
+    run.add_argument("--candidate", choices=["nemotron", "parakeet", "kokoro", "qwen3-0.6b"])
     run.add_argument("--dataset", type=Path)
     run.add_argument("--prompts", type=Path)
     run.add_argument("--output-root", type=Path)
@@ -60,7 +60,7 @@ def parser() -> argparse.ArgumentParser:
     reveal.add_argument("--run", type=Path, required=True)
 
     cancel = commands.add_parser("probe-cancel", help="run a real TTS cancellation probe")
-    cancel.add_argument("--candidate", choices=["kokoro"], required=True)
+    cancel.add_argument("--candidate", choices=["kokoro", "qwen3-0.6b"], required=True)
     cancel.add_argument("--config", type=Path, required=True)
     cancel.add_argument("--prompts", type=Path, required=True)
     cancel.add_argument("--run", type=Path, required=True)
@@ -71,7 +71,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "run":
-            command = ["uv", "run", "python", "-m", "benchmarks.harness", *sys.argv[1:]]
+            # Persist the interpreter that actually dispatched the run. This is
+            # important for Qwen's isolated runtime and for reproducible reruns.
+            command = [sys.executable, "-m", "benchmarks.harness", *sys.argv[1:]]
             if args.kind == "synthetic":
                 if (
                     args.config is None
@@ -100,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 if (
-                    args.candidate != "kokoro"
+                    args.candidate not in {"kokoro", "qwen3-0.6b"}
                     or args.prompts is None
                     or args.config is None
                     or args.dataset is not None
@@ -161,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "probe-cancel":
             print(
                 json.dumps(
-                    probe_kokoro_cancellation(args.config, args.prompts, args.run),
+                    probe_tts_cancellation(args.candidate, args.config, args.prompts, args.run),
                     indent=2,
                     sort_keys=True,
                 )
