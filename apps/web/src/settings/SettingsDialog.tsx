@@ -141,7 +141,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
             <Accordion multiple defaultValue={['persona']} className="rounded-xl">
               <AccordionItem value="persona">
                 <AccordionTrigger>Persona</AccordionTrigger>
-                <AccordionContent aria-labelledby="settings-persona-panel-label">
+                <AccordionContent className="pt-4" aria-labelledby="settings-persona-panel-label">
                   <span id="settings-persona-panel-label" className="sr-only">Agent behavior settings</span>
                   <Field data-invalid={personaInvalid || undefined}>
                     <FieldLabel className="sr-only" htmlFor="settings-persona">Persona</FieldLabel>
@@ -155,7 +155,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, saving, sav
                         placeholder="Describe how the assistant should behave…"
                         className="h-48 min-h-40 resize-none"
                       />
-                      <FieldDescription id="settings-persona-description">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
+                      <FieldDescription id="settings-persona-description" className="mt-2">Free-form instructions appended to the base system prompt when the next session starts. Empty is allowed.</FieldDescription>
                       <p id="settings-persona-counter" className={cn('text-xs text-muted-foreground', personaInvalid && 'text-destructive')} aria-live="polite">
                         {personaBytes.toLocaleString()} / {MAX_PERSONA_BYTES.toLocaleString()} bytes
                       </p>
