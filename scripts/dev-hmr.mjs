@@ -113,12 +113,17 @@ function startHost(hostEntry) {
       const lines = output.split(/\r?\n/);
       output = lines.pop() ?? '';
       for (const line of lines) {
-        process.stdout.write(`[host] ${line}\n`);
         const match = line.match(/Podcaster readiness: (https?:\/\/\S+)/);
-        if (!ready && match?.[1]) {
-          ready = true;
-          resolveReady(new URL(match[1]).origin);
+        if (match?.[1]) {
+          const origin = new URL(match[1]).origin;
+          if (!ready) {
+            ready = true;
+            resolveReady(origin);
+          }
+          process.stdout.write(`[backend] internal host: ${origin}\n`);
+          continue;
         }
+        process.stdout.write(`[host] ${line}\n`);
       }
     },
   });
@@ -144,7 +149,6 @@ function startVite(env) {
     env,
     pipeStdout: true,
     onStdout(chunk) {
-      process.stdout.write(chunk);
       output += chunk;
       const lines = output.split(/\r?\n/);
       output = lines.pop() ?? '';
@@ -156,6 +160,7 @@ function startVite(env) {
           clearTimeout(timer);
           resolveReady(new URL(match[1]).origin);
         }
+        if (!match?.[1]) process.stdout.write(`${line}\n`);
       }
     },
   });
@@ -182,7 +187,7 @@ try {
     PODCASTER_WEB_PORT: String(webPort),
   });
   await vite.ready;
-  process.stdout.write(`Podcaster dev: ${webOrigin}\n`);
+  process.stdout.write(`Open this URL for HMR: ${webOrigin}\n`);
 
   const result = await Promise.race([
     host.exit.then(value => ({ name: 'host', ...value })),
