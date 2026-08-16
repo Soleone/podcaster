@@ -21,6 +21,10 @@ export interface ExportPopoverProps {
   variant?: NonNullable<VariantProps<typeof buttonVariants>['variant']>;
   size?: NonNullable<VariantProps<typeof buttonVariants>['size']>;
   className?: string;
+  /** Hide the visible label while preserving an accessible name, for compact toolbars. */
+  iconOnly?: boolean;
+  /** Reports export activity so neighboring destructive controls can stay disabled. */
+  onExportingChange?: ((exporting: boolean) => void) | undefined;
 }
 
 /**
@@ -29,7 +33,7 @@ export interface ExportPopoverProps {
  * Reused wherever an export already exists, e.g. the live recording controls
  * and the per-session export buttons on the index and stopped views.
  */
-export function ExportPopover({ sessionId, buildExport, disabled, label = 'Export', variant = 'secondary', size = 'default', className }: ExportPopoverProps) {
+export function ExportPopover({ sessionId, buildExport, disabled, label = 'Export', variant = 'secondary', size = 'default', className, iconOnly = false, onExportingChange }: ExportPopoverProps) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   const [progress, setProgress] = useState<ExportProgress | null>(null);
@@ -42,6 +46,7 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
   const run = useCallback(async () => {
     if (disabled || status === 'exporting') return;
     setStatus('exporting');
+    onExportingChange?.(true);
     setProgress({ phase: 'reading', message: 'Reading recording…', value: 0 });
     setNotice('');
     try {
@@ -57,8 +62,10 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'The recording could not be exported.');
       setStatus('error');
+    } finally {
+      onExportingChange?.(false);
     }
-  }, [disabled, status, buildExport, sessionId]);
+  }, [disabled, status, buildExport, sessionId, onExportingChange]);
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
@@ -73,11 +80,20 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
         ? notice || 'The recording could not be exported.'
         : 'Run the export to build and download this recording.';
 
+  const triggerLabel = status === 'exporting' ? 'Exporting recording' : label === 'Export' ? 'Export recording' : label;
+
   return <Popover open={open} onOpenChange={handleOpenChange}>
     <PopoverTrigger render={
-      <Button variant={variant} size={size} disabled={disabled || status === 'exporting'} className={className}>
-        {status === 'exporting' ? <Spinner aria-hidden="true" /> : <Download data-icon="inline-start" />}
-        {status === 'exporting' ? 'Exporting…' : label}
+      <Button
+        variant={variant}
+        size={size}
+        disabled={disabled || status === 'exporting'}
+        className={className}
+        aria-label={iconOnly ? triggerLabel : undefined}
+        title={iconOnly ? triggerLabel : undefined}
+      >
+        {status === 'exporting' ? <Spinner aria-hidden="true" /> : <Download data-icon="inline-start" aria-hidden="true" />}
+        {iconOnly ? null : status === 'exporting' ? 'Exporting…' : label}
       </Button>
     } />
     <PopoverContent className="w-64">

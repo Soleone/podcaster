@@ -103,16 +103,21 @@ test('records a turn, trims the bubble, restores it after reload, exports, and d
   await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeEnabled();
 
-  // Export an MP3 download. During building the button is disabled and relabels
-  // while the native save dialog is prepared.
+  // Export an MP3 download. The session-page control opens the same progress
+  // popover as the session index while the native save dialog is prepared.
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export' }).click();
+  await expect(page.getByText('Export recording', { exact: true })).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: 'Export progress' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Exporting/ })).toBeDisabled();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^podcaster-[0-9a-f]{8}-\d{4}-\d{2}-\d{2}\.mp3$/);
 
   // Whole-recording delete stays available even after all this.
   await page.getByRole('button', { name: 'Delete' }).click();
+  const deleteDialog = page.getByRole('alertdialog', { name: 'Delete recording?' });
+  await deleteDialog.getByRole('button', { name: 'Delete recording' }).click();
+  await expect(deleteDialog).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Export' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Delete recording', exact: true })).toBeDisabled();
 });

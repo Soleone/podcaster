@@ -125,6 +125,7 @@ export function StoppedSession(props: StoppedSessionProps) {
   return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
     <SessionScreen
       state={view}
+      sessionId={props.sessionId}
       agentName={props.agentName}
       elapsedSeconds={elapsed}
       sessionPaused={false}
@@ -134,6 +135,7 @@ export function StoppedSession(props: StoppedSessionProps) {
       settingsOpen={false}
       recording={recording}
       onToggleBubbleTrim={toggleTrim}
+      buildExport={buildExport}
       readOnly
     />
     <Card className="mt-6" role="group" aria-label="Session actions">

@@ -16,7 +16,7 @@ import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
 import { RecordingStore, type RecordingItemSummary } from './storage/recording-store';
 import { StableTurnWriter } from './storage/stable-turn-writer';
-import { deleteSessionRecording, downloadRecording } from './recording/export';
+import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
 import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
@@ -711,22 +711,6 @@ function SessionRoute(props: SessionRouteProps) {
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const exportRecording = useCallback(async () => {
-    if (!props.liveSessionId || props.recordingView.includedCount === 0) return;
-    setExporting(true);
-    try {
-      const blob = await props.buildExport();
-      if (blob) {
-        await new Promise<void>(resolve => {
-          requestAnimationFrame(() => { requestAnimationFrame(() => resolve()); });
-        });
-        downloadRecording(blob, props.liveSessionId);
-      }
-    } finally {
-      setExporting(false);
-    }
-  }, [props.liveSessionId, props.recordingView.includedCount, props.buildExport]);
-
   const deleteRecording = useCallback(async () => {
     setDeleting(true);
     try {
@@ -736,10 +720,11 @@ function SessionRoute(props: SessionRouteProps) {
     }
   }, [props.onDeleteRecording]);
 
-  if (props.liveSessionId === routeSessionId) {
+  if (props.liveSessionId && props.liveSessionId === routeSessionId) {
     return <Suspense fallback={<RouteLoading label="Loading session…" />}>
       <SessionScreen
         state={props.view ?? initialSessionState}
+        sessionId={props.liveSessionId}
         agentName={props.agentName}
         elapsedSeconds={props.elapsed}
         sessionPaused={props.sessionPaused}
@@ -749,7 +734,8 @@ function SessionRoute(props: SessionRouteProps) {
         settingsOpen={props.settingsOpen}
         recording={props.recordingView}
         onToggleBubbleTrim={props.onToggleBubbleTrim}
-        onExportRecording={exportRecording}
+        buildExport={props.buildExport}
+        onExportingChange={setExporting}
         onDeleteRecording={deleteRecording}
         exporting={exporting}
         deleting={deleting}

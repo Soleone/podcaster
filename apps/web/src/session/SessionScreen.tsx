@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Download, Ear, MessageCircleQuestion, Pause, Play, Trash, Volume2, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Ear, MessageCircleQuestion, Pause, Play, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog';
+import { ExportPopover } from '../components/ExportPopover';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
@@ -14,6 +15,7 @@ import { cn } from '../lib/utils';
 import { Spinner } from '../components/ui/spinner';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '../components/ui/message-scroller';
 import { activityLog, type ActivityEntry } from './activity-log';
+import type { ExportOnProgress } from '../recording/splice';
 import type { RecordingSessionViewState, RecordingTrimTargetId } from '../recording/trim-state';
 import type { SessionViewState } from './state';
 import './session.css';
@@ -25,7 +27,7 @@ const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> =
   idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-type SessionScreenProps = { state: SessionViewState; agentName: string; elapsedSeconds: number; sessionPaused: boolean; onTogglePause: () => void; onStop: () => void; onCancelAssistant: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>; readOnly?: boolean; onExportRecording?: () => Promise<void>; onDeleteRecording?: () => Promise<void>; exporting?: boolean; deleting?: boolean };
+type SessionScreenProps = { state: SessionViewState; sessionId: string; agentName: string; elapsedSeconds: number; sessionPaused: boolean; onTogglePause: () => void; onStop: () => void; onCancelAssistant: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>; buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>; readOnly?: boolean; onExportingChange?: (exporting: boolean) => void; onDeleteRecording?: () => Promise<void>; exporting?: boolean; deleting?: boolean };
 
 export function SessionScreen(props: SessionScreenProps) {
   const [trimAnnouncement, setTrimAnnouncement] = useState('');
@@ -64,9 +66,15 @@ export function SessionScreen(props: SessionScreenProps) {
             <Button variant="outline" size="icon" aria-label={props.sessionPaused ? 'Resume session' : 'Pause session'} title={props.sessionPaused ? 'Resume session' : 'Pause session'} onClick={props.onTogglePause}>{props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</Button>
             <Button variant="outline" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button>
             <ButtonGroupSeparator />
-            <Button variant="secondary" size="icon" disabled={!canExport} title={props.exporting ? 'Exporting recording' : 'Export recording'} aria-label={props.exporting ? 'Exporting…' : 'Export recording'} onClick={() => void props.onExportRecording?.()}>
-              {props.exporting ? <Spinner aria-hidden="true" /> : <Download aria-hidden="true" />}
-            </Button>
+            <ExportPopover
+              sessionId={props.sessionId}
+              buildExport={props.buildExport}
+              disabled={!canExport}
+              variant="secondary"
+              size="icon"
+              iconOnly
+              onExportingChange={props.onExportingChange}
+            />
             <ConfirmDeleteDialog
               deleting={props.deleting ?? false}
               onConfirm={async () => { await props.onDeleteRecording?.(); }}
