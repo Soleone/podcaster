@@ -126,6 +126,19 @@ describe("settings validators", () => {
     expect(isValidSessionSettingsSnapshot({ ...snapshot, voice: { catalogId: "", voiceId: "v" } })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, voice: { catalogId: "c", voiceId: "v", backendId: "qwen3" } })).toBe(false);
   });
+
+  it("accepts a Qwen-valued voice snapshot on the session.start wire shape", () => {
+    const qwenVoice = {
+      catalogId: "qwen-catalog",
+      voiceId: "Ryan",
+      speedModifier: 1.0,
+      backendId: "qwen3",
+      modelId: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+    };
+    expect(isValidVoicePreference(qwenVoice)).toBe(true);
+    expect(isValidSessionSettingsSnapshot({ version: 1, persona: "", voice: qwenVoice })).toBe(true);
+    expect(normalizeVoicePreference(qwenVoice)).toEqual(qwenVoice);
+  });
 });
 
 describe("voice preview phrases", () => {
