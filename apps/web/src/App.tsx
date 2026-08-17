@@ -22,7 +22,7 @@ import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn
 import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, customVoiceId, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
@@ -757,13 +757,18 @@ export function App() {
     return voiceCatalog ? { ...item, voiceCatalog } : item;
   }), []);
   const customSyncInFlightRef = useRef(false);
-  const syncStoredCustomVoices = useCallback(async (models: TtsModelDescriptor[]) => {
+  // The raw sidecar-reported model descriptors, without the browser-merged
+  // custom voices. Restore detection must compare stored references against the
+  // sidecar's authoritative catalog only; if we compare against the merged
+  // catalog (which always includes browser-stored voices), a voice that the
+  // sidecar dropped on restart is never seen as missing and never re-enrolled.
+  const rawTtsModelsRef = useRef<TtsModelDescriptor[]>([]);
+  const syncStoredCustomVoices = useCallback(async (models?: TtsModelDescriptor[]) => {
     if (fakeServices || !capability || customSyncInFlightRef.current) return;
-    const qwen = models.find(item => item.backendId === 'qwen3' && item.status === 'ready' && item.voiceCatalog);
+    const qwen = (models ?? rawTtsModelsRef.current).find(item => item.backendId === 'qwen3' && item.status === 'ready' && item.voiceCatalog);
     const store = customVoiceStoreRef.current;
     if (!qwen?.voiceCatalog || !store || customVoicesRef.current.length === 0) return;
-    const known = new Set(qwen.voiceCatalog.voices.map(voice => voice.id));
-    const missing = customVoicesRef.current.filter(voice => !known.has(voice.voiceId));
+    const missing = customVoicesMissingFromCatalog(qwen?.voiceCatalog, customVoicesRef.current);
     if (missing.length === 0) return;
     customSyncInFlightRef.current = true;
     try {
@@ -782,28 +787,47 @@ export function App() {
     const mergedCatalog = withCustomVoices(catalog, customVoicesRef.current) ?? catalog;
     voiceCatalogRef.current = mergedCatalog;
     if (ttsModelsRef.current.length === 0) {
-      const fallbackModel: TtsModelDescriptor = { backendId: mergedCatalog.backendId, modelId: mergedCatalog.modelId, label: mergedCatalog.backendId === 'kokoro' ? 'Kokoro CUDA' : `${mergedCatalog.backendId} · ${mergedCatalog.modelId}`, status: 'ready', voiceCatalog: mergedCatalog, ...(mergedCatalog.speed ? { speed: mergedCatalog.speed } : {}) };
+      // Keep the raw (un-merged) sidecar catalog for restore detection; only the
+      // UI-facing fallback merges in the browser-stored custom voices.
+      const rawFallback: TtsModelDescriptor = { backendId: catalog.backendId, modelId: catalog.modelId, label: catalog.backendId === 'kokoro' ? 'Kokoro CUDA' : `${catalog.backendId} · ${catalog.modelId}`, status: 'ready', voiceCatalog: catalog, ...(catalog.speed ? { speed: catalog.speed } : {}) };
+      rawTtsModelsRef.current = [rawFallback];
+      const fallbackModel: TtsModelDescriptor = { ...rawFallback, voiceCatalog: mergedCatalog };
       ttsModelsRef.current = [fallbackModel];
       setTtsModels([fallbackModel]);
     }
     reconcileCurrentSettings(ttsModelsRef.current, mergedCatalog);
-    void syncStoredCustomVoices(ttsModelsRef.current);
+    void syncStoredCustomVoices(rawTtsModelsRef.current);
   }, [reconcileCurrentSettings, syncStoredCustomVoices]);
 
   const onModels = useCallback((models: TtsModelDescriptor[]) => {
+    if (models.length > 0) rawTtsModelsRef.current = models;
     const merged = mergeCustomModels(models);
     ttsModelsRef.current = merged;
     setTtsModels(merged);
     const active = merged.find(item => item.status === 'ready' && item.voiceCatalog);
     if (active?.voiceCatalog) voiceCatalogRef.current = active.voiceCatalog;
     reconcileCurrentSettings(merged, voiceCatalogRef.current);
-    void syncStoredCustomVoices(models);
+    void syncStoredCustomVoices(rawTtsModelsRef.current);
   }, [mergeCustomModels, reconcileCurrentSettings, syncStoredCustomVoices]);
+
+  const ensureCustomVoiceEnrolled = useCallback(async (voiceId: string) => {
+    if (fakeServices || !capability || !voiceId.startsWith(CUSTOM_VOICE_PREFIX)) return;
+    // Compare against the raw sidecar catalog (not the merged one) so a voice
+    // the sidecar dropped on restart is re-enrolled before it is previewed.
+    const qwen = rawTtsModelsRef.current.find(item => item.backendId === 'qwen3' && item.status === 'ready' && item.voiceCatalog);
+    const catalog = qwen?.voiceCatalog;
+    if (catalog && catalog.voices.some(voice => voice.id === voiceId)) return;
+    const store = customVoiceStoreRef.current;
+    const record = store ? await store.get(voiceId) : undefined;
+    if (!record) return;
+    await enrollStoredCustomVoice({ capability, voice: record });
+  }, [capability]);
 
   const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string, signal?: AbortSignal) => {
     if (!capability) throw new Error('The session capability is not ready yet.');
+    await ensureCustomVoiceEnrolled(voiceId);
     return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), ...(signal ? { signal } : {}), capability });
-  }, [capability]);
+  }, [capability, ensureCustomVoiceEnrolled]);
 
   const enrollVoice = useCallback(async (name: string, take: ReferenceTake) => {
     const store = customVoiceStoreRef.current ?? await CustomVoiceStore.open();
@@ -846,7 +870,9 @@ export function App() {
     ttsModelsRef.current = merged;
     setTtsModels(merged);
     reconcileCurrentSettings(merged, voiceCatalogRef.current);
-    void syncStoredCustomVoices(merged);
+    // Use the raw sidecar descriptors so a sidecar restart is detected and each
+    // dropped stored voice is re-enrolled rather than hidden by the merge.
+    void syncStoredCustomVoices(rawTtsModelsRef.current);
   }, [customVoices, mergeCustomModels, reconcileCurrentSettings, syncStoredCustomVoices]);
 
   const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, voiceProfiles: Record<string, VoicePreference> = {}) => {

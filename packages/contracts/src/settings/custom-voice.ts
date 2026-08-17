@@ -192,6 +192,23 @@ export function withCustomVoices(
   return { ...catalog, voices: [...catalog.voices, ...customVoices] };
 }
 
+/**
+ * Stored references whose voice id is absent from `catalog`'s voices.
+ *
+ * This comparison must always run against the sidecar's authoritative catalog
+ * (which already includes any voice the sidecar re-enrolled), never the
+ * browser-merged catalog, so a voice the sidecar dropped on restart is seen as
+ * missing and can be re-enrolled instead of being hidden by the merge.
+ */
+export function customVoicesMissingFromCatalog<C extends CustomVoiceMetadata>(
+  catalog: VoiceCatalog | undefined,
+  customs: readonly C[],
+): C[] {
+  if (!catalog) return customs.slice();
+  const known = new Set(catalog.voices.map(voice => voice.id));
+  return customs.filter(custom => !known.has(custom.voiceId));
+}
+
 /** All stock voice ids from a catalog, excluding any user-enrolled entries. */
 export function stockVoiceIds(catalog: VoiceCatalog | undefined): Set<string> {
   return new Set((catalog?.voices ?? []).filter(voice => !isValidCustomVoiceId(voice.id)).map(voice => voice.id));

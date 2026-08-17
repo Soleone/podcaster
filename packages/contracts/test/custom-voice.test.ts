@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CUSTOM_VOICE_PREFIX,
   customVoiceId,
+  customVoicesMissingFromCatalog,
   isReferenceSizeValid,
   isValidCustomVoiceId,
   MAX_CUSTOM_VOICE_BYTES,
@@ -129,5 +130,35 @@ describe('custom voice catalog merge', () => {
   it('returns the catalog untouched with no customs and undefined for no catalog', () => {
     expect(withCustomVoices(catalog, [])).toBe(catalog);
     expect(withCustomVoices(undefined, [custom])).toBeUndefined();
+  });
+});
+
+describe('custom voice missing detection (sidecar restore)', () => {
+  const catalog: VoiceCatalog = {
+    catalogId: 'stock-catalog',
+    backendId: 'qwen3',
+    modelId: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+    runtimeConfigId: 'cfg',
+    revision: 'rev',
+    defaultVoiceId: 'Ryan',
+    voices: [{ id: 'Ryan', label: 'Ryan' }, { id: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa', label: 'Sidecar Me' }],
+  };
+  const present = { voiceId: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa', name: 'Me', refSha256: FULL_SHA, sampleRate: 16_000, durationMs: 5_000, byteLength: 160_044, createdAt: '2026-08-17T00:00:00.000Z', updatedAt: '2026-08-17T00:00:00.000Z' }; const dropped = { ...present, voiceId: 'custom:bbbbbbbbbbbbbbbbbbbbbbbb', name: 'Dropped' };
+
+  it('flags only the stored voices absent from the sidecar catalog', () => {
+    const missing = customVoicesMissingFromCatalog(catalog, [present, dropped]);
+    expect(missing.map(voice => voice.voiceId)).toEqual(['custom:bbbbbbbbbbbbbbbbbbbbbbbb']);
+  });
+
+  it('flags every stored voice when there is no catalog yet', () => {
+    expect(customVoicesMissingFromCatalog(undefined, [present, dropped])).toHaveLength(2);
+  });
+
+  it('does not hide a dropped voice behind a browser-merged catalog', () => {
+    // A merged catalog re-adds the browser-stored voice, which must NOT count
+    // as the sidecar having it; only the authoritative sidecar catalog decides.
+    const merged = withCustomVoices(catalog, [dropped])!;
+    expect(merged.voices.some(voice => voice.id === dropped.voiceId)).toBe(true);
+    expect(customVoicesMissingFromCatalog(catalog, [dropped]).map(voice => voice.voiceId)).toEqual([dropped.voiceId]);
   });
 });
