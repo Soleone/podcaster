@@ -586,8 +586,11 @@ class FasterQwenBaseCloneBackend:
             backend="torch",
             local_files_only=True,
         )
-        model = getattr(self.model, "model", None)
-        model_type = getattr(model, "tts_model_type", None)
+        config_path = Path(model_path) / "config.json"
+        try:
+            model_type = json.loads(config_path.read_text(encoding="utf-8")).get("tts_model_type")
+        except (OSError, ValueError, TypeError) as error:
+            raise RuntimeError("pinned Qwen clone model config is unreadable") from error
         if model_type != "base":
             raise RuntimeError(f"pinned Qwen clone model is not a Base model: {model_type!r}")
 

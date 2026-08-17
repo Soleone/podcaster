@@ -18,6 +18,7 @@ from .qwen3 import (
     ATTENTION,
     DEVICE,
     PRECISION,
+    CUSTOM_VOICE_SAMPLE_RATE,
     Qwen3StreamingAdapter,
     ROOT,
 )
@@ -224,6 +225,70 @@ class IsolatedQwenBackend:
 
         return packets()
 
+    def prepare_clone(self, model_path: str) -> None:
+        with self._io_lock:
+            if self.process is None:
+                raise RuntimeError("Qwen worker is not running")
+            self._send({"op": "prepareClone", "modelPath": model_path})
+            value = self._read(self.prepare_timeout_seconds)
+            if value.get("type") == "error":
+                self._raise_worker_error(value)
+            if value.get("type") != "readyClone":
+                raise RuntimeError("Qwen worker did not prepare the clone model")
+
+    def create_clone_prompt(self, pcm16: bytes, sample_rate: int) -> str:
+        with self._io_lock:
+            self._send({
+                "op": "clonePrompt",
+                "sampleRate": sample_rate,
+                "pcm16": base64.b64encode(pcm16).decode("ascii"),
+            })
+            value = self._read(self.operation_timeout_seconds)
+            if value.get("type") == "error":
+                self.poisoned = True
+                self._raise_worker_error(value)
+            prompt_id = value.get("promptId")
+            if value.get("type") != "clonePrompt" or not isinstance(prompt_id, str) or not prompt_id:
+                self.poisoned = True
+                raise RuntimeError("Qwen worker did not return a clone prompt")
+            return prompt_id
+
+    def create_clone_stream(
+        self, text: str, prompt_id: str, language: str, tone_prompt: str | None = None
+    ) -> Iterator[tuple[np.ndarray, int, dict[str, Any]]]:
+        def packets() -> Iterator[tuple[np.ndarray, int, dict[str, Any]]]:
+            with self._io_lock:
+                self._send({
+                    "op": "cloneStream",
+                    "text": text,
+                    "promptId": prompt_id,
+                    "language": language,
+                    **({"tonePrompt": tone_prompt} if tone_prompt else {}),
+                })
+                while True:
+                    value = self._read(self.operation_timeout_seconds)
+                    record_type = value.get("type")
+                    if record_type == "error":
+                        self.poisoned = True
+                        self._raise_worker_error(value)
+                    if record_type == "done":
+                        return
+                    if record_type != "chunk":
+                        self.poisoned = True
+                        raise RuntimeError("Qwen worker emitted an unexpected clone stream record")
+                    try:
+                        sample_rate = int(value["sampleRate"])
+                        payload = base64.b64decode(str(value["samples"]), validate=True)
+                    except (KeyError, ValueError, TypeError) as error:
+                        self.poisoned = True
+                        raise RuntimeError("Qwen worker emitted malformed clone audio data") from error
+                    if len(payload) == 0 or len(payload) % 4:
+                        self.poisoned = True
+                        raise RuntimeError("Qwen worker emitted malformed clone audio data")
+                    yield np.frombuffer(payload, dtype="<f4").copy(), sample_rate, {}
+
+        return packets()
+
     def reset(self) -> None:
         with self._io_lock:
             self._send({"op": "reset"})
@@ -250,16 +315,75 @@ class IsolatedQwenBackend:
                 self.voices = []
 
 
+class IsolatedQwenCloneBackend:
+    """Clone-model facade sharing the isolated worker with the stock model."""
+
+    def __init__(self, parent: IsolatedQwenBackend) -> None:
+        self.parent = parent
+
+    @property
+    def poisoned(self) -> bool:
+        return self.parent.poisoned
+
+    @poisoned.setter
+    def poisoned(self, value: bool) -> None:
+        self.parent.poisoned = value
+
+    def prepare(self, model_path: str, device: str, dtype: str, attn_implementation: str) -> None:
+        if device != DEVICE or dtype != PRECISION or attn_implementation != ATTENTION:
+            raise ValueError("isolated Qwen clone backend received an unmatched runtime contract")
+        self.parent.prepare_clone(model_path)
+
+    def get_voices(self) -> list[str]:
+        return []
+
+    def create_prompt(self, pcm16: bytes, sample_rate: int) -> dict[str, str]:
+        return {"promptId": self.parent.create_clone_prompt(pcm16, sample_rate)}
+
+    def create_stream(
+        self, text: str, prompt: dict[str, Any], language: str, tone_prompt: str | None = None
+    ) -> Iterator[tuple[np.ndarray, int, dict[str, Any]]]:
+        prompt_id = prompt.get("promptId")
+        if not isinstance(prompt_id, str) or not prompt_id:
+            raise ValueError("isolated Qwen clone prompt is malformed")
+        return self.parent.create_clone_stream(text, prompt_id, language, tone_prompt)
+
+    def reset(self) -> None:
+        # The shared worker reset is performed by the primary backend.
+        return
+
+    def close(self) -> None:
+        # The shared worker is owned and closed by the primary backend.
+        return
+
+
 class IsolatedQwenAdapter(Qwen3StreamingAdapter):
     """Run the existing adapter contract over the isolated Qwen process."""
 
     def __init__(self, python: str | Path | None = None) -> None:
+        self._qwen_python = python
         super().__init__(
             backend_factory=lambda: IsolatedQwenBackend(python),
             # The helper performs the Qwen package and source verification in
             # its own interpreter. The parent still verifies model bytes.
             runtime_verifier=lambda: None,
         )
+        self.clone_backend_factory = lambda: IsolatedQwenCloneBackend(self.backend)
+
+    def _extract_user_prompt(self, decoded: Any) -> dict[str, str]:
+        clone_backend = self._clone_backend
+        if not isinstance(clone_backend, IsolatedQwenCloneBackend):
+            raise RuntimeError("isolated Qwen clone backend is unavailable")
+        return clone_backend.create_prompt(decoded.pcm16, CUSTOM_VOICE_SAMPLE_RATE)
+
+    def _prompt_to_device(self, prompt: dict[str, Any]) -> dict[str, Any]:
+        # The worker owns the tensors and moves the prompt to CUDA before use.
+        return prompt
 
 
-__all__ = ["DEFAULT_QWEN_PYTHON", "IsolatedQwenAdapter", "IsolatedQwenBackend"]
+__all__ = [
+    "DEFAULT_QWEN_PYTHON",
+    "IsolatedQwenAdapter",
+    "IsolatedQwenBackend",
+    "IsolatedQwenCloneBackend",
+]
