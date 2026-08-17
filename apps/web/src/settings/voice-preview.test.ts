@@ -116,11 +116,25 @@ describe('startVoicePreview', () => {
     await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1', signal: request.signal })).rejects.toThrow('model changed');
   });
 
-  it('surfaces the server error code when the preview is rejected', async () => {
+  it('surfaces a friendly message when the preview is rejected', async () => {
     installAudioMock();
     installFetchMock({ ok: false, status: 503, error: 'preview_unavailable' });
     const player = await loadPlayer();
-    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow('preview_unavailable');
+    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow(/couldn\u2019t synthesize this preview/);
+  });
+
+  it('names the specific failing voice when it is missing from the engine', async () => {
+    installAudioMock();
+    installFetchMock({ ok: false, status: 422, error: 'unknown_voice' });
+    const player = await loadPlayer();
+    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow(/isn\u2019t loaded in the audio engine yet/);
+  });
+
+  it('falls back to the status code for an unmapped server error', async () => {
+    installAudioMock();
+    installFetchMock({ ok: false, status: 500, error: 'some_other_error' });
+    const player = await loadPlayer();
+    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow('voice preview failed with status 500');
   });
 
   it('resumes a suspended AudioContext before playback', async () => {

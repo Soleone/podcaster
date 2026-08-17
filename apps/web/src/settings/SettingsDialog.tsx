@@ -155,11 +155,12 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
           if (previewHandleRef.current === handle) { previewHandleRef.current = undefined; setPreviewState('idle'); setPreviewError('The preview stopped before it finished.'); }
         },
       );
-    } catch {
+    } catch (caught) {
       if (generation !== previewGenerationRef.current || request.signal.aborted) return;
       previewHandleRef.current = undefined;
       setPreviewState('idle');
-      setPreviewError('Voice preview is unavailable right now. It needs the audio engine free, so try before starting a session.');
+      const detail = caught instanceof Error && caught.message ? caught.message : undefined;
+      setPreviewError(detail ?? 'Voice preview couldn\u2019t start. Check the audio engine, then try again.');
     } finally {
       if (previewRequestRef.current === request) previewRequestRef.current = undefined;
     }
