@@ -1,7 +1,7 @@
-import type { SessionSettingsSnapshot } from '@app/contracts/settings';
+import type { CustomVoiceMetadata, SessionSettingsSnapshot } from '@app/contracts/settings';
 
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
-export const PODCASTER_DB_VERSION = 4;
+export const PODCASTER_DB_VERSION = 5;
 
 export const STORES = {
   sessions: 'sessions',
@@ -10,6 +10,7 @@ export const STORES = {
   terminalReceipts: 'terminalReceipts',
   meta: 'meta',
   recordingItems: 'recordingItems',
+  customVoices: 'customVoices',
 } as const;
 
 export interface StoredSession {
@@ -28,6 +29,11 @@ export interface StoredSession {
   runningSince?: string | null;
   pausedAt?: string | null;
   failures: string[];
+}
+
+export interface StoredCustomVoice extends CustomVoiceMetadata {
+  /** Exact WAV bytes retained only in browser IndexedDB. */
+  wav: Blob;
 }
 
 export interface StoredTurn {
@@ -123,6 +129,9 @@ export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name
           if (typeof row.trimmed !== 'boolean') cursor.update({ ...row, trimmed: false });
           cursor.continue();
         };
+      }
+      if (!db.objectStoreNames.contains(STORES.customVoices)) {
+        db.createObjectStore(STORES.customVoices, { keyPath: 'voiceId' });
       }
     };
     request.onsuccess = () => resolve(request.result);

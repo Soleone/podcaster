@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -12,7 +12,8 @@ import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifie
 import { BrowserSession } from './BrowserSession.js';
 import { encodeWav } from '../sidecar/wav.js';
 import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
-import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, randomVoicePreviewPhrases, type TtsModelSelection } from '@app/contracts';
+import { enrollCustomVoiceInSidecar, removeCustomVoiceFromSidecar } from '../sidecar/voice-enrollment.js';
+import { CUSTOM_VOICE_SAMPLE_RATE, MAX_CUSTOM_VOICE_ENROLLMENT_BODY, MAX_CUSTOM_VOICE_MS, MIN_CUSTOM_VOICE_MS, customVoiceId, isValidCustomVoiceId, normalizeCustomVoiceName, randomVoicePreviewPhrases, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, type TtsModelSelection } from '@app/contracts';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_DISCONNECT_GRACE_MS = 30_000;
@@ -51,6 +52,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   // Keep previews bounded per host process. The sidecar accepts a dedicated
   // TTS-only preview stream alongside the session capture stream.
   let voicePreviewInFlight = false;
+  let voiceEnrollmentInFlight = false;
   const voicePreview = options.voicePreview ?? (async (input: { catalogId: string; voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => {
     const result = await synthesizeVoicePreview(options.sidecar, input, { signal });
     return { pcm16: result.pcm16, sampleRate: result.sampleRate };
@@ -205,6 +207,62 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     } finally {
       request.raw.removeListener('aborted', onAborted);
       voicePreviewInFlight = false;
+    }
+  });
+  app.post('/api/voices/custom', {
+    bodyLimit: MAX_CUSTOM_VOICE_ENROLLMENT_BODY,
+    schema: {
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['voiceId', 'name', 'refSha256', 'sampleRate', 'durationMs', 'byteLength', 'wavBase64'],
+        properties: {
+          voiceId: { type: 'string', pattern: '^custom:[0-9a-f]{24}$' },
+          name: { type: 'string', minLength: 1, maxLength: 64 },
+          refSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+          sampleRate: { const: CUSTOM_VOICE_SAMPLE_RATE },
+          durationMs: { type: 'integer', minimum: MIN_CUSTOM_VOICE_MS, maximum: MAX_CUSTOM_VOICE_MS },
+          byteLength: { type: 'integer', minimum: 1, maximum: 640044 },
+          wavBase64: { type: 'string', minLength: 1, maxLength: 900000 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
+    if (voiceEnrollmentInFlight) return reply.code(429).send({ error: 'voice_enrollment_in_flight' });
+    const body = request.body as { voiceId: string; name: string; refSha256: string; sampleRate: number; durationMs: number; byteLength: number; wavBase64: string };
+    const name = normalizeCustomVoiceName(body.name);
+    if (!name || !isValidCustomVoiceId(body.voiceId) || body.voiceId !== customVoiceId(body.refSha256) || body.sampleRate !== CUSTOM_VOICE_SAMPLE_RATE || body.durationMs < MIN_CUSTOM_VOICE_MS || body.durationMs > MAX_CUSTOM_VOICE_MS) {
+      return reply.code(422).send({ error: 'invalid_reference' });
+    }
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(body.wavBase64) || body.wavBase64.length % 4 !== 0) return reply.code(422).send({ error: 'invalid_reference' });
+    const wav = Buffer.from(body.wavBase64, 'base64');
+    if (wav.byteLength !== body.byteLength || wav.byteLength > 640044) return reply.code(413).send({ error: 'reference_too_large' });
+    const actualHash = createHash('sha256').update(wav).digest('hex');
+    if (actualHash !== body.refSha256) return reply.code(422).send({ error: 'reference_digest_mismatch' });
+    voiceEnrollmentInFlight = true;
+    try {
+      await enrollCustomVoiceInSidecar(options.sidecar, { voiceId: body.voiceId, name, refSha256: body.refSha256, sampleRate: body.sampleRate, durationMs: body.durationMs, wav });
+      return { voiceId: body.voiceId };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'voice enrollment failed';
+      return reply.code(message.includes('unavailable') || message.includes('closed') ? 503 : 422).send({ error: 'voice_enrollment_failed', detail: message });
+    } finally {
+      voiceEnrollmentInFlight = false;
+    }
+  });
+  app.delete('/api/voices/custom/:voiceId', { schema: { params: { type: 'object', additionalProperties: false, required: ['voiceId'], properties: { voiceId: { type: 'string', pattern: '^custom:[0-9a-f]{24}$' } } } } }, async (request, reply) => {
+    if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
+    if (voiceEnrollmentInFlight) return reply.code(429).send({ error: 'voice_enrollment_in_flight' });
+    const { voiceId } = request.params as { voiceId: string };
+    voiceEnrollmentInFlight = true;
+    try {
+      await removeCustomVoiceFromSidecar(options.sidecar, voiceId);
+      return { voiceId, deleted: true };
+    } catch (error) {
+      return reply.code(503).send({ error: 'voice_deletion_failed', detail: error instanceof Error ? error.message : 'voice deletion failed' });
+    } finally {
+      voiceEnrollmentInFlight = false;
     }
   });
   app.post('/api/bootstrap', { schema: { body: { type: 'object', additionalProperties: false, required: ['disclosureAcknowledged'], properties: { disclosureAcknowledged: { const: true } } } } }, async (_request, reply) => {

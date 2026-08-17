@@ -373,6 +373,47 @@ class SelectedAudioRuntime:
                 payload.pop("voiceCatalog", None)
         return {"type": "readiness.snapshot", "payload": payload}
 
+    def enroll_custom_voice(
+        self, voice_id: str, name: str, ref_sha256: str, wav_bytes: bytes
+    ) -> None:
+        """Enroll a local Qwen reference and refresh the authoritative catalog."""
+        key = self._model_key(QWEN_BACKEND_ID, QWEN_MODEL_ID)
+        with self._lock:
+            if self.status != "ready":
+                raise RuntimeError("selected runtime is unavailable")
+            adapter = self._tts_adapters.get(key)
+        if adapter is None:
+            raise RuntimeError("Qwen model is unavailable")
+        enroll = getattr(adapter, "enroll_custom_voice", None)
+        if not callable(enroll):
+            raise RuntimeError("selected Qwen adapter does not support voice enrollment")
+        enroll(voice_id, name, ref_sha256, wav_bytes)
+        catalog_fn = getattr(adapter, "voice_catalog", None)
+        if not callable(catalog_fn):
+            raise RuntimeError("Qwen adapter does not expose a voice catalog")
+        catalog = catalog_fn()
+        with self._lock:
+            self._tts_catalogs[key] = catalog
+
+    def remove_custom_voice(self, voice_id: str) -> None:
+        key = self._model_key(QWEN_BACKEND_ID, QWEN_MODEL_ID)
+        with self._lock:
+            if self.status != "ready":
+                raise RuntimeError("selected runtime is unavailable")
+            adapter = self._tts_adapters.get(key)
+        if adapter is None:
+            raise RuntimeError("Qwen model is unavailable")
+        remove = getattr(adapter, "remove_custom_voice", None)
+        if not callable(remove):
+            raise RuntimeError("selected Qwen adapter does not support voice deletion")
+        remove(voice_id)
+        catalog_fn = getattr(adapter, "voice_catalog", None)
+        if not callable(catalog_fn):
+            raise RuntimeError("Qwen adapter does not expose a voice catalog")
+        catalog = catalog_fn()
+        with self._lock:
+            self._tts_catalogs[key] = catalog
+
     def _select_tts(self, backend_id: str | None, model_id: str | None) -> tuple[str, object, dict[str, object], dict[str, str] | None]:
         default_key = self._model_key(KOKORO_BACKEND_ID, KOKORO_MODEL_ID)
         requested_key = default_key if not backend_id and not model_id else self._model_key(str(backend_id or ""), str(model_id or ""))

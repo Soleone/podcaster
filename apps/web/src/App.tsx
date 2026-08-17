@@ -15,11 +15,14 @@ import type { SessionTransport } from './session/transport';
 import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
 import { RecordingStore, type RecordingItemSummary } from './storage/recording-store';
+import { CustomVoiceStore, type CustomVoiceRecord } from './storage/custom-voice-store';
+import { enrollCustomVoice as enrollCustomVoiceApi, enrollStoredCustomVoice, deleteCustomVoice as deleteCustomVoiceApi } from './voice-enrollment/api';
+import type { ReferenceTake } from './voice-enrollment/recorder';
 import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn-writer';
 import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, isValidSessionSettingsSnapshot, ttsModelKey, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, customVoiceId, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
@@ -108,6 +111,10 @@ export function App() {
   const recordingGenRef = useRef(0);
   const lastCheapRef = useRef<{ enabled: boolean; signature: string } | null>(null);
   const settingsStoreRef = useRef<SettingsStore | undefined>(undefined);
+  const customVoiceStoreRef = useRef<CustomVoiceStore | undefined>(undefined);
+  const [customVoices, setCustomVoices] = useState<CustomVoiceRecord[]>([]);
+  const customVoicesRef = useRef(customVoices);
+  customVoicesRef.current = customVoices;
   const settingsReadyPromiseRef = useRef<Promise<void> | undefined>(undefined);
   const resolveSettingsReadyRef = useRef<(() => void) | undefined>(undefined);
   if (!settingsReadyPromiseRef.current) {
@@ -744,32 +751,103 @@ export function App() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [sessionId, fetchRecordingSummaries, pollRecording]);
 
+  const mergeCustomModels = useCallback((models: TtsModelDescriptor[]): TtsModelDescriptor[] => models.map(item => {
+    if (item.backendId !== 'qwen3' || !item.voiceCatalog) return item;
+    const voiceCatalog = withCustomVoices(item.voiceCatalog, customVoicesRef.current);
+    return voiceCatalog ? { ...item, voiceCatalog } : item;
+  }), []);
+  const customSyncInFlightRef = useRef(false);
+  const syncStoredCustomVoices = useCallback(async (models: TtsModelDescriptor[]) => {
+    if (fakeServices || !capability || customSyncInFlightRef.current) return;
+    const qwen = models.find(item => item.backendId === 'qwen3' && item.status === 'ready' && item.voiceCatalog);
+    const store = customVoiceStoreRef.current;
+    if (!qwen?.voiceCatalog || !store || customVoicesRef.current.length === 0) return;
+    const known = new Set(qwen.voiceCatalog.voices.map(voice => voice.id));
+    const missing = customVoicesRef.current.filter(voice => !known.has(voice.voiceId));
+    if (missing.length === 0) return;
+    customSyncInFlightRef.current = true;
+    try {
+      for (const voice of missing) {
+        try { await enrollStoredCustomVoice({ capability, voice }); } catch { break; }
+      }
+    } finally { customSyncInFlightRef.current = false; }
+  }, [capability]);
   const reconcileCurrentSettings = useCallback((models: TtsModelDescriptor[], fallbackCatalog = voiceCatalogRef.current) => {
-    setSettingsModel(previous => applyReconciled(previous, reconcileSettings({ selectedModel: previous.selectedModel, voice: previous.voice, voiceProfiles: previous.voiceProfiles }, models, fallbackCatalog)));
-  }, []);
+    const merged = mergeCustomModels(models);
+    const fallback = withCustomVoices(fallbackCatalog, customVoicesRef.current);
+    setSettingsModel(previous => applyReconciled(previous, reconcileSettings({ selectedModel: previous.selectedModel, voice: previous.voice, voiceProfiles: previous.voiceProfiles }, merged, fallback)));
+  }, [mergeCustomModels]);
 
   const onCatalog = useCallback((catalog: VoiceCatalog) => {
-    voiceCatalogRef.current = catalog;
+    const mergedCatalog = withCustomVoices(catalog, customVoicesRef.current) ?? catalog;
+    voiceCatalogRef.current = mergedCatalog;
     if (ttsModelsRef.current.length === 0) {
-      const fallbackModel: TtsModelDescriptor = { backendId: catalog.backendId, modelId: catalog.modelId, label: catalog.backendId === 'kokoro' ? 'Kokoro CUDA' : `${catalog.backendId} · ${catalog.modelId}`, status: 'ready', voiceCatalog: catalog, ...(catalog.speed ? { speed: catalog.speed } : {}) };
+      const fallbackModel: TtsModelDescriptor = { backendId: mergedCatalog.backendId, modelId: mergedCatalog.modelId, label: mergedCatalog.backendId === 'kokoro' ? 'Kokoro CUDA' : `${mergedCatalog.backendId} · ${mergedCatalog.modelId}`, status: 'ready', voiceCatalog: mergedCatalog, ...(mergedCatalog.speed ? { speed: mergedCatalog.speed } : {}) };
       ttsModelsRef.current = [fallbackModel];
       setTtsModels([fallbackModel]);
     }
-    reconcileCurrentSettings(ttsModelsRef.current, catalog);
-  }, [reconcileCurrentSettings]);
+    reconcileCurrentSettings(ttsModelsRef.current, mergedCatalog);
+    void syncStoredCustomVoices(ttsModelsRef.current);
+  }, [reconcileCurrentSettings, syncStoredCustomVoices]);
 
   const onModels = useCallback((models: TtsModelDescriptor[]) => {
-    ttsModelsRef.current = models;
-    setTtsModels(models);
-    const active = models.find(item => item.status === 'ready' && item.voiceCatalog);
+    const merged = mergeCustomModels(models);
+    ttsModelsRef.current = merged;
+    setTtsModels(merged);
+    const active = merged.find(item => item.status === 'ready' && item.voiceCatalog);
     if (active?.voiceCatalog) voiceCatalogRef.current = active.voiceCatalog;
-    reconcileCurrentSettings(models, voiceCatalogRef.current);
-  }, [reconcileCurrentSettings]);
+    reconcileCurrentSettings(merged, voiceCatalogRef.current);
+    void syncStoredCustomVoices(models);
+  }, [mergeCustomModels, reconcileCurrentSettings, syncStoredCustomVoices]);
 
   const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string, signal?: AbortSignal) => {
     if (!capability) throw new Error('The session capability is not ready yet.');
     return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), ...(signal ? { signal } : {}), capability });
   }, [capability]);
+
+  const enrollVoice = useCallback(async (name: string, take: ReferenceTake) => {
+    const store = customVoiceStoreRef.current ?? await CustomVoiceStore.open();
+    customVoiceStoreRef.current = store;
+    const now = new Date().toISOString();
+    const record: CustomVoiceRecord = {
+      voiceId: customVoiceId(take.refSha256),
+      name,
+      refSha256: take.refSha256,
+      sampleRate: take.signal.sampleRate,
+      durationMs: take.durationMs,
+      byteLength: take.wavBytes.byteLength,
+      createdAt: now,
+      updatedAt: now,
+      wav: take.wav,
+    };
+    if (!(await store.save(record))) throw new Error('The local custom voice storage limit was reached. Delete a voice and try again.');
+    setCustomVoices(await store.list());
+    if (!fakeServices && capability) await enrollCustomVoiceApi({ capability, voiceId: record.voiceId, name, take });
+  }, [capability]);
+
+  const deleteVoice = useCallback(async (voiceId: string) => {
+    if (!fakeServices && capability) await deleteCustomVoiceApi(capability, voiceId);
+    const store = customVoiceStoreRef.current;
+    if (store) {
+      await store.delete(voiceId);
+      setCustomVoices(await store.list());
+    }
+  }, [capability]);
+
+  const renameVoice = useCallback(async (voiceId: string, name: string) => {
+    const store = customVoiceStoreRef.current;
+    if (!store || !(await store.rename(voiceId, name))) throw new Error('The custom voice name could not be saved.');
+    setCustomVoices(await store.list());
+  }, []);
+
+  useEffect(() => {
+    const merged = mergeCustomModels(ttsModelsRef.current);
+    if (merged.length === 0) return;
+    ttsModelsRef.current = merged;
+    setTtsModels(merged);
+    reconcileCurrentSettings(merged, voiceCatalogRef.current);
+    void syncStoredCustomVoices(merged);
+  }, [customVoices, mergeCustomModels, reconcileCurrentSettings, syncStoredCustomVoices]);
 
   const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, voiceProfiles: Record<string, VoicePreference> = {}) => {
     setSettingsSaving(true);
@@ -800,11 +878,18 @@ export function App() {
         settingsStoreRef.current = store;
         const stored = await store.load();
         if (cancelled) return;
+        const customStore = customVoiceStoreRef.current ?? await CustomVoiceStore.open();
+        customVoiceStoreRef.current = customStore;
+        const storedCustomVoices = await customStore.list();
+        customVoicesRef.current = storedCustomVoices;
+        setCustomVoices(storedCustomVoices);
         const selectedModel = stored?.selectedModel ?? {
           backendId: stored?.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
           modelId: stored?.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
         };
-        const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, ttsModelsRef.current, voiceCatalogRef.current);
+        const availableModels = mergeCustomModels(ttsModelsRef.current);
+        const fallbackCatalog = withCustomVoices(voiceCatalogRef.current, storedCustomVoices);
+        const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, availableModels, fallbackCatalog);
         const next = applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled);
         settingsModelRef.current = next;
         setSettingsModel(next);
@@ -816,6 +901,25 @@ export function App() {
       }
     })();
     return () => { cancelled = true; };
+  }, [mergeCustomModels]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const store = customVoiceStoreRef.current ?? await CustomVoiceStore.open();
+        if (cancelled) { store.close(); return; }
+        customVoiceStoreRef.current = store;
+        setCustomVoices(await store.list());
+      } catch {
+        // Keep the settings UI usable if IndexedDB is unavailable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      customVoiceStoreRef.current?.close();
+      customVoiceStoreRef.current = undefined;
+    };
   }, []);
 
   const deleteRecording = useCallback(async () => {
@@ -845,7 +949,7 @@ export function App() {
   }, [fetchRecordingSummaries]);
 
   const settingsDialog = settingsOpen ? <Suspense fallback={null}>
-    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} models={ttsModels} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} />
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} models={ttsModels} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} customVoices={customVoices} onEnrollCustomVoice={enrollVoice} onDeleteCustomVoice={deleteVoice} onRenameCustomVoice={renameVoice} />
   </Suspense> : null;
   const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} />;
 

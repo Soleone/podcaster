@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/voice-enrollment.json",
+  "title": "VoiceEnrollment",
+  "type": "object",
+  "required": [
+    "voiceId",
+    "name",
+    "refSha256",
+    "sampleRate",
+    "durationMs",
+    "byteLength"
+  ],
+  "properties": {
+    "voiceId": {
+      "type": "string",
+      "pattern": "^custom:[0-9a-f]{24}$"
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 64,
+      "maxUtf8Bytes": 64
+    },
+    "refSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "sampleRate": {
+      "const": 16000
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 3000,
+      "maximum": 20000
+    },
+    "byteLength": {
+      "type": "integer",
+      "minimum": 96044,
+      "maximum": 640044
+    }
+  },
+  "additionalProperties": false
+}

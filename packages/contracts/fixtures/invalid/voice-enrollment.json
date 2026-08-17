@@ -1,0 +1,8 @@
+{
+  "voiceId": "custom:0123456789abcdef01234567",
+  "name": "My local voice",
+  "refSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "sampleRate": 8000,
+  "durationMs": 5000,
+  "byteLength": 160044
+}

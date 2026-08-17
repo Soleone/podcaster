@@ -79,7 +79,7 @@ describe('IndexedDB schema', () => {
     legacy.close();
     const db = await openPodcasterDatabase(indexedDB, name);
     expect(Array.from(db.objectStoreNames)).toEqual(expect.arrayContaining([...Object.values(STORES)]));
-    expect(db.version).toBe(4);
+    expect(db.version).toBe(5);
     const recordingItems = db.transaction(STORES.recordingItems, 'readonly').objectStore(STORES.recordingItems);
     expect(Array.from(recordingItems.indexNames)).toEqual(expect.arrayContaining(['sessionId', 'turnId', 'playbackId', 'recordSeq']));
     const kept = db.transaction(STORES.turns, 'readonly').objectStore(STORES.turns).get('kept');
@@ -114,7 +114,7 @@ describe('IndexedDB schema', () => {
     });
     legacy.close();
     const db = await openPodcasterDatabase(indexedDB, name);
-    expect(db.version).toBe(4);
+    expect(db.version).toBe(5);
     const read = db.transaction(STORES.recordingItems, 'readonly').objectStore(STORES.recordingItems).get('item-1');
     const row = await new Promise<any>(resolve => { read.onsuccess = () => resolve(read.result); });
     expect(row.trimmed).toBe(false);

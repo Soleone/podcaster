@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -23,6 +24,7 @@ from websockets.http11 import Request, Response
 from .binary_framing import decode_frame
 from .generated.contracts import SidecarMessage
 from .runtime import MAX_BINARY_PAYLOAD, SelectedAudioRuntime
+from .voice_enrollment import decode_reference, validate_name
 
 MAX_BODY = 16 * 1024
 MAX_QUEUE = 512
@@ -104,6 +106,7 @@ class SidecarServer:
         queue: asyncio.Queue[str | bytes | None] = asyncio.Queue(maxsize=MAX_QUEUE)
         loop = asyncio.get_running_loop()
         opened_stream: str | None = None
+        pending_enrollment: dict[str, object] | None = None
         failed = False
         # Thread-safe bounded handoff so the TTS worker applies real backpressure
         # instead of overflowing a fixed async queue and killing the session.
@@ -158,8 +161,38 @@ class SidecarServer:
         try:
             async for raw in connection:
                 if isinstance(raw, bytes):
+                    if pending_enrollment is not None:
+                        data = pending_enrollment["bytes"]
+                        assert isinstance(data, bytearray)
+                        expected = int(pending_enrollment["byteLength"])
+                        if len(data) + len(raw) > expected:
+                            voice_id = str(pending_enrollment["voiceId"])
+                            pending_enrollment = None
+                            emit_json({"type": "voice.error", "payload": {"voiceId": voice_id, "code": "too_large", "message": "reference exceeded its declared byte length"}})
+                            continue
+                        data.extend(raw)
+                        if len(data) == expected:
+                            voice_id = str(pending_enrollment["voiceId"])
+                            name = str(pending_enrollment["name"])
+                            ref_sha256 = str(pending_enrollment["refSha256"])
+                            duration_ms = int(pending_enrollment["durationMs"])
+                            wav_bytes = bytes(data)
+                            pending_enrollment = None
+                            try:
+                                if hashlib.sha256(wav_bytes).hexdigest() != ref_sha256:
+                                    raise ValueError("reference digest does not match its bytes")
+                                decoded = decode_reference(wav_bytes)
+                                if decoded.duration_ms != duration_ms:
+                                    raise ValueError("reference duration does not match its envelope")
+                                validate_name(name)
+                                self.runtime.enroll_custom_voice(voice_id, name, ref_sha256, wav_bytes)
+                            except (ValueError, RuntimeError) as error:
+                                emit_json({"type": "voice.error", "payload": {"voiceId": voice_id, "code": getattr(error, "code", "invalid_reference"), "message": str(error) or "reference was rejected"}})
+                            else:
+                                emit_json({"type": "voice.enrolled", "payload": {"voiceId": voice_id}})
+                        continue
                     if opened_stream is None:
-                        raise ValueError("binary before stream.open")
+                        raise ValueError("binary before stream.open or voice.enroll")
                     frame = decode_frame(raw, MAX_BINARY_PAYLOAD)
                     self.runtime.accept_audio(opened_stream, frame)
                     continue
@@ -171,7 +204,32 @@ class SidecarServer:
                     raise ValueError("invalid sidecar message") from error
                 message_type = message["type"]
                 payload = message["payload"]
-                if message_type == "stream.open":
+                if message_type == "voice.enroll":
+                    if opened_stream is not None or pending_enrollment is not None:
+                        raise ValueError("voice enrollment cannot overlap an active stream or enrollment")
+                    envelope = payload.get("enrollment")
+                    if not isinstance(envelope, dict):
+                        raise ValueError("invalid voice enrollment envelope")
+                    pending_enrollment = {
+                        "voiceId": str(envelope["voiceId"]),
+                        "name": str(envelope["name"]),
+                        "refSha256": str(envelope["refSha256"]),
+                        "sampleRate": int(envelope["sampleRate"]),
+                        "durationMs": int(envelope["durationMs"]),
+                        "byteLength": int(envelope["byteLength"]),
+                        "bytes": bytearray(),
+                    }
+                elif message_type == "voice.remove":
+                    if opened_stream is not None or pending_enrollment is not None:
+                        raise ValueError("voice deletion cannot overlap an active stream or enrollment")
+                    voice_id = str(payload["voiceId"])
+                    try:
+                        self.runtime.remove_custom_voice(voice_id)
+                    except (ValueError, RuntimeError) as error:
+                        emit_json({"type": "voice.error", "payload": {"voiceId": voice_id, "code": getattr(error, "code", "unavailable"), "message": str(error) or "voice deletion failed"}})
+                    else:
+                        emit_json({"type": "voice.removed", "payload": {"voiceId": voice_id}})
+                elif message_type == "stream.open":
                     if opened_stream is not None:
                         raise ValueError("second stream.open")
                     opened_stream = str(payload["streamId"])

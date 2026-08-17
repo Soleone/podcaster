@@ -135,6 +135,52 @@ test('switching the TTS backend reconciles voice and speed controls and previews
   await expect(page.getByLabel('Speed modifier')).toHaveValue('1.25');
 });
 
+test('a stored custom voice is appended only to Qwen and survives backend switching', async ({ page }) => {
+  await installFakeMicrophone(page);
+  await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
+  await page.goto(server.origin);
+  await page.getByRole('button', { name: 'Continue and check readiness' }).click();
+  await page.getByRole('button', { name: 'Enable microphone' }).click();
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open('podcaster-local-v1', 5);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const bytes = new Uint8Array(160044);
+        const transaction = db.transaction('customVoices', 'readwrite');
+        transaction.objectStore('customVoices').put({
+          voiceId: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa',
+          name: 'Local Me',
+          refSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          sampleRate: 16000,
+          durationMs: 5000,
+          byteLength: bytes.byteLength,
+          createdAt: '2026-08-17T00:00:00.000Z',
+          updatedAt: '2026-08-17T00:00:00.000Z',
+          wav: new Blob([bytes], { type: 'audio/wav' }),
+        });
+        transaction.oncomplete = () => { db.close(); resolve(); };
+        transaction.onerror = () => reject(transaction.error);
+      };
+    });
+  });
+  await page.reload();
+  await page.getByRole('button', { name: /Open settings/ }).first().click();
+  await page.getByRole('tab', { name: 'Voice' }).click();
+  await page.getByRole('combobox', { name: 'Speech model' }).click();
+  await page.getByRole('option', { name: 'Qwen CustomVoice' }).click();
+  await page.getByRole('combobox', { name: 'Voice' }).click();
+  await expect(page.getByRole('option', { name: 'Local Me' })).toBeVisible();
+  await page.getByRole('option', { name: 'Local Me' }).click();
+  await page.getByRole('combobox', { name: 'Speech model' }).click();
+  await page.getByRole('option', { name: 'Kokoro CUDA' }).click();
+  await expect(page.getByRole('combobox', { name: 'Voice' })).not.toContainText('Local Me');
+  await page.getByRole('combobox', { name: 'Speech model' }).click();
+  await page.getByRole('option', { name: 'Qwen CustomVoice' }).click();
+  await expect(page.getByRole('combobox', { name: 'Voice' })).toContainText('Local Me');
+});
+
 test('a selected Qwen backend persists across reload and survives with its own voice profile', async ({ page }) => {
   await installFakeMicrophone(page);
   await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });

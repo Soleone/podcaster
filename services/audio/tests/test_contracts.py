@@ -51,6 +51,7 @@ CASES = [
     ("events/tts-ended.json", "tts-ended", "tts-ended"),
     ("events/tts-started.json", "tts-started", "tts-started"),
     ("persona.json", "persona", "persona"),
+    ("voice-enrollment.json", "voice-enrollment", "voice-enrollment"),
     ("history-export.json", "history-export", "history-export"),
     ("benchmarks/run.json", "benchmark-run", "benchmark-run"),
     ("benchmarks/item.json", "benchmark-item", "benchmark-item"),

@@ -1005,6 +1005,140 @@
         "type",
         "payload"
       ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "voice.enroll"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "enrollment"
+          ],
+          "properties": {
+            "enrollment": {
+              "$ref": "../voice-enrollment.json"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "voice.enrolled"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "voiceId"
+          ],
+          "properties": {
+            "voiceId": {
+              "type": "string",
+              "pattern": "^custom:[0-9a-f]{24}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "voice.remove"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "voiceId"
+          ],
+          "properties": {
+            "voiceId": {
+              "type": "string",
+              "pattern": "^custom:[0-9a-f]{24}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "voice.removed"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "voiceId"
+          ],
+          "properties": {
+            "voiceId": {
+              "type": "string",
+              "pattern": "^custom:[0-9a-f]{24}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "voice.error"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "voiceId",
+            "code",
+            "message"
+          ],
+          "properties": {
+            "voiceId": {
+              "type": "string",
+              "pattern": "^custom:[0-9a-f]{24}$"
+            },
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ]
     }
   ]
 }
