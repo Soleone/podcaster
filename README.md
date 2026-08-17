@@ -12,6 +12,13 @@ corepack pnpm install --frozen-lockfile
 pnpm dev
 ```
 
+Qwen CustomVoice is an optional CUDA backend. Its pinned Transformers 4.57.3 runtime is isolated from the host's Nemotron Transformers 5.x environment:
+
+```bash
+./scripts/setup-qwen-runtime.sh
+pnpm dev
+```
+
 `pnpm dev` starts the host-owned selected audio runtime and Vite's HMR server at `http://127.0.0.1:5173`. Edit the web source or `apps/web/index.html` and the browser updates without restarting. Vite proxies `/api` and `/ws` to the host, while the internal Python sidecar still uses an OS-assigned IPv4 loopback port. The frontend port can be changed with `PODCASTER_WEB_PORT`, and the host port with `PODCASTER_PORT`; startup fails safely if a selected port is already occupied. Press `Ctrl-C` to stop the host, Vite, and the owned sidecar.
 
 For the production-like build-first workflow, use `pnpm dev:build`. It builds the web app and host, then serves the generated bundle from the host at `http://127.0.0.1:43127`. `pnpm build` creates both build artifacts without starting a server. Keeping either browser origin stable preserves microphone permission across restarts.

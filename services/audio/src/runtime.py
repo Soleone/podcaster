@@ -23,7 +23,7 @@ from .stt.base import TranscriptUpdate
 from .stt.nemotron import NemotronStreamingAdapter
 from .tts.base import AudioChunk, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER
 from .tts.kokoro import KokoroStreamingAdapter
-from .tts.qwen3 import Qwen3StreamingAdapter
+from .tts.qwen_subprocess import IsolatedQwenAdapter
 from .vad.endpointer import DeterministicEndpointer, EndpointerConfig
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -187,7 +187,10 @@ class SelectedAudioRuntime:
         if tts_adapters:
             self._tts_adapters.update(tts_adapters)
         elif tts is None:
-            self._tts_adapters[f"{QWEN_BACKEND_ID}:{QWEN_MODEL_ID}"] = Qwen3StreamingAdapter()
+            # Nemotron pins Transformers 5.x while Qwen pins 4.57.3. Keep
+            # Qwen in its own interpreter so enabling the optional candidate
+            # cannot replace or destabilize the selected STT runtime.
+            self._tts_adapters[f"{QWEN_BACKEND_ID}:{QWEN_MODEL_ID}"] = IsolatedQwenAdapter()
         self.root = root
         self.stt_config_path = stt_config_path
         self.model_manifest_path = model_manifest_path
