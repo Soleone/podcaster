@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import secrets
+import sys
 import threading
 import time
 from collections import deque
@@ -775,6 +776,17 @@ class SelectedAudioRuntime:
                         cancelled_payload["partId"] = text_stream.part_id
                     state.emit_json({"type": "tts.cancelled", "payload": cancelled_payload})
                 else:
+                    # Keep the wire-level failure intentionally generic, but log
+                    # the sanitized exception class/message locally. Without this
+                    # the host only sees runtime_poisoned, while the cleanup race
+                    # below can obscure the actual TTS failure entirely.
+                    print(
+                        "TTS worker failed "
+                        f"backend={state.tts_model.get('backendId', '')} "
+                        f"model={state.tts_model.get('modelId', '')} "
+                        f"error={type(error).__name__}: {error}",
+                        file=sys.stderr,
+                    )
                     if state.tts_adapter is not self.tts and state.tts_model.get("backendId") != KOKORO_BACKEND_ID:
                         self._degrade_optional_tts(state, error)
                     else:

@@ -313,7 +313,17 @@ class SidecarServer:
             with sync_lock:
                 sync_lock.notify_all()
             if opened_stream is not None:
-                self.runtime.close_stream(opened_stream)
+                # The runtime may already be poisoned when the client closes the
+                # socket in response to sidecar.failure.  A stuck adapter worker
+                # must not turn that expected shutdown path into an unhandled
+                # exception from the websocket handler (and a second traceback
+                # that hides the original TTS failure).
+                stream_id = opened_stream
+                opened_stream = None
+                try:
+                    self.runtime.close_stream(stream_id)
+                except RuntimeError as error:
+                    print(f"sidecar cleanup failure: {type(error).__name__}: {error}", file=sys.stderr)
             sender_task.cancel()
             await asyncio.gather(sender_task, return_exceptions=True)
 
