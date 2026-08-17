@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Mic, Pencil, Play, RotateCcw, Square, Trash2 } from 'lucide-react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import { FileAudio, Mic, Pencil, Play, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { MAX_CUSTOM_VOICE_MS, MAX_CUSTOM_VOICES, MIN_CUSTOM_VOICE_MS, VOICE_ENROLLMENT_CONSENT_ACK, VOICE_ENROLLMENT_CONSENT_COPY, VOICE_ENROLLMENT_RETENTION_COPY, normalizeCustomVoiceName } from '@app/contracts/settings';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
@@ -18,6 +18,7 @@ export interface CustomVoiceSectionProps {
 
 export function CustomVoiceSection({ voices, onEnroll, onDelete, onRename }: CustomVoiceSectionProps) {
   const recorderRef = useRef<ReferenceRecorder | undefined>(undefined);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<number | undefined>(undefined);
   const audioRef = useRef<HTMLAudioElement | undefined>(undefined);
   const [consent, setConsent] = useState(false);
@@ -72,6 +73,24 @@ export function CustomVoiceSection({ voices, onEnroll, onDelete, onRename }: Cus
       setTake(undefined);
       setMicrophoneState('unrequested');
       setError(referenceErrorCopy(caught));
+    }
+  };
+
+  const upload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    setError(undefined);
+    setBusy(true);
+    try {
+      setTake(await finalizeReferenceRecording(file));
+      setName('');
+      setMicrophoneState('unrequested');
+      setElapsedMs(0);
+    } catch (caught) {
+      setError(referenceErrorCopy(caught));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -133,9 +152,12 @@ export function CustomVoiceSection({ voices, onEnroll, onDelete, onRename }: Cus
       <span id="custom-voice-consent-copy">{VOICE_ENROLLMENT_CONSENT_ACK}</span>
     </label>
     <p className="mt-2 text-xs text-muted-foreground">{VOICE_ENROLLMENT_RETENTION_COPY}</p>
-    <div className="mt-3 flex items-center gap-2">
-      {!recording ? <Button type="button" variant="outline" onClick={() => void start()} disabled={!consent || busy}><Mic aria-hidden="true" />Record reference</Button>
-        : <Button type="button" variant="destructive" onClick={() => void stop()}><Square aria-hidden="true" />Stop recording</Button>}
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {!recording ? <>
+        <Button type="button" variant="outline" onClick={() => void start()} disabled={!consent || busy}><Mic aria-hidden="true" />Record reference</Button>
+        <input ref={fileInputRef} className="sr-only" type="file" accept="audio/*" tabIndex={-1} aria-hidden="true" onChange={upload} />
+        <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={!consent || busy}><FileAudio aria-hidden="true" />Upload audio file</Button>
+      </> : <Button type="button" variant="destructive" onClick={() => void stop()}><Square aria-hidden="true" />Stop recording</Button>}
       {recording ? <span className="text-sm tabular-nums" role="status">{(elapsedMs / 1000).toFixed(1)}s / {MAX_CUSTOM_VOICE_MS / 1000}s</span> : null}
     </div>
     <p className="mt-2 text-xs text-muted-foreground">Use a clear {MIN_CUSTOM_VOICE_MS / 1000} to {MAX_CUSTOM_VOICE_MS / 1000} second sample in a quiet room.</p>
