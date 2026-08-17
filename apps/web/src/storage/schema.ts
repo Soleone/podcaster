@@ -1,3 +1,5 @@
+import type { SessionSettingsSnapshot } from '@app/contracts/settings';
+
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
 export const PODCASTER_DB_VERSION = 4;
 
@@ -17,7 +19,14 @@ export interface StoredSession {
   startedAt: string;
   updatedAt: string;
   endedAt: string | null;
-  state: 'active' | 'stopped';
+  state: 'active' | 'paused' | 'stopped';
+  /** Total foreground time accumulated before the current run, when available. */
+  activeDurationMs?: number;
+  /** Start of the current foreground run. Null while paused or ended. */
+  runningSince?: string | null;
+  pausedAt?: string | null;
+  /** Frozen voice/persona settings used whenever this session is rehydrated. */
+  settings?: SessionSettingsSnapshot;
   failures: string[];
 }
 

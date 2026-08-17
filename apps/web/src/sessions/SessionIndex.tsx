@@ -34,6 +34,7 @@ export interface SessionIndexProps {
   writer: StableTurnWriter;
   sessionAvailable: boolean;
   liveSessionId: string | undefined;
+  liveSessionPaused: boolean;
   elapsedSeconds: number;
   onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void;
   onCatalog: (catalog: VoiceCatalog) => void;
@@ -70,13 +71,13 @@ export function SessionIndex(props: SessionIndexProps) {
       <h1 className="text-2xl font-semibold leading-tight tracking-tight">Your sessions</h1>
     </header>
 
-    {props.liveSessionId ? <Card aria-label="Active session" className="mb-8">
+    {props.liveSessionId ? <Card aria-label={props.liveSessionPaused ? 'Paused session' : 'Active session'} className="mb-8">
       <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Radio className="size-5" aria-hidden="true" /></div>
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Active session</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{props.liveSessionPaused ? 'Paused session' : 'Active session'}</p>
           <p className="mt-1 font-medium tabular-nums">Session {shortSessionId(props.liveSessionId)}</p>
-          <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><Clock className="size-3.5 shrink-0" aria-hidden="true" />Running for {formatDuration(props.elapsedSeconds)}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><Clock className="size-3.5 shrink-0" aria-hidden="true" />{props.liveSessionPaused ? 'Active time' : 'Running for'} {formatDuration(props.elapsedSeconds)}</p>
         </div>
         <Link to={`/session/${props.liveSessionId}`} className={cn(buttonVariants({ variant: 'default', size: 'default' }), 'w-full sm:w-auto')}><Play data-icon="inline-start" aria-hidden="true" />Open session</Link>
       </CardContent>
@@ -103,6 +104,7 @@ export function SessionIndex(props: SessionIndexProps) {
 function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (sessionId: string) => (onProgress?: ExportOnProgress) => Promise<Blob>; onContinue: () => void }) {
   const { session, preview, turnCount, recordingItemCount, recordingEnabled } = props.row;
   const stopped = session.state === 'stopped';
+  const paused = session.state === 'paused';
   const recordingLabel = !recordingEnabled ? 'Recording off' : recordingItemCount === 0 ? 'No recording' : `${recordingItemCount} message${recordingItemCount === 1 ? '' : 's'} recorded`;
   return <li>
     <Card size="sm">
@@ -110,7 +112,7 @@ function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (s
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-2">
             <span className="font-medium tabular-nums">{shortSessionId(session.sessionId)}</span>
-            <Badge variant={props.live || !stopped ? 'default' : 'secondary'}>{props.live ? 'Active' : stopped ? 'Stopped' : 'Active'}</Badge>
+            <Badge variant={props.live || (!stopped && !paused) ? 'default' : 'secondary'}>{props.live ? (paused ? 'Paused' : 'Active') : stopped ? 'Stopped' : paused ? 'Paused' : 'Active'}</Badge>
           </p>
           {preview ? <p className="mt-1 truncate text-sm">{preview}</p> : null}
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">

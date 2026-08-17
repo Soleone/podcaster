@@ -1,5 +1,5 @@
 import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
-import type { StableTurnWriter, StableEvent } from '../storage/stable-turn-writer';
+import type { PlaybackPauseCheckpoint, StableTurnWriter, StableEvent } from '../storage/stable-turn-writer';
 import { activityLog } from './activity-log';
 import { createEnvelope } from './envelope';
 import { canSafelyResume, initialSessionState, reduceSessionState, type SessionViewState } from './state';
@@ -51,6 +51,7 @@ export class SessionController {
   private deferredResume: StableEvent | undefined;
   private eventQueue: Promise<void> = Promise.resolve();
   private stopped = false;
+  private pausing = false;
   private cancelSilence: (() => void) | undefined;
   private readonly schedule: (delay: number, callback: () => void) => () => void;
 
@@ -69,7 +70,7 @@ export class SessionController {
     // VAD and playback events arrive on separate asynchronous paths. Observe a
     // speech start before queueing any older host resolution so local playback
     // is silenced immediately and a stale resume cannot win the race.
-    if (event.sessionId === this.options.sessionId && event.epoch >= this.state.epoch) {
+    if (!this.pausing && !this.stopped && event.sessionId === this.options.sessionId && event.epoch >= this.state.epoch) {
       if (event.type === 'vad.speech_start') {
         this.userSpeaking = true;
         this.speechGeneration++;
@@ -84,7 +85,7 @@ export class SessionController {
   }
 
   private async processEvent(event: StableEvent): Promise<void> {
-    if (event.sessionId !== this.options.sessionId || this.seenEvents.has(event.eventId)) return;
+    if (this.pausing || this.stopped || event.sessionId !== this.options.sessionId || this.seenEvents.has(event.eventId)) return;
     const accountingOnly = event.type === 'playback.progress' || event.type === 'playback.stopped';
     if (event.epoch < this.state.epoch && !accountingOnly) return;
     const isInterruptionResolution = event.type === 'barge_in.confirmed' || event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out' || event.type === 'interruption.decision';
@@ -265,7 +266,7 @@ export class SessionController {
   }
 
   async reportPlaybackProgress(progress: PlaybackProgress): Promise<void> {
-    if (this.stopped || !this.active || this.active.playbackId !== progress.playbackId || this.active.outputEpoch !== progress.outputEpoch || this.active.terminal) return;
+    if (this.pausing || this.stopped || !this.active || this.active.playbackId !== progress.playbackId || this.active.outputEpoch !== progress.outputEpoch || this.active.terminal) return;
     const event = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.progress', payload: { ...progress } });
     const stored = await this.options.writer.apply(event);
     if (!stored.ok) { this.degrade(stored.degradedReason ?? 'Playback progress could not be saved.'); return; }
@@ -283,7 +284,8 @@ export class SessionController {
       const event = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.stopped', payload: { ...receipt } });
       const stored = await this.options.writer.apply(event);
       if (!stored.ok) { this.degrade(stored.degradedReason ?? 'The terminal playback receipt could not be saved.'); return; }
-      await this.options.transport.sendTerminal(receipt, event);
+      try { await this.options.transport.sendTerminal(receipt, event); }
+      catch (error) { activityLog.append({ level: 'warn', source: 'controller', message: 'playback terminal receipt could not be sent', ...(error instanceof Error ? { detail: error.message } : {}) }); }
       this.advanceGroup(receipt.playbackId);
     })();
     this.terminalReports.set(reportKey, report);
@@ -299,8 +301,66 @@ export class SessionController {
     this.setState({ ...this.state, dominant: 'listening', announcement: 'Listening', playbackNotice: '' });
   }
 
+  /**
+   * Checkpoints the local session, then tears down the live controller and
+   * transport. A pause deliberately stops an in-flight assistant response;
+   * the next resume starts listening from durable transcript/recording state
+   * instead of trying to resurrect browser audio or a host stream.
+   */
+  async pause(): Promise<boolean> {
+    if (this.stopped) return this.state.dominant === 'paused';
+    if (this.pausing) return false;
+    this.pausing = true;
+    const activeAtPause = this.active && !this.active.terminal ? this.active : undefined;
+    let audioSilenced = false;
+    let playbackCheckpoint: PlaybackPauseCheckpoint | undefined;
+    let checkpoint: { ok: boolean; degradedReason?: string };
+    try {
+      // Silence browser output before waiting on storage or host teardown. New
+      // audio is blocked by the pausing barrier, and a failed checkpoint can
+      // still resume this player below.
+      if (activeAtPause) {
+        const progress = await activeAtPause.player.pause();
+        playbackCheckpoint = { responseId: activeAtPause.responseId, playbackId: activeAtPause.playbackId, outputEpoch: activeAtPause.outputEpoch, pausedSampleOffset: progress.playedSampleOffset, generatedSamples: progress.generatedSamples };
+        audioSilenced = true;
+      }
+      // Finish the event already being reduced before taking the durable pause
+      // snapshot. New events see pausing=true and are ignored, so nothing can
+      // be written after the checkpoint while resources are being released.
+      await this.eventQueue;
+      const pausedAt = new Date().toISOString();
+      checkpoint = await this.options.writer.pauseSession(this.options.sessionId, pausedAt, playbackCheckpoint ? [playbackCheckpoint] : []);
+    } catch (error) {
+      checkpoint = { ok: false, degradedReason: error instanceof Error ? error.message : 'The session pause could not be saved.' };
+    }
+    if (!checkpoint.ok) {
+      this.pausing = false;
+      if (audioSilenced && activeAtPause && !activeAtPause.terminal) {
+        try { await activeAtPause.player.resume(); } catch { /* keep the degraded state visible */ }
+      }
+      this.degrade(checkpoint.degradedReason ?? 'The session pause could not be saved.');
+      return false;
+    }
+
+    this.stopped = true;
+    this.pausing = false;
+    this.userSpeaking = false;
+    this.deferredResume = undefined;
+    activityLog.append({ level: 'info', source: 'controller', message: 'session pause requested' });
+    this.cancelSilence?.();
+    try { await this.terminalize('stopped'); }
+    catch (error) { activityLog.append({ level: 'warn', source: 'controller', message: 'in-flight playback did not finish its pause cleanup', ...(error instanceof Error ? { detail: error.message } : {}) }); }
+    this.clearProvisional();
+    try { await this.options.transport.stopSession('disconnect'); }
+    catch (error) { activityLog.append({ level: 'warn', source: 'controller', message: 'session transport could not be stopped cleanly', ...(error instanceof Error ? { detail: error.message } : {}) }); }
+    this.options.transport.disconnect();
+    for (const unsubscribe of this.unsubscribe.splice(0)) unsubscribe();
+    this.setState({ ...this.state, dominant: 'paused', announcement: 'Session paused', playbackNotice: 'Any assistant response in progress was stopped and will not resume automatically.', conversationItems: this.state.conversationItems.map(item => item.kind === 'assistant' && item.playback !== 'completed' && item.playback !== 'interrupted' ? { ...item, playback: 'interrupted' as const } : item) });
+    return true;
+  }
+
   async stop(): Promise<void> {
-    if (this.stopped) return;
+    if (this.stopped || this.pausing) return;
     this.stopped = true;
     this.userSpeaking = false;
     this.deferredResume = undefined;
@@ -309,9 +369,12 @@ export class SessionController {
     this.setState({ ...this.state, dominant: 'stopping', announcement: 'Stopping session', playbackNotice: '' });
     await this.terminalize('stopped');
     this.clearProvisional();
-    await this.options.transport.stopSession('user');
-    this.options.transport.disconnect();
-    for (const unsubscribe of this.unsubscribe.splice(0)) unsubscribe();
+    try { await this.options.transport.stopSession('user'); }
+    catch (error) { activityLog.append({ level: 'warn', source: 'controller', message: 'session transport could not be stopped cleanly', ...(error instanceof Error ? { detail: error.message } : {}) }); }
+    finally {
+      this.options.transport.disconnect();
+      for (const unsubscribe of this.unsubscribe.splice(0)) unsubscribe();
+    }
     const ended = await this.options.writer.endSession(this.options.sessionId);
     if (!ended.ok) {
       this.degrade(ended.degradedReason ?? 'The session stopped, but its final local state could not be saved.');
@@ -338,6 +401,7 @@ export class SessionController {
   }
 
   private handleAudio(chunk: OutputAudioChunk): void {
+    if (this.pausing || this.stopped) return;
     const part = this.playbackByPart.get(chunk.playbackId);
     if (!part || part.terminal) return;
     if (part !== this.active) {
@@ -350,6 +414,7 @@ export class SessionController {
     part.player.append(chunk.sampleOffset, chunk.pcm16);
   }
   private async handleTransportFailure(message: string): Promise<void> {
+    if (this.pausing || this.stopped) return;
     const active = this.active;
     if (active && !active.terminal) {
       active.terminal = true;
@@ -366,13 +431,17 @@ export class SessionController {
     for (const part of queued) {
       part.terminal = true;
       try {
-        const receipt = await part.player.stop('cancelled');
+        const receipt = await part.player.stop(reason);
         await this.reportPlaybackTerminal(receipt);
       } catch { /* local cutoff was still attempted */ }
     }
     activityLog.append({ level: 'info', source: 'controller', message: 'playback stopped', detail: reason });
-    const receipt = await active.player.stop(reason);
-    await this.reportPlaybackTerminal(receipt);
+    try {
+      const receipt = await active.player.stop(reason);
+      await this.reportPlaybackTerminal(receipt);
+    } catch (error) {
+      activityLog.append({ level: 'warn', source: 'controller', message: 'playback cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) });
+    }
   }
   private advanceGroup(completedPlaybackId: string): void {
     const part = this.playbackByPart.get(completedPlaybackId);

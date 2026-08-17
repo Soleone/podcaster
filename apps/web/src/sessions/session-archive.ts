@@ -5,7 +5,7 @@ import { conversationFromStoredTurns } from '../session/conversation';
 import { initialSessionState, type SessionViewState } from '../session/state';
 import { RecordingStore } from '../storage/recording-store';
 import type { StoredSession } from '../storage/schema';
-import type { StableTurnWriter } from '../storage/stable-turn-writer';
+import { sessionActiveDurationMs, type StableTurnWriter } from '../storage/stable-turn-writer';
 
 /** One row of the index listing: session facts plus cheap per-session counts. */
 export interface SessionSummary {
@@ -72,20 +72,20 @@ export async function exportSessionRecording(sessionId: string, writer: StableTu
  * their stored playback disposition (completed, interrupted, paused) so the
  * transcript survives both read-only inspection and a later resume.
  */
-export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string, mode: 'stopped' | 'active' = 'stopped'): Promise<SessionViewState> {
+export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string, mode: 'stopped' | 'paused' | 'active' = 'stopped'): Promise<SessionViewState> {
   const turns = await writer.getTurns(sessionId);
+  const paused = mode === 'paused';
   return {
     ...initialSessionState,
-    dominant: mode === 'active' ? 'listening' : 'idle',
-    announcement: mode === 'active' ? 'Listening' : 'Session stopped',
+    dominant: mode === 'active' ? 'listening' : paused ? 'paused' : 'idle',
+    announcement: mode === 'active' ? 'Listening' : paused ? 'Session paused' : 'Session stopped',
+    playbackNotice: paused ? 'Any assistant response in progress was stopped and will not resume automatically.' : '',
     stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
     conversationItems: conversationFromStoredTurns(turns),
   };
 }
 
-/** Duration in whole seconds between the session start and its recorded end (or now). */
+/** Foreground session duration in whole seconds. Paused time is excluded. */
 export function sessionDurationSeconds(session: StoredSession): number {
-  const start = new Date(session.startedAt).getTime();
-  const end = session.endedAt ? new Date(session.endedAt).getTime() : Date.now();
-  return Math.max(0, Math.floor((end - start) / 1000));
+  return Math.floor(sessionActiveDurationMs(session) / 1000);
 }

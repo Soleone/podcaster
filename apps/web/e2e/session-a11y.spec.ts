@@ -21,7 +21,7 @@ test('restrains live announcements and resolves interruptions automatically', as
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().commands)).toContain('cancel');
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().terminalReceipts)).toBe(1);
-  await expect(page.getByRole('button', { name: 'Stop session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'End session' })).toBeVisible();
 
   await emit(page, 'tts.started', { responseId: 'response-2', playbackId: 'playback-2', sampleRate: 24000 });
   await emit(page, 'barge_in.provisional', { responseId: 'response-2', outputEpoch: 0, resumable: true });
@@ -30,7 +30,7 @@ test('restrains live announcements and resolves interruptions automatically', as
   await emit(page, 'interruption.decision', { turnId: 'interruption', responseId: 'response-2', playbackId: 'playback-2', outputEpoch: 0, action: 'resume', intent: 'continue_previous', confidence: 'high', disposition: 'resume_requested', pausedSampleOffset: 0 });
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().playbackResumes)).toBe(1);
   await expect(page.getByRole('heading', { name: 'Speaking' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'End session' })).toBeVisible();
 });
 
 test('activity log panel is keyboard-operable and lists session events', async ({ page }) => {

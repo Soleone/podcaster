@@ -22,10 +22,28 @@ describe('StableTurnWriter', () => {
     await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-1', personaDigest: 'digest' });
     await writer.endSession('session');
     expect(await writer.getSession('session')).toMatchObject({ state: 'stopped', endedAt: expect.any(String) });
+    expect(await writer.pauseSession('session')).toMatchObject({ ok: false });
     await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-2', personaDigest: 'digest' });
     const reopened = await writer.getSession('session');
     expect(reopened).toMatchObject({ state: 'active', endedAt: null, sessionSeed: 'seed-2' });
     expect(await writer.recoverActiveSession()).toMatchObject({ sessionId: 'session' });
+    writer.close();
+  });
+
+  it('checkpoints a paused session, interrupts unfinished playback, and preserves frozen identity on resume', async () => {
+    const { writer } = await open();
+    const settings = { version: 1 as const, persona: 'frozen persona', voice: { catalogId: 'catalog', voiceId: 'voice', speedModifier: 1 } };
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-1', personaDigest: 'digest', settings, startedAt: '2026-01-01T00:00:00.000Z' });
+    await writer.apply(event('session', 'transcript.final', { turnId: 'turn', text: 'question', endpointComplete: true }));
+    await writer.apply(event('session', 'reasoning.final', { turnId: 'turn', responseId: 'response', posture: 'question', text: 'answer' }));
+    await writer.apply(event('session', 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    expect((await writer.pauseSession('session', '2026-01-01T00:01:30.000Z', [{ responseId: 'response', playbackId: 'playback', outputEpoch: 0, pausedSampleOffset: 240, generatedSamples: 1_000 }])).ok).toBe(true);
+    expect(await writer.getSession('session')).toMatchObject({ state: 'paused', endedAt: null, activeDurationMs: 90_000, runningSince: null, settings });
+    expect(await writer.getTurns('session')).toMatchObject([{ pausedSampleOffset: 240, deliveredSampleOffset: 240, generatedSamples: 1_000, terminalReason: 'stopped', interrupted: true, continuationState: 'discarded' }]);
+    expect(await writer.recoverActiveSession()).toMatchObject({ sessionId: 'session', state: 'paused' });
+
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'new-seed-is-ignored', personaDigest: 'new-digest-is-ignored', settings: { ...settings, persona: 'changed' } });
+    expect(await writer.getSession('session')).toMatchObject({ state: 'active', sessionSeed: 'seed-1', personaDigest: 'digest', settings, endedAt: null });
     writer.close();
   });
 

@@ -1,7 +1,7 @@
 import type { StableEvent } from '../storage/stable-turn-writer';
 import { joinAssistantParts, type AssistantPart, type ConversationItem } from './conversation';
 
-export type DominantState = 'idle' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
+export type DominantState = 'idle' | 'paused' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
 export interface SessionViewState {
   dominant: DominantState;
   epoch: number;
@@ -16,7 +16,7 @@ export interface SessionViewState {
 
 export const initialSessionState: SessionViewState = { dominant: 'idle', epoch: 0, tentativeText: '', stableTurns: [], conversationItems: [], assistantText: '', playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
 const label: Record<DominantState, string> = {
-  idle: 'Session stopped', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
+  idle: 'Session stopped', paused: 'Session paused', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
 };
 
 function dominant(state: SessionViewState, next: DominantState): SessionViewState {

@@ -57,8 +57,22 @@ describe('session archive', () => {
     writer.close();
   });
 
+  it('rebuilds a paused conversation without making an unfinished response resumable', async () => {
+    const { writer } = await openWriter();
+    await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'd' });
+    await writer.apply({ eventId: 'e1', sessionId: 's', epoch: 0, monotonicMs: 1, type: 'transcript.final', payload: { turnId: 't1', text: 'a question', endpointComplete: true } });
+    await writer.apply({ eventId: 'e2', sessionId: 's', epoch: 0, monotonicMs: 2, type: 'reasoning.final', payload: { turnId: 't1', responseId: 'r1', posture: 'question', text: 'an answer' } });
+    await writer.pauseSession('s');
+    const view = await sessionViewStateFromTurns(writer, 's', 'paused');
+    expect(view.dominant).toBe('paused');
+    expect(view.playbackNotice).toContain('will not resume automatically');
+    expect(view.conversationItems.find(item => item.kind === 'assistant')).toMatchObject({ playback: 'interrupted', text: 'an answer' });
+    writer.close();
+  });
+
   it('computes duration from the stored start and end timestamps', () => {
     expect(sessionDurationSeconds({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'd', startedAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', endedAt: '2026-01-01T00:05:30.000Z', state: 'stopped', failures: [] })).toBe(330);
     expect(sessionDurationSeconds({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'd', startedAt: new Date(Date.now() - 90_000).toISOString(), updatedAt: new Date().toISOString(), endedAt: null, state: 'active', failures: [] })).toBeGreaterThanOrEqual(89);
+    expect(sessionDurationSeconds({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'd', startedAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T01:00:00.000Z', endedAt: null, state: 'paused', activeDurationMs: 45_000, runningSince: null, failures: [] })).toBe(45);
   });
 });

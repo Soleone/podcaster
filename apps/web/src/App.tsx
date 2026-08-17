@@ -15,7 +15,8 @@ import type { SessionTransport } from './session/transport';
 import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
 import { RecordingStore, type RecordingItemSummary } from './storage/recording-store';
-import { StableTurnWriter } from './storage/stable-turn-writer';
+import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn-writer';
+import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
 import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, ttsModelKey, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
@@ -35,6 +36,7 @@ const SessionScreen = lazy(() => import('./session/SessionScreen').then(({ Sessi
 const StoppedSession = lazy(() => import('./sessions/StoppedSession').then(({ StoppedSession: component }) => ({ default: component })));
 const SettingsDialog = lazy(() => import('./settings/SettingsDialog').then(({ SettingsDialog: component }) => ({ default: component })));
 type SessionStartSettings = { version: 1; persona: string; voice: VoicePreference };
+type LifecycleAction = 'idle' | 'pausing' | 'resuming' | 'ending';
 
 interface FakeRuntimeStats {
   captureStarts: number;
@@ -76,6 +78,9 @@ export function App() {
   const [sessionPaused, setSessionPaused] = useState(false);
   const sessionPausedRef = useRef(false);
   sessionPausedRef.current = sessionPaused;
+  const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction>('idle');
+  const lifecycleActionRef = useRef<LifecycleAction>('idle');
+  lifecycleActionRef.current = lifecycleAction;
   const [writer, setWriter] = useState<StableTurnWriter | undefined>(undefined);
   const [resuming, setResuming] = useState(false);
   const stoppedRef = useRef(false);
@@ -94,7 +99,7 @@ export function App() {
   const recordingRecorderRef = useRef<RecordingRecorder | undefined>(undefined);
   const recordingUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const statsRef = useRef<FakeRuntimeStats>({ captureStarts: 0, captureStops: 0, captureRunning: false, playbackPauses: 0, playbackResumes: 0, playbackStops: [] });
-  const startedAt = useRef(Date.now());
+  const sessionClockRef = useRef<{ activeDurationMs: number; runningSinceMs: number | undefined }>({ activeDurationMs: 0, runningSinceMs: undefined });
   const [recordingView, setRecordingView] = useState<RecordingSessionViewState>(emptyRecordingSessionView);
   const recordingViewRef = useRef(recordingView);
   recordingViewRef.current = recordingView;
@@ -115,6 +120,27 @@ export function App() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaveError, setSettingsSaveError] = useState<string | undefined>(undefined);
   const toggleDarkMode = useCallback(() => setDarkMode(value => !value), []);
+
+  const refreshElapsed = useCallback(() => {
+    const clock = sessionClockRef.current;
+    const running = clock.runningSinceMs === undefined ? 0 : Math.max(0, Date.now() - clock.runningSinceMs);
+    setElapsed(Math.floor((clock.activeDurationMs + running) / 1000));
+  }, []);
+
+  const configureSessionClock = useCallback((session: StoredSession | undefined) => {
+    if (!session) {
+      sessionClockRef.current = { activeDurationMs: 0, runningSinceMs: undefined };
+      setElapsed(0);
+      return;
+    }
+    const now = Date.now();
+    const runningSince = session.state === 'active'
+      ? (Date.parse(session.runningSince ?? '') || Date.parse(session.startedAt) || now)
+      : undefined;
+    const currentRun = runningSince === undefined ? 0 : Math.max(0, now - runningSince);
+    sessionClockRef.current = { activeDurationMs: Math.max(0, sessionActiveDurationMs(session, now) - currentRun), runningSinceMs: session.state === 'active' ? now : undefined };
+    refreshElapsed();
+  }, [refreshElapsed]);
 
   useEffect(() => {
     persistTheme(darkMode ? 'dark' : 'light');
@@ -241,7 +267,7 @@ export function App() {
       if (captureRecoveryRef.current) return captureRecoveryRef.current;
       let recovery!: Promise<void>;
       recovery = (async () => {
-        if (stoppedRef.current || sessionPausedRef.current) return;
+        if (stoppedRef.current || sessionPausedRef.current || lifecycleActionRef.current !== 'idle') return;
         const generation = ++captureGenerationRef.current;
         const capture = captureRef.current;
         const oldStreamId = captureStreamIdRef.current;
@@ -251,7 +277,7 @@ export function App() {
         if (oldStreamId !== undefined) {
           try { await transport.stopAudio(oldStreamId); } catch { /* reconnect may have failed again */ }
         }
-        if (stoppedRef.current || sessionPausedRef.current) return;
+        if (stoppedRef.current || sessionPausedRef.current || lifecycleActionRef.current !== 'idle') return;
         const random = new Uint32Array(1);
         crypto.getRandomValues(random);
         const streamId = random[0] ?? 0;
@@ -262,7 +288,7 @@ export function App() {
             send: frame => transport.sendCapture(frame),
             degraded: message => controller.degrade(message),
           });
-          if (generation !== captureGenerationRef.current || stoppedRef.current || sessionPausedRef.current) {
+          if (generation !== captureGenerationRef.current || stoppedRef.current || sessionPausedRef.current || lifecycleActionRef.current !== 'idle') {
             await recovered.stop();
             try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
             if (generation === captureGenerationRef.current) captureStreamIdRef.current = undefined;
@@ -291,9 +317,9 @@ export function App() {
         degraded: message => controller.degrade(message),
       });
     } catch (error) {
-      await transport.stopAudio(streamId);
+      try { await transport.stopAudio(streamId); } catch { /* teardown is best effort */ }
       captureStreamIdRef.current = undefined;
-      await controller.stop();
+      await controller.pause();
       throw error;
     }
     setCapability(cap);
@@ -335,17 +361,28 @@ export function App() {
         if (!cancelled && stored?.state === 'active') {
           setResuming(true);
           setWriter(opened);
+          sessionPausedRef.current = false;
           try {
             const restored = await sessionViewStateFromTurns(opened, target, 'active');
-            startedAt.current = new Date(stored.startedAt).getTime();
-            const { settings, digest } = currentStartSettings();
-            const reopened = await opened.beginSession({ sessionId: target, sessionSeed: uuidV7(), personaDigest: digest });
+            const settings = stored.settings ?? currentStartSettings().settings;
+            const digest = stored.personaDigest || settingsDigest({ agentName: settingsModelRef.current.agentName, persona: settings.persona, voice: { ...settings.voice } });
+            const reopened = await opened.beginSession({ sessionId: target, sessionSeed: stored.sessionSeed, personaDigest: digest, settings });
             if (!reopened.ok) throw new Error(reopened.degradedReason);
+            const reopenedSession = await opened.getSession(target);
+            configureSessionClock(reopenedSession);
             if (fakeServices) await composeFakeSession(opened, target, restored, 'fake-recovered', settings);
-            else await composeRealSession(opened, target, restored, await bootstrapCapability(), uuidV7(), 'full', settings);
+            else await composeRealSession(opened, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings);
             if (!cancelled) navigate(`/session/${target}`);
           } catch (error) {
-            activityLog.append({ level: 'error', source: 'app', message: 'active session could not be resumed', ...(error instanceof Error ? { detail: error.message } : {}) });
+            try { await controllerRef.current?.pause(); } catch { /* best-effort rollback */ }
+            try { await releaseRecorder(target); } catch { /* best-effort rollback */ }
+            transportRef.current?.disconnect();
+            controllerRef.current = undefined;
+            transportRef.current = undefined;
+            fakeTransportRef.current = undefined;
+            await opened.pauseSession(target);
+            configureSessionClock(await opened.getSession(target));
+            activityLog.append({ level: 'error', source: 'app', message: 'active session could not be resumed; it is paused locally', ...(error instanceof Error ? { detail: error.message } : {}) });
           } finally {
             if (!cancelled) setResuming(false);
           }
@@ -359,10 +396,15 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!view) return;
-    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt.current) / 1000)), 1000);
+    if (!sessionId) {
+      setElapsed(0);
+      return;
+    }
+    refreshElapsed();
+    if (sessionClockRef.current.runningSinceMs === undefined) return;
+    const timer = setInterval(refreshElapsed, 1000);
     return () => clearInterval(timer);
-  }, [view]);
+  }, [sessionId, sessionPaused, refreshElapsed]);
 
   useEffect(() => {
     if (!fakeServices || !view || !sessionId || !fakeTransportRef.current || !controllerRef.current) { delete window.__podcasterTest; return; }
@@ -386,64 +428,173 @@ export function App() {
     const opened = writerRef.current;
     if (!opened) throw new Error('Local session storage is not ready yet.');
     const id = existingId ?? uuidV7();
-    const seed = uuidV7();
-    const frozen: SettingsModel = { agentName: settingsModel.agentName, persona: settingsModel.persona, selectedModel: { ...settingsModel.selectedModel }, voice: { ...settingsModel.voice }, voiceProfiles: { ...settingsModel.voiceProfiles } };
+    const existing = existingId ? await opened.getSession(id) : undefined;
+    const preserveIdentity = Boolean(existing && existing.state !== 'stopped');
+    const seed = preserveIdentity ? existing!.sessionSeed : uuidV7();
+    const current: SettingsModel = {
+      agentName: settingsModel.agentName,
+      persona: settingsModel.persona,
+      selectedModel: { ...settingsModel.selectedModel },
+      voice: { ...settingsModel.voice },
+      voiceProfiles: { ...settingsModel.voiceProfiles },
+    };
+    const settings: SessionStartSettings = preserveIdentity && existing?.settings
+      ? existing.settings
+      : { version: 1, persona: current.persona, voice: { ...current.voice } };
+    const frozen: SettingsModel = preserveIdentity
+      ? {
+          ...current,
+          persona: settings.persona,
+          voice: { ...settings.voice },
+          selectedModel: {
+            backendId: settings.voice.backendId ?? current.selectedModel.backendId,
+            modelId: settings.voice.modelId ?? current.selectedModel.modelId,
+          },
+        }
+      : current;
     settingsFrozenRef.current = frozen;
-    const settings: SessionStartSettings = { version: 1, persona: frozen.persona, voice: { ...frozen.voice } };
-    const personaDigest = settingsDigest(frozen);
-    const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest });
+    const personaDigest = preserveIdentity ? existing!.personaDigest : settingsDigest(frozen);
+    const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest, settings });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
-    startedAt.current = Date.now();
+    stoppedRef.current = false;
     sessionPausedRef.current = false;
     setSessionPaused(false);
+    configureSessionClock(await opened.getSession(id));
     activityLog.append({ level: 'info', source: 'app', message: `session started (${cap})` });
     const initial: SessionViewState = existingId
       ? await sessionViewStateFromTurns(opened, id, 'active')
       : { ...initialSessionState, dominant: 'listening', announcement: 'Listening' };
-    if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
-    else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
+    try {
+      if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
+      else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
+    } catch (error) {
+      // A failed composition must release the partially-created runtime before
+      // returning to the durable paused state. This is also the stale-event
+      // barrier for a failed resume.
+      captureGenerationRef.current++;
+      captureRecoveryRef.current = undefined;
+      stoppedRef.current = true;
+      const failedTransport = transportRef.current;
+      reconnectUnsubscribeRef.current?.();
+      reconnectUnsubscribeRef.current = undefined;
+      transportFailureUnsubscribeRef.current?.();
+      transportFailureUnsubscribeRef.current = undefined;
+      try { await captureRef.current?.stop(); } catch { /* best effort */ }
+      captureRef.current = undefined;
+      const streamId = captureStreamIdRef.current;
+      captureStreamIdRef.current = undefined;
+      if (streamId !== undefined) try { await failedTransport?.stopAudio(streamId); } catch { /* best effort */ }
+      try { await controllerRef.current?.pause(); } catch { /* best effort */ }
+      await releaseRecorder(id);
+      failedTransport?.disconnect();
+      controllerRef.current = undefined;
+      transportRef.current = undefined;
+      fakeTransportRef.current = undefined;
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = undefined;
+      await opened.pauseSession(id);
+      if (cap !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': cap } }).catch(() => undefined);
+      setCapability(undefined);
+      sessionPausedRef.current = true;
+      setSessionPaused(true);
+      configureSessionClock(await opened.getSession(id));
+      throw error;
+    }
     navigate(`/session/${id}`);
   }
 
+  const releaseRecorder = useCallback(async (targetSession?: string) => {
+    recordingUnsubscribeRef.current?.();
+    recordingUnsubscribeRef.current = undefined;
+    const recorder = recordingRecorderRef.current;
+    const store = recordingStoreRef.current;
+    if (recorder) {
+      try { await recorder.stop(true); }
+      catch (error) { activityLog.append({ level: 'warn', source: 'app', message: 'recording cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) }); }
+    }
+    if (targetSession && store) await fetchRecordingSummaries(targetSession);
+    recordingRecorderRef.current = undefined;
+    recordingStoreRef.current?.close();
+    recordingStoreRef.current = undefined;
+  }, [fetchRecordingSummaries]);
+
   const stop = useCallback(async () => {
+    if (lifecycleActionRef.current !== 'idle') return;
+    const targetSession = recordingSessionRef.current ?? sessionId;
+    if (!targetSession) return;
+    lifecycleActionRef.current = 'ending';
+    setLifecycleAction('ending');
+    const controller = controllerRef.current;
     captureGenerationRef.current++;
     captureRecoveryRef.current = undefined;
     stoppedRef.current = true;
     sessionPausedRef.current = false;
-    activityLog.append({ level: 'info', source: 'app', message: 'session stopped by user' });
+    activityLog.append({ level: 'info', source: 'app', message: 'session ended by user' });
     reconnectUnsubscribeRef.current?.();
     reconnectUnsubscribeRef.current = undefined;
     transportFailureUnsubscribeRef.current?.();
     transportFailureUnsubscribeRef.current = undefined;
     setSessionPaused(false);
-    await captureRef.current?.stop();
+    try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
     captureRef.current = undefined;
     const streamId = captureStreamIdRef.current;
+    captureStreamIdRef.current = undefined;
     if (streamId !== undefined) {
-      await transportRef.current?.stopAudio(streamId);
-      captureStreamIdRef.current = undefined;
+      try { await transportRef.current?.stopAudio(streamId); } catch { /* the transport may already be gone */ }
     }
-    await controllerRef.current?.stop();
-    recordingUnsubscribeRef.current?.();
-    recordingUnsubscribeRef.current = undefined;
-    await recordingRecorderRef.current?.stop(true);
-    if (capability && capability !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
-    stoppedRef.current = true;
-  }, [capability]);
+    let ended = true;
+    try { await controller?.stop(); }
+    catch (error) { ended = false; activityLog.append({ level: 'warn', source: 'app', message: 'live session cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) }); }
+    await releaseRecorder(targetSession);
+    const opened = writerRef.current;
+    if (opened) {
+      const persisted = await opened.endSession(targetSession);
+      ended = ended && persisted.ok;
+      if (!persisted.ok) activityLog.append({ level: 'error', source: 'app', message: 'session end could not be saved', ...(persisted.degradedReason ? { detail: persisted.degradedReason } : {}) });
+    }
+    if (ended && capability && capability !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
+    controllerRef.current = undefined;
+    transportRef.current = undefined;
+    fakeTransportRef.current = undefined;
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = undefined;
+    if (ended) {
+      configureSessionClock(await opened?.getSession(targetSession));
+      setCapability(undefined);
+      setSessionId(undefined);
+      setView(undefined);
+    } else {
+      // Resources are gone, but the local row remains resumable so a failed
+      // end write cannot silently discard the conversation.
+      if (opened) await opened.pauseSession(targetSession);
+      stoppedRef.current = true;
+      sessionPausedRef.current = true;
+      setSessionPaused(true);
+      setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'The session ended locally, but its final state could not be saved. Resume it and try again.', announcement: 'Session needs attention' } : previous);
+    }
+    lifecycleActionRef.current = 'idle';
+    setLifecycleAction('idle');
+  }, [capability, configureSessionClock, fetchRecordingSummaries, releaseRecorder, sessionId]);
   const stopRef = useRef(stop);
   stopRef.current = stop;
 
   const continueSession = useCallback(async (targetId: string) => {
+    if (lifecycleActionRef.current !== 'idle') return;
     const current = sessionId;
     if (current && current !== targetId && !stoppedRef.current) await stopRef.current();
-    let cap: string;
+    lifecycleActionRef.current = 'resuming';
+    setLifecycleAction('resuming');
     try {
-      cap = fakeServices ? 'fake-recovered' : await bootstrapCapability();
+      const cap = fakeServices ? 'fake-recovered' : await bootstrapCapability();
+      await start(cap, 'full', targetId);
     } catch (error) {
-      activityLog.append({ level: 'error', source: 'app', message: 'session capability could not be obtained', ...(error instanceof Error ? { detail: error.message } : {}) });
-      return;
+      activityLog.append({ level: 'error', source: 'app', message: 'session could not be resumed', ...(error instanceof Error ? { detail: error.message } : {}) });
+      sessionPausedRef.current = true;
+      setSessionPaused(true);
+    } finally {
+      lifecycleActionRef.current = 'idle';
+      setLifecycleAction('idle');
     }
-    await start(cap, 'full', targetId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -465,63 +616,65 @@ export function App() {
   }, [location, sessionId]);
 
   const togglePause = useCallback(async () => {
-    if (stoppedRef.current) return;
-    const transport = transportRef.current;
-    const controller = controllerRef.current;
-    const recorder = recordingRecorderRef.current;
-    if (!transport || !controller || !recorder) return;
-    if (!sessionPaused) {
-      captureGenerationRef.current++;
-      await captureRef.current?.stop();
-      captureRef.current = undefined;
-      const streamId = captureStreamIdRef.current;
-      if (streamId !== undefined) {
-        await transport.stopAudio(streamId);
-        captureStreamIdRef.current = undefined;
-      }
-      activityLog.append({ level: 'info', source: 'app', message: 'session paused by user' });
-      sessionPausedRef.current = true;
-      setSessionPaused(true);
+    if (lifecycleActionRef.current !== 'idle') return;
+    const targetSession = recordingSessionRef.current ?? sessionId;
+    if (!targetSession) return;
+    if (sessionPausedRef.current) {
+      await continueSession(targetSession);
       return;
     }
-    const random = new Uint32Array(1);
-    crypto.getRandomValues(random);
-    const streamId = random[0] ?? 0;
-    const generation = ++captureGenerationRef.current;
+    const controller = controllerRef.current;
+    if (!controller || !recordingRecorderRef.current) return;
+    lifecycleActionRef.current = 'pausing';
+    setLifecycleAction('pausing');
+    captureGenerationRef.current++;
     try {
-      await transport.startAudio(streamId);
-      captureStreamIdRef.current = streamId;
-      const capture = await new BrowserCapture({ streamId: () => streamId, onAudio: audio => recorder.onCaptureAudio(audio) }).start({
-        send: frame => transport.sendCapture(frame),
-        degraded: message => controller.degrade(message),
-      });
-      if (generation !== captureGenerationRef.current || stoppedRef.current) {
-        await capture.stop();
-        try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
-        return;
-      }
-      if (fakeServices) {
-        statsRef.current.captureStarts++;
-        statsRef.current.captureRunning = true;
-        captureRef.current = {
-          stop: async () => {
-            if (!statsRef.current.captureRunning) return;
-            await capture.stop();
-            statsRef.current.captureStops++;
-            statsRef.current.captureRunning = false;
-          },
-        };
-      } else captureRef.current = capture;
-      activityLog.append({ level: 'info', source: 'app', message: 'session resumed by user' });
-      sessionPausedRef.current = false;
-      setSessionPaused(false);
-    } catch (error) {
-      try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
-      if (generation !== captureGenerationRef.current || stoppedRef.current) return;
+      // The controller persists the pause barrier before disconnecting the
+      // host. If that write fails, all live resources remain available.
+      const paused = await controller.pause();
+      if (!paused) return;
+      stoppedRef.current = true;
+      sessionPausedRef.current = true;
+      setSessionPaused(true);
+      reconnectUnsubscribeRef.current?.();
+      reconnectUnsubscribeRef.current = undefined;
+      transportFailureUnsubscribeRef.current?.();
+      transportFailureUnsubscribeRef.current = undefined;
+      try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
+      captureRef.current = undefined;
+      const streamId = captureStreamIdRef.current;
       captureStreamIdRef.current = undefined;
-      controller.degrade(error instanceof Error ? error.message : 'The microphone could not be resumed.');
+      if (streamId !== undefined) {
+        try { await transportRef.current?.stopAudio(streamId); } catch { /* controller already disconnected the transport */ }
+      }
+      await releaseRecorder(targetSession);
+      if (capability && capability !== 'fake-recovered') {
+        const released = await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).then(response => response.ok).catch(() => false);
+        if (!released) activityLog.append({ level: 'warn', source: 'app', message: 'session paused locally; host cleanup is pending' });
+      }
+      setCapability(undefined);
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = undefined;
+      // Keep the inert controller/fake transport references until the next
+      // runtime is composed so test diagnostics can verify the released
+      // resources. They have already unsubscribed and cannot process events.
+      transportRef.current = undefined;
+      configureSessionClock(await writerRef.current?.getSession(targetSession));
+      setView(previous => pausedSessionView(previous ?? controller.snapshot()));
+      activityLog.append({ level: 'info', source: 'app', message: 'session paused by user' });
+    } catch (error) {
+      activityLog.append({ level: 'error', source: 'app', message: 'session pause cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) });
+      // The durable pause barrier succeeded, so expose the paused state even if
+      // an individual browser resource refused to close.
+      sessionPausedRef.current = true;
+      setSessionPaused(true);
+      stoppedRef.current = true;
+      setView(previous => previous ? { ...pausedSessionView(previous), dominant: 'degraded', degradedMessage: 'The session was paused, but some live resources need attention. Resume to reconnect.', announcement: 'Session needs attention' } : previous);
+    } finally {
+      lifecycleActionRef.current = 'idle';
+      setLifecycleAction('idle');
     }
-  }, [sessionPaused]);
+  }, [capability, configureSessionClock, continueSession, releaseRecorder, sessionId]);
 
   const buildExport = useCallback(async (onProgress?: ExportOnProgress) => {
     const store = recordingStoreRef.current;
@@ -673,6 +826,7 @@ export function App() {
             writer={writer}
             sessionAvailable={fakeServices}
             liveSessionId={sessionId}
+            liveSessionPaused={sessionPaused}
             elapsedSeconds={elapsed}
             onStart={start}
             onCatalog={onCatalog}
@@ -691,6 +845,7 @@ export function App() {
           agentName={settingsModel.agentName}
           elapsed={elapsed}
           sessionPaused={sessionPaused}
+          lifecycleAction={lifecycleAction}
           recordingView={recordingView}
           settingsOpen={settingsOpen}
           onTogglePause={() => void togglePause()}
@@ -720,6 +875,16 @@ function sessionIdFromPath(pathname: string): string | undefined {
   return match ? decodeURIComponent(match[1]!) : undefined;
 }
 
+function pausedSessionView(state: SessionViewState): SessionViewState {
+  return {
+    ...state,
+    dominant: 'paused',
+    announcement: 'Session paused',
+    playbackNotice: 'Any assistant response in progress was stopped and will not resume automatically.',
+    conversationItems: state.conversationItems.map(item => item.kind === 'assistant' && item.playback !== 'completed' && item.playback !== 'interrupted' ? { ...item, playback: 'interrupted' as const } : item),
+  };
+}
+
 interface SessionRouteProps {
   writer: StableTurnWriter;
   liveSessionId: string | undefined;
@@ -728,6 +893,7 @@ interface SessionRouteProps {
   agentName: string;
   elapsed: number;
   sessionPaused: boolean;
+  lifecycleAction: LifecycleAction;
   recordingView: RecordingSessionViewState;
   settingsOpen: boolean;
   onTogglePause: () => void;
@@ -763,6 +929,7 @@ function SessionRoute(props: SessionRouteProps) {
         agentName={props.agentName}
         elapsedSeconds={props.elapsed}
         sessionPaused={props.sessionPaused}
+        lifecycleAction={props.lifecycleAction}
         onTogglePause={props.onTogglePause}
         onStop={props.onStop}
         onCancelAssistant={props.onCancelAssistant}

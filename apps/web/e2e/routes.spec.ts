@@ -32,9 +32,9 @@ test('each session lives at its own URL and appears on the index', async ({ page
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
   await expect(page.getByText('A stable thought')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Stop session' }).click();
+  await page.getByRole('button', { name: 'End session' }).click();
   await expect(page.getByRole('heading', { name: 'Session stopped' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'All sessions' })).toBeVisible();
 
   // Back on the index the finished session is listed with its facts and actions.
   await page.goto(server.origin);
@@ -52,7 +52,7 @@ test('a stopped session opens read-only with its conversation and can be continu
   const sessionUrl = page.url();
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
   await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
-  await page.getByRole('button', { name: 'Stop session' }).click();
+  await page.getByRole('button', { name: 'End session' }).click();
   await expect(page.getByRole('heading', { name: 'Session stopped' })).toBeVisible();
 
   // Fresh load of the session URL shows the stored conversation read-only.

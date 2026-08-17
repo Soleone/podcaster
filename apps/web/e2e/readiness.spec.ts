@@ -43,7 +43,7 @@ test('disclosure precedes secure readiness and explicit microphone permission', 
   await page.reload();
   // Returning users see the readiness surface immediately, without waiting for
   // the local runtime and Pi probe to finish.
-  expect(await page.getByRole('heading', { name: 'Readiness' }).isVisible()).toBe(true);
+  await expect(page.getByRole('heading', { name: 'Readiness' })).toBeVisible({ timeout: 2_000 });
   await page.unroute('**/api/readiness');
   await expect(page.getByRole('heading', { name: 'Readiness' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Before you continue' })).toHaveCount(0);

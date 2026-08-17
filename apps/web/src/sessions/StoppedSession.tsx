@@ -63,7 +63,7 @@ export function StoppedSession(props: StoppedSessionProps) {
       if (cancelled) { store.close(); return; }
       if (!session) { if (!cancelled) setSession(undefined); return; }
       setSession(session);
-      const viewState = await sessionViewStateFromTurns(props.writer, props.sessionId);
+      const viewState = await sessionViewStateFromTurns(props.writer, props.sessionId, session.state === 'paused' ? 'paused' : 'stopped');
       if (!cancelled) setView(viewState);
       await loadRecording();
     })();
@@ -128,7 +128,7 @@ export function StoppedSession(props: StoppedSessionProps) {
       sessionId={props.sessionId}
       agentName={props.agentName}
       elapsedSeconds={elapsed}
-      sessionPaused={false}
+      sessionPaused={session.state === 'paused'}
       onTogglePause={() => undefined}
       onStop={props.onBack}
       onCancelAssistant={() => undefined}
@@ -142,10 +142,10 @@ export function StoppedSession(props: StoppedSessionProps) {
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
-            <Badge variant="secondary">{session.state === 'active' ? 'Interrupted' : 'Ended'}</Badge>
+            <Badge variant="secondary">{session.state === 'paused' ? 'Paused' : session.state === 'active' ? 'Interrupted' : 'Ended'}</Badge>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button className="min-h-11" onClick={props.onContinue}><Mic2 data-icon="inline-start" aria-hidden="true" />Continue session</Button>
+            <Button className="min-h-11" onClick={props.onContinue}><Mic2 data-icon="inline-start" aria-hidden="true" />{session.state === 'paused' ? 'Resume session' : 'Continue session'}</Button>
             <ExportPopover sessionId={props.sessionId} buildExport={buildExport} disabled={recording.includedCount === 0} label="Export recording" variant="secondary" />
             <ConfirmDeleteDialog
               deleting={deleting}

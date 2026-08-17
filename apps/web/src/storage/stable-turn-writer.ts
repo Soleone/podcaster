@@ -9,6 +9,13 @@ export interface StableEvent {
   payload: Record<string, unknown>;
 }
 export interface StorageResult { ok: boolean; duplicate?: boolean; degradedReason?: string }
+export interface PlaybackPauseCheckpoint {
+  responseId: string;
+  playbackId: string;
+  outputEpoch: number;
+  pausedSampleOffset: number;
+  generatedSamples: number;
+}
 interface PlaybackAccounting {
   /** Composite IndexedDB key: sessionId, playbackId, and output epoch. */
   playbackId: string;
@@ -21,6 +28,31 @@ const turnKey = (sessionId: string, turnId: string) => `${sessionId}:${turnId}`;
 const accountingKey = (sessionId: string, playbackId: string, outputEpoch: number) => `${sessionId}:${outputEpoch}:${playbackId}`;
 const stringValue = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
 const numberValue = (value: unknown): number | undefined => Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
+
+function timestampMs(value: string | null | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Returns foreground time for a session, including the current run when it is
+ * active. Older rows do not have the timer fields, so fall back to their wall
+ * clock interval without making a migration destructive.
+ */
+export function sessionActiveDurationMs(session: StoredSession, atMs = Date.now()): number {
+  const persisted = typeof session.activeDurationMs === 'number' && Number.isFinite(session.activeDurationMs)
+    ? Math.max(0, session.activeDurationMs)
+    : undefined;
+  if (persisted !== undefined) {
+    if (session.state !== 'active') return persisted;
+    const runningSince = timestampMs(session.runningSince) ?? timestampMs(session.startedAt) ?? atMs;
+    return persisted + Math.max(0, atMs - runningSince);
+  }
+  const started = timestampMs(session.startedAt) ?? atMs;
+  const ended = session.state === 'active' ? atMs : timestampMs(session.endedAt) ?? timestampMs(session.updatedAt) ?? atMs;
+  return Math.max(0, ended - started);
+}
 
 function blankTurn(sessionId: string, turnId: string, at: string, timelineSequence: number): StoredTurn {
   return { key: turnKey(sessionId, turnId), sessionId, turnId, stableText: null, posture: null, eligible: null, policyReason: null, responseId: null, assistantText: null, playbackId: null, outputEpoch: null, sampleRate: null, generatedSamples: 0, deliveredSampleOffset: 0, pendingDeliveredOffset: 0, terminalReason: null, interrupted: false, pausedSampleOffset: null, interruptionDisposition: null, interruptionIntent: null, interruptedResponseId: null, controlOnly: false, continuationState: 'none', timelineSequence, failures: [], createdAt: at, updatedAt: at };
@@ -35,14 +67,26 @@ export class StableTurnWriter {
 
   close(): void { this.db.close(); }
 
-  async beginSession(input: { sessionId: string; sessionSeed: string; personaDigest: string; startedAt?: string }): Promise<StorageResult> {
+  async beginSession(input: { sessionId: string; sessionSeed: string; personaDigest: string; settings?: StoredSession['settings']; startedAt?: string }): Promise<StorageResult> {
     return this.guard(async () => {
       const transaction = this.db.transaction([STORES.sessions, STORES.meta], 'readwrite');
       const sessions = transaction.objectStore(STORES.sessions);
       const existing = await requestResult(sessions.get(input.sessionId)) as StoredSession | undefined;
       const now = input.startedAt ?? isoNow();
-      if (!existing) sessions.put({ sessionId: input.sessionId, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, startedAt: now, updatedAt: now, endedAt: null, state: 'active', failures: [] } satisfies StoredSession);
-      else sessions.put({ ...existing, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, state: 'active', endedAt: null, updatedAt: now });
+      const nowMs = timestampMs(now) ?? Date.now();
+      const activeDurationMs = existing ? sessionActiveDurationMs(existing, nowMs) : 0;
+      if (!existing) {
+        sessions.put({ sessionId: input.sessionId, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, startedAt: now, updatedAt: now, endedAt: null, state: 'active', activeDurationMs, runningSince: now, pausedAt: null, ...(input.settings ? { settings: input.settings } : {}), failures: [] } satisfies StoredSession);
+      } else {
+        const preserveIdentity = existing.state !== 'stopped';
+        sessions.put({
+          ...existing,
+          sessionSeed: preserveIdentity ? existing.sessionSeed : input.sessionSeed,
+          personaDigest: preserveIdentity ? existing.personaDigest : input.personaDigest,
+          state: 'active', endedAt: null, updatedAt: now, activeDurationMs, runningSince: now, pausedAt: null,
+          ...(preserveIdentity ? ((existing.settings ?? input.settings) ? { settings: existing.settings ?? input.settings } : {}) : (input.settings ? { settings: input.settings } : {})),
+        });
+      }
       transaction.objectStore(STORES.meta).put({ key: 'activeSession', sessionId: input.sessionId });
       await transactionDone(transaction);
     });
@@ -72,12 +116,55 @@ export class StableTurnWriter {
     return await requestResult(transaction.objectStore(STORES.sessions).get(active.sessionId)) as StoredSession | undefined;
   }
 
+  /** Checkpoints a live session without ending it or discarding its transcript. */
+  async pauseSession(sessionId: string, pausedAt = isoNow(), playbacks: readonly PlaybackPauseCheckpoint[] = []): Promise<StorageResult> {
+    return this.guard(async () => {
+      const transaction = this.db.transaction([STORES.sessions, STORES.turns, STORES.meta], 'readwrite');
+      const store = transaction.objectStore(STORES.sessions);
+      const session = await requestResult(store.get(sessionId)) as StoredSession | undefined;
+      if (!session) { transaction.abort(); throw new PauseRejected('The session could not be found.'); }
+      if (session.state === 'stopped') { transaction.abort(); throw new PauseRejected('The session has already ended.'); }
+      const atMs = timestampMs(pausedAt) ?? Date.now();
+        const turns = await requestResult(transaction.objectStore(STORES.turns).index('sessionId').getAll(sessionId)) as StoredTurn[];
+        for (const turn of turns) {
+          const checkpoint = playbacks.find(candidate => candidate.responseId === turn.responseId && candidate.playbackId === turn.playbackId && candidate.outputEpoch === turn.outputEpoch);
+          let changed = false;
+          if (checkpoint) {
+            turn.pausedSampleOffset = Math.max(turn.pausedSampleOffset ?? 0, checkpoint.pausedSampleOffset);
+            turn.pendingDeliveredOffset = Math.max(turn.pendingDeliveredOffset, checkpoint.pausedSampleOffset);
+            if (checkpoint.generatedSamples > 0) turn.generatedSamples = Math.max(turn.generatedSamples, checkpoint.generatedSamples);
+            turn.deliveredSampleOffset = turn.generatedSamples > 0 ? Math.min(turn.pendingDeliveredOffset, turn.generatedSamples) : turn.deliveredSampleOffset;
+            changed = true;
+          }
+          // Pause tears down the host and browser playback. Mark any response
+          // without a durable terminal receipt as interrupted so a later
+          // rehydrate never presents it as if it could continue automatically.
+          if ((turn.assistantText || checkpoint) && turn.terminalReason === null) {
+            turn.terminalReason = 'stopped';
+            turn.interrupted = true;
+            turn.continuationState = 'discarded';
+            changed = true;
+          }
+          if (changed) {
+            turn.updatedAt = pausedAt;
+            transaction.objectStore(STORES.turns).put(turn);
+          }
+        }
+        store.put({ ...session, state: 'paused', endedAt: null, updatedAt: pausedAt, activeDurationMs: sessionActiveDurationMs(session, atMs), runningSince: null, pausedAt });
+      transaction.objectStore(STORES.meta).put({ key: 'activeSession', sessionId });
+      await transactionDone(transaction);
+    });
+  }
+
   async endSession(sessionId: string, endedAt = isoNow()): Promise<StorageResult> {
     return this.guard(async () => {
       const transaction = this.db.transaction([STORES.sessions, STORES.meta], 'readwrite');
       const store = transaction.objectStore(STORES.sessions);
       const session = await requestResult(store.get(sessionId)) as StoredSession | undefined;
-      if (session) store.put({ ...session, state: 'stopped', endedAt, updatedAt: endedAt });
+      if (session) {
+        const atMs = timestampMs(endedAt) ?? Date.now();
+        store.put({ ...session, state: 'stopped', endedAt, updatedAt: endedAt, activeDurationMs: sessionActiveDurationMs(session, atMs), runningSince: null, pausedAt: null });
+      }
       const meta = transaction.objectStore(STORES.meta);
       const active = await requestResult(meta.get('activeSession')) as { sessionId?: string } | undefined;
       if (active?.sessionId === sessionId) meta.delete('activeSession');
@@ -249,6 +336,7 @@ export class StableTurnWriter {
   private async guard(operation: () => Promise<void>): Promise<StorageResult> {
     try { await operation(); return { ok: true }; }
     catch (error) {
+      if (error instanceof PauseRejected) return { ok: false, degradedReason: error.message };
       if (error instanceof DuplicateEvent) return { ok: true, duplicate: true };
       const name = error instanceof DOMException ? error.name : 'StorageError';
       return { ok: false, degradedReason: name === 'QuotaExceededError' ? 'Local storage is full. Earlier stable turns are preserved.' : 'Stable local storage is unavailable. Earlier saved work was not changed.' };
@@ -256,3 +344,4 @@ export class StableTurnWriter {
   }
 }
 class DuplicateEvent extends Error {}
+class PauseRejected extends Error {}

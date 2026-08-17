@@ -21,13 +21,13 @@ import type { SessionViewState } from './state';
 import './session.css';
 
 const headings: Record<SessionViewState['dominant'], string> = {
-  idle: 'Session stopped', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
+  idle: 'Session stopped', paused: 'Session paused', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
 };
 const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> = {
-  idle: CircleStop, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
+  idle: CircleStop, paused: Play, listening: Ear, transcribing: Captions, deciding: MessageCircleQuestion, intentional_silence: Pause, reasoning: Brain, speaking: Volume2, stopping: undefined, degraded: CircleAlert,
 };
 
-type SessionScreenProps = { state: SessionViewState; sessionId: string; agentName: string; elapsedSeconds: number; sessionPaused: boolean; onTogglePause: () => void; onStop: () => void; onCancelAssistant: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>; buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>; readOnly?: boolean; onExportingChange?: (exporting: boolean) => void; onDeleteRecording?: () => Promise<void>; exporting?: boolean; deleting?: boolean };
+type SessionScreenProps = { state: SessionViewState; sessionId: string; agentName: string; elapsedSeconds: number; sessionPaused: boolean; lifecycleAction?: 'idle' | 'pausing' | 'resuming' | 'ending'; onTogglePause: () => void; onStop: () => void; onCancelAssistant: () => void; settingsOpen: boolean; recording: RecordingSessionViewState; onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>; buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>; readOnly?: boolean; onExportingChange?: (exporting: boolean) => void; onDeleteRecording?: () => Promise<void>; exporting?: boolean; deleting?: boolean };
 
 export function SessionScreen(props: SessionScreenProps) {
   const [trimAnnouncement, setTrimAnnouncement] = useState('');
@@ -51,20 +51,21 @@ export function SessionScreen(props: SessionScreenProps) {
   const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking';
   const readOnly = props.readOnly === true;
   const agentName = props.agentName.trim() || 'Assistant';
-  const canExport = !readOnly && props.recording.includedCount > 0 && !props.exporting && !props.deleting;
-  const canDelete = !readOnly && props.recording.totalCount > 0 && !props.deleting && !props.exporting;
+  const actionBusy = props.lifecycleAction !== undefined && props.lifecycleAction !== 'idle';
+  const canExport = !readOnly && !actionBusy && props.recording.includedCount > 0 && !props.exporting && !props.deleting;
+  const canDelete = !readOnly && !actionBusy && props.recording.totalCount > 0 && !props.deleting && !props.exporting;
+  const pauseLabel = props.lifecycleAction === 'pausing' ? 'Pausing…' : props.lifecycleAction === 'resuming' ? 'Resuming…' : props.sessionPaused ? 'Resume session' : 'Pause session';
   // Keep the dimmed tentative row as the visible progress signal after a preview arrives.
   const hasAssistantText = props.state.conversationItems.some(item => item.kind === 'assistant' && item.text.trim() !== '');
   const showAssistantActivity = props.state.dominant === 'speaking' || (props.state.dominant === 'reasoning' && !hasAssistantText);
   const StateIcon = stateIcons[props.state.dominant];
   return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
     <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{readOnly ? 'Ended session' : 'Active voice session'}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{readOnly ? (props.sessionPaused ? 'Paused session' : 'Ended session') : props.sessionPaused ? 'Paused voice session' : 'Active voice session'}</p>
       <div className="flex flex-wrap items-center gap-2">
         {readOnly ? <Button variant="outline" size="sm" onClick={props.onStop}><ArrowLeft data-icon="inline-start" aria-hidden="true" />All sessions</Button> : <>
           <ButtonGroup aria-label="Session controls" className="session-controls">
-            <Button variant="outline" size="icon" aria-label={props.sessionPaused ? 'Resume session' : 'Pause session'} title={props.sessionPaused ? 'Resume session' : 'Pause session'} onClick={props.onTogglePause}>{props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</Button>
-            <Button variant="outline" size="icon" aria-label="Stop session" title="Stop session" onClick={props.onStop}><CircleStop aria-hidden="true" /></Button>
+            <Button variant="outline" size="sm" disabled={actionBusy} aria-label={pauseLabel} title={pauseLabel} onClick={props.onTogglePause}>{props.sessionPaused ? <Play data-icon="inline-start" aria-hidden="true" /> : <Pause data-icon="inline-start" aria-hidden="true" />}{pauseLabel}</Button>
             <ButtonGroupSeparator />
             <ExportPopover
               sessionId={props.sessionId}
@@ -81,6 +82,7 @@ export function SessionScreen(props: SessionScreenProps) {
               trigger={<Button variant="outline" size="icon" disabled={!canDelete} title="Delete recording" aria-label="Delete recording"><Trash aria-hidden="true" /></Button>}
             />
           </ButtonGroup>
+          <Button variant="ghost" size="sm" disabled={actionBusy} onClick={props.onStop}>End session</Button>
         </>}
       </div>
     </header>
@@ -90,7 +92,7 @@ export function SessionScreen(props: SessionScreenProps) {
         <h1 id="session-status-heading" className="min-w-0 text-sm font-medium leading-snug">{headings[props.state.dominant]}</h1>
       </CardContent>
       <div className="flex items-center gap-2 pr-(--card-spacing)">
-        <Badge variant="secondary" className="font-mono tabular-nums" aria-label={`Session elapsed ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>
+        <Badge variant="secondary" className="font-mono tabular-nums" title={props.sessionPaused ? 'Active time; paused time is not counted' : 'Active session time'} aria-label={`Session active time ${props.elapsedSeconds} seconds`}>{formatElapsed(props.elapsedSeconds)}</Badge>
         {assistantActive && !readOnly ? <Button variant="secondary" size="sm" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}
       </div>
     </Card>

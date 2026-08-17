@@ -361,6 +361,30 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('checkpoints pause, stops in-flight playback, releases the transport, and ignores late events', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    expect(await controller.pause()).toBe(true);
+    expect(controller.snapshot()).toMatchObject({ dominant: 'paused', announcement: 'Session paused' });
+    expect(players[0]!.stops).toEqual(['stopped']);
+    expect(transport.connected).toBe(false);
+    expect(transport.terminalReceipts.get('0:playback')).toMatchObject({ reason: 'stopped' });
+    expect(await writer.getSession('session')).toMatchObject({ state: 'paused', endedAt: null });
+    await transport.emit(event('session', 0, 'transcript.final', { turnId: 'late', text: 'late event', endpointComplete: true }));
+    expect(controller.snapshot().conversationItems).toEqual([]);
+    writer.close();
+  });
+
+  it('keeps the live runtime available when the pause checkpoint fails', async () => {
+    const { controller, players, transport, writer } = await setup();
+    vi.spyOn(writer, 'pauseSession').mockResolvedValue({ ok: false, degradedReason: 'Could not save the pause checkpoint.' });
+    expect(await controller.pause()).toBe(false);
+    expect(players).toEqual([]);
+    expect(transport.connected).toBe(true);
+    expect(controller.snapshot()).toMatchObject({ dominant: 'degraded', degradedMessage: 'Could not save the pause checkpoint.' });
+    writer.close();
+  });
+
   it('reaches a clear stopped state and surfaces end-session persistence failure', async () => {
     const successful = await setup();
     await successful.controller.stop();
