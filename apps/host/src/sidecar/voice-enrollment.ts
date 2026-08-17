@@ -3,7 +3,11 @@ import type { SidecarProcess } from './process.js';
 
 const MAX_MESSAGE = 64 * 1024;
 const CHUNK_BYTES = 60 * 1024;
-export const VOICE_ENROLLMENT_TIMEOUT_MS = 30_000;
+// Enrolling a custom voice can cold-load the Qwen Base cloning model on CUDA
+// (model + graph warmup + prompt extraction), which comfortably exceeds the
+// conversational TTS target. Keep the host-side wait generous so a slow first
+// enrollment is not cut off after the browser already committed the reference.
+export const VOICE_ENROLLMENT_TIMEOUT_MS = 180_000;
 
 export interface VoiceEnrollmentSidecarInput {
   voiceId: string;
