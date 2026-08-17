@@ -87,8 +87,11 @@ def _run() -> int:
                 text = str(command.get("text", ""))
                 speaker = str(command.get("speaker", ""))
                 language = str(command.get("language", ""))
+                tone_prompt = command.get("tonePrompt")
+                if tone_prompt is not None and not isinstance(tone_prompt, str):
+                    raise ValueError("Qwen tone prompt must be a string")
                 with contextlib.redirect_stdout(sys.stderr):
-                    stream = backend.create_stream(text, speaker, language)
+                    stream = backend.create_stream(text, speaker, language, tone_prompt=tone_prompt)
                     try:
                         for value in stream:
                             samples, sample_rate = _packet(value)

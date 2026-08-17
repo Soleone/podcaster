@@ -48,7 +48,7 @@ export function stopVoicePreview(): void {
  * preview still playing. An in-flight request can be cancelled when the user
  * changes backend, voice, or closes the settings dialog.
  */
-export async function startVoicePreview(input: { voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; catalogId?: string; capability: string; signal?: AbortSignal }): Promise<VoicePreviewHandle> {
+export async function startVoicePreview(input: { voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; catalogId?: string; tonePrompt?: string; capability: string; signal?: AbortSignal }): Promise<VoicePreviewHandle> {
   stopVoicePreview();
   context ??= new AudioContext();
   if (context.state === 'suspended') await context.resume();
@@ -64,7 +64,7 @@ export async function startVoicePreview(input: { voiceId: string; speedModifier?
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json', 'x-podcaster-capability': input.capability },
-        body: JSON.stringify({ voiceId: input.voiceId, speedModifier: input.speedModifier ?? 1.0, ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}), ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : {}) }),
+        body: JSON.stringify({ voiceId: input.voiceId, speedModifier: input.speedModifier ?? 1.0, ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}), ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : {}), ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}) }),
         signal: controller.signal,
       });
     } catch (error) {

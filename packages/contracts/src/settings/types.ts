@@ -15,6 +15,8 @@ export const DEFAULT_VOICE_SPEED_MODIFIER = 1.0;
 export const MIN_VOICE_SPEED_MODIFIER = 0.5;
 /** Safe upper bound for the editable playback speed modifier. */
 export const MAX_VOICE_SPEED_MODIFIER = 2.0;
+/** Upper bound for an optional Qwen delivery-style instruction. */
+export const MAX_VOICE_TONE_PROMPT_BYTES = 1024;
 
 /** The stable identity of one selectable local TTS backend/model. */
 export interface TtsModelSelection {
@@ -89,6 +91,8 @@ export interface VoicePreference {
   voiceId: string;
   /** Multiplier passed to the verified TTS backend; 1.0 is normal speed. */
   speedModifier: number;
+  /** Optional Qwen CustomVoice delivery/style instruction; ignored by Kokoro. */
+  tonePrompt?: string;
   /** Optional to keep settings/session snapshots written before model selection valid. */
   backendId?: string;
   /** Optional to keep settings/session snapshots written before model selection valid. */

@@ -10,20 +10,20 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
-MODEL_REVISION = "85e237c12c027371202489a0ec509ded67b5e4b5"
-DESTINATION = ROOT / "models/qwen3-tts-12hz-0.6b-customvoice"
+MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+MODEL_REVISION = "6c3e96b6a2c593ce3e546ee699a5d944de81850e"
+DESTINATION = ROOT / "models/qwen3-tts-12hz-1.7b-customvoice"
 
 # These are the bytes required by the pinned Hugging Face revision. The two
 # safetensors hashes are also the upstream LFS SHA-256 values; the remaining
 # hashes were computed from the immutable revision after acquisition.
 ASSETS = (
     (".gitattributes", 1519, "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361"),
-    ("README.md", 3263, "1e3adeecc7a72d6756fdb77c2847f8e994195e105b51206a7a5c049b0dfa48a8"),
-    ("config.json", 4908, "81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455"),
+    ("README.md", 31, "4bcf87ecfbbb8e07a01b21415a970c8b53a5283bf6872b657040d3f45c9241f7"),
+    ("config.json", 4908, "17a07f527a1c25ea30b4e023a184482a23d3e279d697b1dc81b1bde498d29cf9"),
     ("generation_config.json", 245, "f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa"),
     ("merges.txt", 1671839, "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"),
-    ("model.safetensors", 1811626576, "bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb"),
+    ("model.safetensors", 3833402552, "38b1d5971bdbd982b561cccec982669a53b0537c3cf5e9bd4778ed07bb2f5137"),
     ("preprocessor_config.json", 127, "efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119"),
     (
         "speech_tokenizer/config.json",

@@ -46,7 +46,7 @@ from .util import (
 TTS_NORMALIZATION_VERSION = "tts-exact-text-v1"
 TTS_ADAPTER_FACTORIES: dict[str, Callable[[], Any]] = {
     "kokoro": KokoroStreamingAdapter,
-    "qwen3-0.6b": Qwen3StreamingAdapter,
+    "qwen3-1.7b": Qwen3StreamingAdapter,
 }
 TTS_WORKER_PREFIXES = (
     "kokoro-inference",
@@ -221,7 +221,7 @@ def _verified_tts_config(
     # the shared prompt manifest uses the locale label "en-us". Keep the model
     # API language candidate-specific, but compare the exact manifest locale.
     language_matches = prompt_language == model_language or (
-        candidate == "qwen3-0.6b" and prompt_language == "en-us" and model_language == "English"
+        candidate == "qwen3-1.7b" and prompt_language == "en-us" and model_language == "English"
     )
     if (
         prompts.get("kind") != "tts-prompts"
@@ -231,7 +231,7 @@ def _verified_tts_config(
         or len(prompts.get("items", [])) < 20
     ):
         raise ValueError("TTS prompt manifest contract mismatch or fewer than 20 prompts")
-    if candidate == "qwen3-0.6b":
+    if candidate == "qwen3-1.7b":
         for key, expected in QWEN_TOP_LEVEL_CONTRACT.items():
             if config.get(key) != expected:
                 raise ValueError(f"Qwen config {key} does not match the pinned contract")
@@ -321,7 +321,7 @@ def _verified_tts_config(
     configured_model_path = (ROOT / str(config.get("modelPath", ""))).resolve()
     if configured_model_path != expected_model_path:
         raise ValueError("TTS configured model path does not match verified manifest path")
-    if candidate == "qwen3-0.6b" and not expected_model_path.is_dir():
+    if candidate == "qwen3-1.7b" and not expected_model_path.is_dir():
         raise ValueError("TTS configured Qwen model directory is missing")
 
     config["modelPath"] = str(expected_model_path)
@@ -1364,5 +1364,5 @@ def probe_qwen_cancellation(
     adapter_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     return probe_tts_cancellation(
-        "qwen3-0.6b", config_path, prompts_path, run_dir, adapter_factory
+        "qwen3-1.7b", config_path, prompts_path, run_dir, adapter_factory
     )

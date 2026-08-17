@@ -23,7 +23,7 @@ const kokoroCatalog = {
 const qwenCatalog = {
   catalogId: 'qwen-catalog-v1',
   backendId: 'qwen3',
-  modelId: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+  modelId: 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
   runtimeConfigId: 'qwen-runtime-v1',
   revision: 'qwen-rev-1',
   defaultVoiceId: 'Ryan',
@@ -48,7 +48,7 @@ function readinessSnapshot() {
     voiceCatalog: kokoroCatalog,
     ttsModels: [
       { backendId: 'kokoro', modelId: 'kokoro-82m-onnx', label: 'Kokoro CUDA', status: 'ready', speed: kokoroCatalog.speed, voiceCatalog: kokoroCatalog },
-      { backendId: 'qwen3', modelId: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice', label: 'Qwen CustomVoice', status: 'ready', speed: qwenCatalog.speed, voiceCatalog: qwenCatalog },
+      { backendId: 'qwen3', modelId: 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice', label: 'Qwen CustomVoice', status: 'ready', speed: qwenCatalog.speed, voiceCatalog: qwenCatalog },
     ],
     activeTtsModel: { backendId: 'kokoro', modelId: 'kokoro-82m-onnx' },
   };
@@ -120,7 +120,7 @@ test('switching the TTS backend reconciles voice and speed controls and previews
   await expect.poll(() => previewRequests.length).toBeGreaterThan(0);
   expect(previewRequests.at(-1)).toMatchObject({
     backendId: 'qwen3',
-    modelId: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+    modelId: 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
     catalogId: 'qwen-catalog-v1',
     voiceId: 'Ryan',
     speedModifier: 1,

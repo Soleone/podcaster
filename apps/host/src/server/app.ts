@@ -13,7 +13,7 @@ import { BrowserSession } from './BrowserSession.js';
 import { encodeWav } from '../sidecar/wav.js';
 import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
 import { enrollCustomVoiceInSidecar, removeCustomVoiceFromSidecar } from '../sidecar/voice-enrollment.js';
-import { CUSTOM_VOICE_SAMPLE_RATE, MAX_CUSTOM_VOICE_ENROLLMENT_BODY, MAX_CUSTOM_VOICE_MS, MIN_CUSTOM_VOICE_MS, customVoiceId, isValidCustomVoiceId, normalizeCustomVoiceName, randomVoicePreviewPhrases, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, type TtsModelSelection } from '@app/contracts';
+import { CUSTOM_VOICE_SAMPLE_RATE, MAX_CUSTOM_VOICE_ENROLLMENT_BODY, MAX_CUSTOM_VOICE_MS, MAX_VOICE_TONE_PROMPT_BYTES, MIN_CUSTOM_VOICE_MS, customVoiceId, isValidCustomVoiceId, normalizeCustomVoiceName, randomVoicePreviewPhrases, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, type TtsModelSelection } from '@app/contracts';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_DISCONNECT_GRACE_MS = 30_000;
@@ -25,7 +25,7 @@ const unavailablePi: PiClient = {
   async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
   async shutdown() {},
 };
-export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; sessionDisconnectGraceMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
+export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; sessionDisconnectGraceMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 function parseTtsModel(value: unknown): TtsModelSelection | undefined {
@@ -53,7 +53,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   // TTS-only preview stream alongside the session capture stream.
   let voicePreviewInFlight = false;
   let voiceEnrollmentInFlight = false;
-  const voicePreview = options.voicePreview ?? (async (input: { catalogId: string; voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => {
+  const voicePreview = options.voicePreview ?? (async (input: { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => {
     const result = await synthesizeVoicePreview(options.sidecar, input, { signal });
     return { pcm16: result.pcm16, sampleRate: result.sampleRate };
   });
@@ -175,9 +175,9 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       activeTtsModel: requestedModel,
     };
   });
-  app.post('/api/voice-preview', { schema: { body: { type: 'object', additionalProperties: false, required: ['voiceId'], properties: { voiceId: { type: 'string', minLength: 1, maxLength: 128 }, catalogId: { type: 'string', minLength: 1, maxLength: 128 }, backendId: { type: 'string', minLength: 1, maxLength: 128 }, modelId: { type: 'string', minLength: 1, maxLength: 256 }, speedModifier: { type: 'number', minimum: MIN_VOICE_SPEED_MODIFIER, maximum: MAX_VOICE_SPEED_MODIFIER } } } } }, async (request, reply) => {
+  app.post('/api/voice-preview', { schema: { body: { type: 'object', additionalProperties: false, required: ['voiceId'], properties: { voiceId: { type: 'string', minLength: 1, maxLength: 128 }, catalogId: { type: 'string', minLength: 1, maxLength: 128 }, backendId: { type: 'string', minLength: 1, maxLength: 128 }, modelId: { type: 'string', minLength: 1, maxLength: 256 }, speedModifier: { type: 'number', minimum: MIN_VOICE_SPEED_MODIFIER, maximum: MAX_VOICE_SPEED_MODIFIER }, tonePrompt: { type: 'string', minLength: 1, maxLength: MAX_VOICE_TONE_PROMPT_BYTES } } } } }, async (request, reply) => {
     if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
-    const { voiceId, catalogId, backendId = DEFAULT_TTS_MODEL.backendId, modelId = DEFAULT_TTS_MODEL.modelId, speedModifier = DEFAULT_VOICE_SPEED_MODIFIER } = request.body as { voiceId: string; catalogId?: string; backendId?: string; modelId?: string; speedModifier?: number };
+    const { voiceId, catalogId, backendId = DEFAULT_TTS_MODEL.backendId, modelId = DEFAULT_TTS_MODEL.modelId, speedModifier = DEFAULT_VOICE_SPEED_MODIFIER, tonePrompt } = request.body as { voiceId: string; catalogId?: string; backendId?: string; modelId?: string; speedModifier?: number; tonePrompt?: string };
     const snapshot = await sidecarSnapshot(options.sidecar);
     if (!snapshot || snapshot.status !== 'ready') return reply.code(409).send({ error: 'voice_catalog_unavailable' });
     const descriptor = snapshot.ttsModels?.find(model => model.backendId === backendId && model.modelId === modelId);
@@ -187,6 +187,8 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     if (!selectedCatalog.voices.some(voice => voice.id === voiceId)) return reply.code(422).send({ error: 'unknown_voice' });
     const speed = descriptor?.speed ?? selectedCatalog.speed;
     if (speed && (speedModifier < speed.min || speedModifier > speed.max || (!speed.supported && speedModifier !== speed.default))) return reply.code(422).send({ error: 'unsupported_speed' });
+    const normalizedTonePrompt = tonePrompt?.trim();
+    if (normalizedTonePrompt && (backendId !== 'qwen3' || Buffer.byteLength(normalizedTonePrompt, 'utf8') > MAX_VOICE_TONE_PROMPT_BYTES)) return reply.code(422).send({ error: 'unsupported_tone_prompt' });
     if (voicePreviewInFlight) return reply.code(429).send({ error: 'preview_in_flight' });
     voicePreviewInFlight = true;
     // Abort synthesis when the browser disconnects; request.raw.signal is not
@@ -195,7 +197,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     const onAborted = () => controller.abort();
     request.raw.once('aborted', onAborted);
     try {
-      const { pcm16, sampleRate } = await voicePreview({ catalogId: selectedCatalog.catalogId, voiceId, speedModifier, backendId, modelId, phrases: randomVoicePreviewPhrases() }, controller.signal);
+      const { pcm16, sampleRate } = await voicePreview({ catalogId: selectedCatalog.catalogId, voiceId, speedModifier, ...(normalizedTonePrompt ? { tonePrompt: normalizedTonePrompt } : {}), backendId, modelId, phrases: randomVoicePreviewPhrases() }, controller.signal);
       const wav = encodeWav(pcm16, sampleRate);
       reply.header('content-type', 'audio/wav').header('cache-control', 'no-store');
       return reply.send(Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength));

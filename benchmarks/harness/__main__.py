@@ -26,7 +26,7 @@ def parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="run a benchmark")
     run.add_argument("--kind", choices=["synthetic", "stt", "tts"], required=True)
     run.add_argument("--config", type=Path)
-    run.add_argument("--candidate", choices=["nemotron", "parakeet", "kokoro", "qwen3-0.6b"])
+    run.add_argument("--candidate", choices=["nemotron", "parakeet", "kokoro", "qwen3-1.7b"])
     run.add_argument("--dataset", type=Path)
     run.add_argument("--prompts", type=Path)
     run.add_argument("--output-root", type=Path)
@@ -60,7 +60,7 @@ def parser() -> argparse.ArgumentParser:
     reveal.add_argument("--run", type=Path, required=True)
 
     cancel = commands.add_parser("probe-cancel", help="run a real TTS cancellation probe")
-    cancel.add_argument("--candidate", choices=["kokoro", "qwen3-0.6b"], required=True)
+    cancel.add_argument("--candidate", choices=["kokoro", "qwen3-1.7b"], required=True)
     cancel.add_argument("--config", type=Path, required=True)
     cancel.add_argument("--prompts", type=Path, required=True)
     cancel.add_argument("--run", type=Path, required=True)
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 if (
-                    args.candidate not in {"kokoro", "qwen3-0.6b"}
+                    args.candidate not in {"kokoro", "qwen3-1.7b"}
                     or args.prompts is None
                     or args.config is None
                     or args.dataset is not None

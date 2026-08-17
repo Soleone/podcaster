@@ -446,6 +446,7 @@ class KokoroStreamingAdapter:
         cancel: Cancellation,
         on_audio: AudioCallback | None = None,
         voice: str | None = None,
+        tone_prompt: str | None = None,
     ) -> SynthesisResult:
         text = validate_text(text, self.max_text_characters)
         cancel.raise_if_cancelled()

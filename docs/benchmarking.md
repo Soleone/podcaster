@@ -407,8 +407,8 @@ and Qwen runs.
 
 ## T4.2 Qwen3-TTS CustomVoice harness admission
 
-The admitted Qwen candidate is `qwen3-0.6b`, the official
-`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` snapshot at immutable revision
+The admitted Qwen candidate is `qwen3-1.7b`, the official
+`Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` snapshot at immutable revision
 `85e237c12c027371202489a0ec509ded67b5e4b5`. Its benchmark config binds the
 faster-Qwen streaming runtime, lockfile, CUDA device, bfloat16 precision, `Ryan`
 voice, and every model asset hash recorded in `docs/model-manifest.json`. The
@@ -438,8 +438,8 @@ Run and validate one candidate before comparison:
 
 ```sh
 run_dir=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
-  --candidate qwen3-0.6b \
-  --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --candidate qwen3-1.7b \
+  --config benchmarks/configs/tts/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
 uv run python -m benchmarks.harness validate "$run_dir"
 ```
@@ -451,8 +451,8 @@ fails closed on a mismatched run/config/model/prompt identity:
 
 ```sh
 /tmp/qwen-env/bin/python -m benchmarks.harness probe-cancel \
-  --candidate qwen3-0.6b \
-  --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --candidate qwen3-1.7b \
+  --config benchmarks/configs/tts/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json \
   --run "$run_dir"
 ```
@@ -465,8 +465,8 @@ and worker cleanup from raw events rather than trusting the submitted summary:
 
 ```sh
 soak_dir=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
-  --candidate qwen3-0.6b \
-  --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --candidate qwen3-1.7b \
+  --config benchmarks/configs/tts/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json \
   --soak-minutes 5 | tail -1)
 uv run python -m benchmarks.harness validate "$soak_dir"
@@ -518,7 +518,7 @@ cpu_run=$(/tmp/kokoro-cpu-env/bin/python -m benchmarks.harness run --kind tts \
   --candidate kokoro --config benchmarks/configs/tts/kokoro.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
 qwen_run=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
-  --candidate qwen3-0.6b --config benchmarks/configs/tts/qwen3-0.6b.yaml \
+  --candidate qwen3-1.7b --config benchmarks/configs/tts/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
 /tmp/kokoro-cpu-env/bin/python -m benchmarks.harness validate "$cpu_run"
 /tmp/qwen-env/bin/python -m benchmarks.harness validate "$qwen_run"

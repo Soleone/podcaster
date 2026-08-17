@@ -22,7 +22,7 @@ from services.audio.src.tts.base import AudioChunk, SynthesisResult
 
 CONFIG = ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml"
 CPU_CONFIG = ROOT / "benchmarks/configs/tts/kokoro.yaml"
-QWEN_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-0.6b.yaml"
+QWEN_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-1.7b.yaml"
 PROMPTS = ROOT / "benchmarks/datasets/tts-prompts-v1.manifest.json"
 
 
@@ -34,7 +34,7 @@ class FakeQwenTtsAdapter:
         self._poisoned = False
 
     def prepare(self, config: dict[str, Any]) -> None:
-        assert config["candidate"]["id"] == "qwen3-0.6b"
+        assert config["candidate"]["id"] == "qwen3-1.7b"
         assert config["candidate"]["voice"] == "Ryan"
         assert config["language"] == "English"
         self.prepared = True
@@ -126,7 +126,7 @@ def test_prompt_manifest_is_tracked_complete_and_hash_verified(tmp_path: Path) -
 
 def test_qwen_candidate_run_and_cancellation_probe_validate(tmp_path: Path) -> None:
     run = run_tts(
-        "qwen3-0.6b",
+        "qwen3-1.7b",
         QWEN_CONFIG,
         PROMPTS,
         tmp_path,
@@ -134,7 +134,7 @@ def test_qwen_candidate_run_and_cancellation_probe_validate(tmp_path: Path) -> N
     )
     assert validate_run(run) == {"items": 24, "events": 75, "ratings": 0}
     run_data = json.loads((run / "run.json").read_text())
-    assert run_data["models"][0]["id"] == "qwen3-0.6b"
+    assert run_data["models"][0]["id"] == "qwen3-1.7b"
     assert run_data["comparisonSemantics"]["language"] == "en-us"
     assert run_data["models"][0]["voice"] == "Ryan"
     probe = probe_qwen_cancellation(
@@ -144,7 +144,7 @@ def test_qwen_candidate_run_and_cancellation_probe_validate(tmp_path: Path) -> N
         adapter_factory=FakeQwenTtsAdapter,
     )
     assert probe["outcome"] == "cancelled"
-    assert probe["candidateId"] == "qwen3-0.6b"
+    assert probe["candidateId"] == "qwen3-1.7b"
     assert probe["postCloseSurvivingWorkers"] == []
 
     kokoro = run_tts(
@@ -155,10 +155,10 @@ def test_qwen_candidate_run_and_cancellation_probe_validate(tmp_path: Path) -> N
         adapter_factory=FakeTtsAdapter,
     )
     comparison = compare_tts_runs([kokoro, run])
-    assert {entry["candidateId"] for entry in comparison["runs"]} == {"kokoro", "qwen3-0.6b"}
+    assert {entry["candidateId"] for entry in comparison["runs"]} == {"kokoro", "qwen3-1.7b"}
     view = prepare_listening_runs([kokoro, run], "opaque-qwen-listener")
     view_text = view.read_text()
-    assert "qwen3-0.6b" not in view_text
+    assert "qwen3-1.7b" not in view_text
     assert "kokoro" not in view_text
     assert '"rateable":true' in view_text
 
@@ -174,7 +174,7 @@ def test_qwen_config_rejects_pinned_runtime_contract_mismatch(monkeypatch: pytes
     config["candidate"]["runtime"] = "untrusted-qwen-runtime"
     monkeypatch.setattr(tts_runner, "load_yaml_subset", lambda _path: config)
     with pytest.raises(ValueError, match="runtime mismatch"):
-        tts_runner._verified_tts_config("qwen3-0.6b", QWEN_CONFIG, PROMPTS)
+        tts_runner._verified_tts_config("qwen3-1.7b", QWEN_CONFIG, PROMPTS)
 
 
 def test_tts_runner_writes_valid_pcm_metadata_and_recomputable_summary(tmp_path: Path) -> None:

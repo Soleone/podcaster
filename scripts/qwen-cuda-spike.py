@@ -26,9 +26,9 @@ from typing import Any
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 MODEL_REVISION = "85e237c12c027371202489a0ec509ded67b5e4b5"
-MODEL_DIR = ROOT / "models/qwen3-tts-12hz-0.6b-customvoice"
+MODEL_DIR = ROOT / "models/qwen3-tts-12hz-1.7b-customvoice"
 MANIFEST_PATH = ROOT / "docs/model-manifest.json"
 SAMPLE_RATE = 24_000
 SPEAKER = "Ryan"

@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Any, Protocol
 
-from .base import AudioCallback, AudioChunk, Cancellation, SynthesisResult, speed_capability
+from .base import AudioCallback, AudioChunk, Cancellation, MAX_VOICE_TONE_PROMPT_BYTES, SynthesisResult, speed_capability
 from .kokoro import segment_text, validate_text
 from ..voice_enrollment import (
     CUSTOM_VOICE_SAMPLE_RATE,
@@ -25,10 +25,10 @@ from ..voice_enrollment import (
     validate_voice_id,
 )
 
-CANDIDATE_ID = "qwen3-0.6b"
-MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
-MODEL_REVISION = "85e237c12c027371202489a0ec509ded67b5e4b5"
-MODEL_SHA256 = "bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb"
+CANDIDATE_ID = "qwen3-1.7b"
+MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+MODEL_REVISION = "6c3e96b6a2c593ce3e546ee699a5d944de81850e"
+MODEL_SHA256 = "38b1d5971bdbd982b561cccec982669a53b0537c3cf5e9bd4778ed07bb2f5137"
 # User-enrolled voices are synthesized through the pinned Base voice-cloning
 # route (decision 008). The CustomVoice model stays authoritative for stock
 # speakers; the Base model is never used to fake a stock voice.
@@ -78,7 +78,7 @@ RUNTIME_CONTRACT = (
 )
 
 ROOT = Path(__file__).resolve().parents[4]
-MODEL_PATH = (ROOT / "models/qwen3-tts-12hz-0.6b-customvoice").resolve()
+MODEL_PATH = (ROOT / "models/qwen3-tts-12hz-1.7b-customvoice").resolve()
 BASE_MODEL_PATH = (ROOT / "models/qwen3-tts-12hz-0.6b-base").resolve()
 QWEN_REQUIREMENTS_PATH = (ROOT / "services/audio/qwen-requirements.lock").resolve()
 SAMPLE_RATE = 24_000
@@ -105,7 +105,7 @@ REPETITION_PENALTY = 1.05
 OUTPUT_FORMAT = "pcm_s16le_mono"
 MAX_TEXT_CHARACTERS = 4_000
 CHUNK_SAMPLES = SAMPLE_RATE * 20 // 1000
-TTS_CONFIG_ID = "qwen3-tts-0.6b-customvoice-cuda-v1"
+TTS_CONFIG_ID = "qwen3-tts-1.7b-customvoice-cuda-v1"
 
 # These names and hashes are the complete immutable Base snapshot acquired by
 # scripts/acquire-qwen3-tts-base.py and attested in artifacts/evidence
@@ -142,8 +142,8 @@ BASE_MODEL_ASSETS: tuple[tuple[str, str], ...] = (
 
 MODEL_ASSETS: tuple[tuple[str, str], ...] = (
     (".gitattributes", "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361"),
-    ("README.md", "1e3adeecc7a72d6756fdb77c2847f8e994195e105b51206a7a5c049b0dfa48a8"),
-    ("config.json", "81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455"),
+    ("README.md", "4bcf87ecfbbb8e07a01b21415a970c8b53a5283bf6872b657040d3f45c9241f7"),
+    ("config.json", "17a07f527a1c25ea30b4e023a184482a23d3e279d697b1dc81b1bde498d29cf9"),
     ("generation_config.json", "f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa"),
     ("merges.txt", "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"),
     ("model.safetensors", MODEL_SHA256),
@@ -184,7 +184,7 @@ class QwenBackend(Protocol):
     def get_voices(self) -> list[str]: ...
 
     def create_stream(
-        self, text: str, speaker: str, language: str
+        self, text: str, speaker: str, language: str, tone_prompt: str | None = None
     ) -> Iterator[tuple[Any, int, dict[str, Any]]]: ...
 
     def reset(self) -> None: ...
@@ -506,7 +506,7 @@ class FasterQwenTorchBackend:
         return list(self.voices)
 
     def create_stream(
-        self, text: str, speaker: str, language: str
+        self, text: str, speaker: str, language: str, tone_prompt: str | None = None
     ) -> Iterator[tuple[Any, int, dict[str, Any]]]:
         if self.model is None:
             raise RuntimeError("Qwen backend is not prepared")
@@ -517,6 +517,7 @@ class FasterQwenTorchBackend:
             text=text,
             speaker=speaker,
             language=language,
+            instruct=tone_prompt,
             non_streaming_mode=True,
             max_new_tokens=MAX_NEW_TOKENS,
             min_new_tokens=MIN_NEW_TOKENS,
@@ -591,7 +592,7 @@ class FasterQwenBaseCloneBackend:
             raise RuntimeError(f"pinned Qwen clone model is not a Base model: {model_type!r}")
 
     def create_stream(
-        self, text: str, prompt: dict[str, Any], language: str
+        self, text: str, prompt: dict[str, Any], language: str, tone_prompt: str | None = None
     ) -> Iterator[tuple[Any, int, dict[str, Any]]]:
         if self.model is None:
             raise RuntimeError("Qwen clone backend is not prepared")
@@ -599,6 +600,7 @@ class FasterQwenBaseCloneBackend:
             text=text,
             language=language,
             voice_clone_prompt=prompt,
+            instruct=tone_prompt,
             non_streaming_mode=False,
             max_new_tokens=MAX_NEW_TOKENS,
             min_new_tokens=MIN_NEW_TOKENS,
@@ -1021,8 +1023,13 @@ class Qwen3StreamingAdapter:
         cancel: Cancellation,
         on_audio: AudioCallback | None = None,
         voice: str | None = None,
+        tone_prompt: str | None = None,
     ) -> SynthesisResult:
         text = validate_text(text, self.max_text_characters)
+        if tone_prompt is not None:
+            tone_prompt = tone_prompt.strip()
+            if len(tone_prompt.encode("utf-8")) > MAX_VOICE_TONE_PROMPT_BYTES:
+                raise ValueError("Qwen tone prompt exceeds the configured byte limit")
         cancel.raise_if_cancelled()
         with self._lock:
             if not self.prepared or self.closed or self.backend is None:
@@ -1076,15 +1083,22 @@ class Qwen3StreamingAdapter:
                             raise RuntimeError("Qwen clone backend is unavailable")
                         if not isinstance(custom_prompt, dict):
                             raise RuntimeError("custom voice prompt is malformed")
-                        stream = clone_backend.create_stream(
+                        stream = (clone_backend.create_stream(
                             segment,
                             self._prompt_to_device(custom_prompt),
                             self.language,
-                        )
+                            tone_prompt=tone_prompt,
+                        ) if tone_prompt is not None else clone_backend.create_stream(
+                            segment,
+                            self._prompt_to_device(custom_prompt),
+                            self.language,
+                        ))
                     else:
                         if native_voice is None:
                             raise RuntimeError("stock Qwen voice is unavailable")
-                        stream = backend.create_stream(segment, native_voice, self.language)
+                        stream = (backend.create_stream(segment, native_voice, self.language, tone_prompt=tone_prompt)
+                                  if tone_prompt is not None
+                                  else backend.create_stream(segment, native_voice, self.language))
                     try:
                         for native in stream:
                             cancel.raise_if_cancelled()

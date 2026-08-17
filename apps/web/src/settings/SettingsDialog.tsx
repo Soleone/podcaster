@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Square } from 'lucide-react';
-import { DEFAULT_TTS_MODEL, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, PODCASTER_SYSTEM_PROMPT, ttsModelKey, voiceSpeedCapability, utf8ByteLength, withCustomVoices, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_TTS_MODEL, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_TONE_PROMPT_BYTES, PODCASTER_SYSTEM_PROMPT, ttsModelKey, voiceSpeedCapability, utf8ByteLength, withCustomVoices, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
@@ -36,7 +36,7 @@ export interface SettingsDialogProps {
   saving: boolean;
   saveError: string | undefined;
   onSave: (agentName: string, persona: string, voice: VoicePreference, selectedModel?: TtsModelSelection, voiceProfiles?: Record<string, VoicePreference>) => Promise<void>;
-  onPreviewVoice?: (voiceId: string, speedModifier: number, selectedModel?: TtsModelSelection, catalogId?: string, signal?: AbortSignal) => Promise<VoicePreviewHandle>;
+  onPreviewVoice?: (voiceId: string, speedModifier: number, selectedModel?: TtsModelSelection, catalogId?: string, tonePrompt?: string, signal?: AbortSignal) => Promise<VoicePreviewHandle>;
   customVoices?: CustomVoiceRecord[];
   onEnrollCustomVoice?: (name: string, take: ReferenceTake) => Promise<void>;
   onDeleteCustomVoice?: (voiceId: string) => Promise<void>;
@@ -50,6 +50,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
   const [voiceProfiles, setVoiceProfiles] = useState<Record<string, VoicePreference>>(model.voiceProfiles ?? {});
   const [voiceId, setVoiceId] = useState(model.voice.voiceId);
   const [speedModifier, setSpeedModifier] = useState(String(model.voice.speedModifier));
+  const [tonePrompt, setTonePrompt] = useState(model.voice.tonePrompt ?? '');
   const [voiceNotice, setVoiceNotice] = useState(model.notice);
   const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing'>('idle');
   const [previewError, setPreviewError] = useState<string | undefined>(undefined);
@@ -79,10 +80,11 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     setVoiceProfiles(model.voiceProfiles ?? {});
     setVoiceId(model.voice.voiceId);
     setSpeedModifier(String(model.voice.speedModifier));
+    setTonePrompt(model.voice.tonePrompt ?? '');
     setVoiceNotice(model.notice);
     setPreviewState('idle');
     setPreviewError(undefined);
-  }, [open, model.agentName, model.persona, model.selectedModel?.backendId, model.selectedModel?.modelId, model.voice.voiceId, model.voice.speedModifier, model.notice, model.voiceProfiles, customVoices]);
+  }, [open, model.agentName, model.persona, model.selectedModel?.backendId, model.selectedModel?.modelId, model.voice.voiceId, model.voice.speedModifier, model.voice.tonePrompt, model.notice, model.voiceProfiles, customVoices]);
 
   useEffect(() => () => { invalidatePreview(false); }, []);
 
@@ -98,9 +100,11 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     || speedModifierValue < speedCapability.min
     || speedModifierValue > speedCapability.max
     || (!speedCapability.supported && speedModifierValue !== speedCapability.default);
+  const tonePromptBytes = useMemo(() => utf8ByteLength(tonePrompt), [tonePrompt]);
+  const tonePromptInvalid = selectedModel.backendId === 'qwen3' && tonePromptBytes > MAX_VOICE_TONE_PROMPT_BYTES;
   const catalogReady = Boolean(displayCatalog && displayCatalog.voices.length > 0);
   const selectedVoice = displayCatalog?.voices.find(voice => voice.id === voiceId);
-  const canSave = !agentNameInvalid && !personaInvalid && !speedModifierInvalid && !saving && (!catalogReady || Boolean(voiceId));
+  const canSave = !agentNameInvalid && !personaInvalid && !speedModifierInvalid && !tonePromptInvalid && !saving && (!catalogReady || Boolean(voiceId));
 
   const selectModel = (value: string | null) => {
     const next = models.find(item => ttsModelKey(item) === value);
@@ -115,6 +119,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     setVoiceProfiles(previous => ({ ...previous, [key]: nextVoice }));
     setVoiceId(nextVoice.voiceId);
     setSpeedModifier(String(nextVoice.speedModifier));
+    setTonePrompt(nextVoice.tonePrompt ?? '');
     setVoiceNotice(reconciled.notice);
     invalidatePreview();
   };
@@ -122,7 +127,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
   const commit = async () => {
     if (!canSave) return;
     const selectedSpeed = speedCapability.supported ? speedModifierValue : speedCapability.default;
-    const voice: VoicePreference = { catalogId: displayCatalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '', speedModifier: selectedSpeed, backendId: selectedModel.backendId, modelId: selectedModel.modelId };
+    const voice: VoicePreference = { catalogId: displayCatalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '', speedModifier: selectedSpeed, ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : {}), backendId: selectedModel.backendId, modelId: selectedModel.modelId };
     const profiles = { ...voiceProfiles, [ttsModelKey(selectedModel)]: voice };
     await onSave(agentName, persona, voice, selectedModel, profiles);
   };
@@ -139,7 +144,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     const generation = ++previewGenerationRef.current;
     previewRequestRef.current = request;
     try {
-      const handle = await onPreviewVoice(voiceId, speedCapability.supported ? speedModifierValue : speedCapability.default, selectedModel, displayCatalog?.catalogId, request.signal);
+      const handle = await onPreviewVoice(voiceId, speedCapability.supported ? speedModifierValue : speedCapability.default, selectedModel, displayCatalog?.catalogId, selectedModel.backendId === 'qwen3' && tonePrompt.trim() ? tonePrompt.trim() : undefined, request.signal);
       // The dialog may have closed or moved on while the fetch was in flight.
       if (generation !== previewGenerationRef.current || request.signal.aborted || !open) {
         handle.stop();
@@ -265,7 +270,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                 <FieldContent>
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
-                      {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: displayCatalog!.catalogId, voiceId: value, speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default, ...selectedModel } })); invalidatePreview(); } }} disabled={!catalogReady}>
+                      {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: displayCatalog!.catalogId, voiceId: value, speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default, ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : {}), ...selectedModel } })); invalidatePreview(); } }} disabled={!catalogReady}>
                         <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
                           <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
                         </SelectTrigger>
@@ -292,6 +297,23 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                   {displayCatalog ? <FieldDescription>Backend {displayCatalog.backendId} · model {displayCatalog.modelId} · revision {displayCatalog.revision.slice(0, 8)}</FieldDescription> : null}
                 </FieldContent>
               </Field>
+              {selectedModel.backendId === 'qwen3' ? <Field data-invalid={tonePromptInvalid || undefined}>
+                <FieldLabel htmlFor="settings-voice-tone">Tone / style instruction</FieldLabel>
+                <FieldContent>
+                  <Textarea
+                    id="settings-voice-tone"
+                    value={tonePrompt}
+                    onChange={event => { setTonePrompt(event.target.value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: displayCatalog?.catalogId ?? '', voiceId, speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default, ...(event.target.value.trim() ? { tonePrompt: event.target.value.trim() } : {}), ...selectedModel } })); invalidatePreview(); }}
+                    aria-invalid={tonePromptInvalid || undefined}
+                    aria-describedby="settings-voice-tone-description settings-voice-tone-counter"
+                    placeholder="e.g. Warm, calm, and reassuring"
+                    className="min-h-20"
+                  />
+                  <div className="flex justify-end text-xs text-muted-foreground" id="settings-voice-tone-counter" aria-live="polite">{tonePromptBytes.toLocaleString()} / {MAX_VOICE_TONE_PROMPT_BYTES.toLocaleString()}</div>
+                  <FieldDescription id="settings-voice-tone-description">Qwen uses this instruction to shape delivery, such as warmth, energy, or pacing. Leave empty for the model default. Preview uses this instruction too.</FieldDescription>
+                  {tonePromptInvalid ? <FieldError>Tone instruction exceeds the {MAX_VOICE_TONE_PROMPT_BYTES}-byte limit.</FieldError> : null}
+                </FieldContent>
+              </Field> : null}
               <Field data-invalid={speedModifierInvalid || undefined}>
                 <FieldLabel htmlFor="settings-voice-speed">Speed modifier</FieldLabel>
                 <FieldContent>
@@ -303,7 +325,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                     step="0.05"
                     value={speedModifier}
                     disabled={!speedCapability.supported}
-                    onChange={event => { setSpeedModifier(event.target.value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: displayCatalog?.catalogId ?? '', voiceId, speedModifier: Number(event.target.value), ...selectedModel } })); invalidatePreview(); }}
+                    onChange={event => { setSpeedModifier(event.target.value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: displayCatalog?.catalogId ?? '', voiceId, speedModifier: Number(event.target.value), ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : {}), ...selectedModel } })); invalidatePreview(); }}
                     aria-invalid={speedModifierInvalid || undefined}
                     aria-describedby="settings-voice-speed-description"
                   />

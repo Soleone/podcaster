@@ -330,7 +330,7 @@ describe('WebSocketSessionTransport progressive ordering', () => {
       playbackId: playbackA,
       sampleRate: 24_000,
       backendId: 'qwen3',
-      modelId: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+      modelId: 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
     }));
     expectNoProtocolFailure(socket);
   });

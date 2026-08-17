@@ -81,7 +81,7 @@ def config(**overrides: Any) -> dict[str, Any]:
         "topP": 1.0,
         "doSample": True,
         "repetitionPenalty": 1.05,
-        "modelPath": "/verified/qwen3-tts-12hz-0.6b-customvoice",
+        "modelPath": "/verified/qwen3-tts-12hz-1.7b-customvoice",
     }
     value.update(overrides)
     return value
@@ -97,6 +97,7 @@ class FakeBackend:
         self.error: BaseException | None = None
         self.delay = 0.0
         self.texts: list[str] = []
+        self.tone_prompts: list[str | None] = []
 
     def prepare(self, model_path: str, device: str, dtype: str, attention: str) -> None:
         self.prepared = (model_path, device, dtype, attention)
@@ -104,8 +105,9 @@ class FakeBackend:
     def get_voices(self) -> list[str]:
         return [SPEAKER]
 
-    def create_stream(self, text: str, speaker: str, language: str) -> Iterator[Any]:
+    def create_stream(self, text: str, speaker: str, language: str, tone_prompt: str | None = None) -> Iterator[Any]:
         self.texts.append(text)
+        self.tone_prompts.append(tone_prompt)
         assert (speaker, language) == (SPEAKER, LANGUAGE)
 
         def packets() -> Iterator[Any]:
@@ -182,7 +184,7 @@ def test_prepare_binds_runtime_and_model_path_before_backend() -> None:
     adapter.prepare(config())
     assert calls == ["runtime", "assets"]
     assert backend.prepared == (
-        "/verified/qwen3-tts-12hz-0.6b-customvoice",
+        "/verified/qwen3-tts-12hz-1.7b-customvoice",
         DEVICE,
         PRECISION,
         ATTENTION,
@@ -226,6 +228,13 @@ def test_native_multiword_speaker_ids_are_mapped_to_catalog_labels() -> None:
     assert catalog["defaultVoiceId"] == SPEAKER
     assert catalog["speed"] == {"supported": False, "min": 1.0, "max": 1.0, "default": 1.0}
     adapter.synthesize_stream("Mapped voice.", CancelToken(), voice="Ono Anna")
+    adapter.close()
+
+
+def test_custom_voice_tone_instruction_reaches_faster_backend() -> None:
+    adapter, backend = prepared()
+    adapter.synthesize_stream("Tone test.", CancelToken(), tone_prompt="Warm and reassuring.")
+    assert backend.tone_prompts == ["Warm and reassuring."]
     adapter.close()
 
 

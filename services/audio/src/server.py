@@ -256,6 +256,7 @@ class SidecarServer:
                         payload.get("partId"),
                         voice_id=str(payload["voiceId"]),
                         speed_modifier=payload.get("speedModifier"),
+                        tone_prompt=payload.get("tonePrompt"),
                     )
                 elif message_type == "tts.append":
                     self.runtime.append_tts(
@@ -278,7 +279,7 @@ class SidecarServer:
                         part_id=payload.get("partId"),
                     )
                 elif message_type == "tts.request":
-                    self.runtime.request_tts(opened_stream, str(payload["responseId"]), int(payload["epoch"]), str(payload["text"]), voice_id=str(payload["voiceId"]), speed_modifier=payload.get("speedModifier"))
+                    self.runtime.request_tts(opened_stream, str(payload["responseId"]), int(payload["epoch"]), str(payload["text"]), voice_id=str(payload["voiceId"]), speed_modifier=payload.get("speedModifier"), tone_prompt=payload.get("tonePrompt"))
                 elif message_type == "tts.cancel":
                     self.runtime.cancel_tts(
                         opened_stream,

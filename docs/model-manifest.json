@@ -107,9 +107,9 @@
    "acquisitionCommand": "uv run python scripts/acquire-kokoro.py"
   },
   {
-   "id": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
-   "revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
-   "version": "qwen3-tts-12hz-0.6b-customvoice-85e237c1",
+   "id": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+   "revision": "6c3e96b6a2c593ce3e546ee699a5d944de81850e",
+   "version": "qwen3-tts-12hz-1.7b-customvoice-6c3e96b6",
    "runtime": "qwen-tts==0.1.1; transformers==4.57.3; accelerate==1.12.0; torch==2.12.1+cu130 (CUDA 13.0); dtype=torch.bfloat16; attn_implementation=eager",
    "streamingRuntime": "faster-qwen3-tts==0.3.2; git=a70afc0f81f7f5f8801c3227968f1102f43f211c; qwen-tts==0.1.1; transformers==4.57.3; accelerate==1.12.0; torch==2.12.1+cu130 (CUDA 13.0); dtype=torch.bfloat16; attn_implementation=eager",
    "streamingRuntimeRevision": "a70afc0f81f7f5f8801c3227968f1102f43f211c",
@@ -125,67 +125,67 @@
    "device": "cuda:0",
    "nativeSampleRate": 24000,
    "file": "model.safetensors",
-   "path": "models/qwen3-tts-12hz-0.6b-customvoice/model.safetensors",
-   "runtimePath": "models/qwen3-tts-12hz-0.6b-customvoice",
-   "sha256": "bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb",
+   "path": "models/qwen3-tts-12hz-1.7b-customvoice/model.safetensors",
+   "runtimePath": "models/qwen3-tts-12hz-1.7b-customvoice",
+   "sha256": "38b1d5971bdbd982b561cccec982669a53b0537c3cf5e9bd4778ed07bb2f5137",
    "files": [
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/.gitattributes",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/.gitattributes",
      "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/README.md",
-     "sha256": "1e3adeecc7a72d6756fdb77c2847f8e994195e105b51206a7a5c049b0dfa48a8"
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/README.md",
+     "sha256": "4bcf87ecfbbb8e07a01b21415a970c8b53a5283bf6872b657040d3f45c9241f7"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/config.json",
-     "sha256": "81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455"
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/config.json",
+     "sha256": "17a07f527a1c25ea30b4e023a184482a23d3e279d697b1dc81b1bde498d29cf9"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/generation_config.json",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/generation_config.json",
      "sha256": "f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/merges.txt",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/merges.txt",
      "sha256": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/model.safetensors",
-     "sha256": "bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb"
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/model.safetensors",
+     "sha256": "38b1d5971bdbd982b561cccec982669a53b0537c3cf5e9bd4778ed07bb2f5137"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/preprocessor_config.json",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/preprocessor_config.json",
      "sha256": "efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/speech_tokenizer/config.json",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/speech_tokenizer/config.json",
      "sha256": "ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/speech_tokenizer/configuration.json",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/speech_tokenizer/configuration.json",
      "sha256": "6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/speech_tokenizer/model.safetensors",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/speech_tokenizer/model.safetensors",
      "sha256": "836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/speech_tokenizer/preprocessor_config.json",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/speech_tokenizer/preprocessor_config.json",
      "sha256": "fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/tokenizer_config.json",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/tokenizer_config.json",
      "sha256": "dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670"
     },
     {
-     "path": "models/qwen3-tts-12hz-0.6b-customvoice/vocab.json",
+     "path": "models/qwen3-tts-12hz-1.7b-customvoice/vocab.json",
      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
     }
    ],
    "license": "Apache-2.0",
-   "licenseUrl": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/blob/85e237c12c027371202489a0ec509ded67b5e4b5/README.md",
+   "licenseUrl": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice/blob/6c3e96b6a2c593ce3e546ee699a5d944de81850e/README.md",
    "licenseTextUrl": "https://www.apache.org/licenses/LICENSE-2.0",
-   "upstreamUrl": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/tree/85e237c12c027371202489a0ec509ded67b5e4b5",
+   "upstreamUrl": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice/tree/6c3e96b6a2c593ce3e546ee699a5d944de81850e",
    "upstreamChecksums": "Hugging Face LFS SHA-256 values are recorded for both safetensors files; all other SHA-256 values were computed from the immutable revision after download",
    "acquisitionCommand": "uv run python scripts/acquire-qwen3-tts.py"
   },

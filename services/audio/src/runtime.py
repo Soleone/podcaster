@@ -21,7 +21,7 @@ from uuid import UUID
 from .binary_framing import BinaryAudioFrame, encode_frame
 from .stt.base import TranscriptUpdate
 from .stt.nemotron import NemotronStreamingAdapter
-from .tts.base import AudioChunk, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER
+from .tts.base import AudioChunk, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER
 from .tts.kokoro import KokoroStreamingAdapter
 from .tts.qwen_subprocess import IsolatedQwenAdapter
 from .vad.endpointer import DeterministicEndpointer, EndpointerConfig
@@ -34,13 +34,13 @@ STT_CONFIG_ID = "nemotron-3.5-transformers-fp32-320ms-paced-v1"
 STT_CONFIG_SHA256 = "140151ebb3d74b09a25fd0ebb4016aee2392f93f9410d87f015378b548b8660e"
 TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
 TTS_CONFIG_SHA256 = "64de64feba08bcb97efc4e148c30e342a800dae847768929f4c93d6c161af9a5"
-QWEN_TTS_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-0.6b.yaml"
-QWEN_TTS_CONFIG_ID = "qwen3-tts-0.6b-customvoice-cuda-v1"
-QWEN_TTS_CONFIG_SHA256 = "b240604744566bdf26cf04bf5c672ee7ae1ab88c7e767ff31ca11ce7b4c4421c"
+QWEN_TTS_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-1.7b.yaml"
+QWEN_TTS_CONFIG_ID = "qwen3-tts-1.7b-customvoice-cuda-v1"
+QWEN_TTS_CONFIG_SHA256 = "7ab59620186c724b052eb02cb0594a9761d6b217045529c3c13a99098715e4ed"
 KOKORO_BACKEND_ID = "kokoro"
 KOKORO_MODEL_ID = "kokoro-82m-onnx"
 QWEN_BACKEND_ID = "qwen3"
-QWEN_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+QWEN_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 CAPTURE_BYTES = 320 * 2
 STT_CHUNK_BYTES = 5_120 * 2
 MAX_STT_CHUNKS = 64
@@ -115,6 +115,7 @@ class TtsTextStream:
     part_id: str | None = None
     voice_id: str = ""
     speed_modifier: float = DEFAULT_VOICE_SPEED_MODIFIER
+    tone_prompt: str | None = None
 
 
 @dataclass
@@ -542,9 +543,9 @@ class SelectedAudioRuntime:
             utterance.epoch = epoch
             self._maybe_start_stt(state, utterance)
 
-    def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str, *, voice_id: str | None = None, speed_modifier: object = None) -> None:
+    def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str, *, voice_id: str | None = None, speed_modifier: object = None, tone_prompt: object = None) -> None:
         """Compatibility wrapper: one-shot TTS through the progressive path."""
-        self.open_tts(stream_id, response_id, epoch, voice_id=voice_id, speed_modifier=speed_modifier)
+        self.open_tts(stream_id, response_id, epoch, voice_id=voice_id, speed_modifier=speed_modifier, tone_prompt=tone_prompt)
         self.append_tts(stream_id, response_id, epoch, 0, text)
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         try:
@@ -568,6 +569,7 @@ class SelectedAudioRuntime:
         *,
         voice_id: str | None = None,
         speed_modifier: object = None,
+        tone_prompt: object = None,
     ) -> None:
         state = self._state(stream_id)
         adapter = state.tts_adapter
@@ -596,6 +598,11 @@ class SelectedAudioRuntime:
                 or (not bool(capability["supported"]) and speed != default_speed)
             ):
                 raise ValueError("TTS speed is unsupported or outside the selected model range")
+        if tone_prompt is not None and (not isinstance(tone_prompt, str) or len(tone_prompt.encode("utf-8")) > MAX_VOICE_TONE_PROMPT_BYTES):
+            raise ValueError("invalid Qwen tone prompt")
+        normalized_tone_prompt = tone_prompt.strip() if isinstance(tone_prompt, str) and tone_prompt.strip() else None
+        if normalized_tone_prompt is not None and str(voice_catalog.get("backendId")) != "qwen3":
+            raise ValueError("tone prompt is only supported by Qwen")
         tts_key = _tts_key(response_id, part_index)
         # Admission is deliberately bounded, but a replacement must not turn a
         # short terminalization race into a session-fatal protocol error. Wait
@@ -638,6 +645,7 @@ class SelectedAudioRuntime:
                         part_id=part_id,
                         voice_id=voice_id,
                         speed_modifier=speed,
+                        tone_prompt=normalized_tone_prompt,
                     )
                     state.tts_stream = text_stream
                     break
@@ -730,7 +738,10 @@ class SelectedAudioRuntime:
                     if previous_speed is not None:
                         adapter.speed = text_stream.speed_modifier
                     try:
-                        adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
+                        if text_stream.tone_prompt is None:
+                            adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
+                        else:
+                            adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id, tone_prompt=text_stream.tone_prompt)
                     finally:
                         if previous_speed is not None:
                             adapter.speed = previous_speed

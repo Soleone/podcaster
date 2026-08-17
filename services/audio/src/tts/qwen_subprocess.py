@@ -187,7 +187,7 @@ class IsolatedQwenBackend:
         return list(self.voices)
 
     def create_stream(
-        self, text: str, speaker: str, language: str
+        self, text: str, speaker: str, language: str, tone_prompt: str | None = None
     ) -> Iterator[tuple[np.ndarray, int, dict[str, Any]]]:
         def packets() -> Iterator[tuple[np.ndarray, int, dict[str, Any]]]:
             with self._io_lock:
@@ -197,6 +197,7 @@ class IsolatedQwenBackend:
                         "text": text,
                         "speaker": speaker,
                         "language": language,
+                        **({"tonePrompt": tone_prompt} if tone_prompt else {}),
                     }
                 )
                 while True:

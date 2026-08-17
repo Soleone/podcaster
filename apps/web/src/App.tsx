@@ -823,10 +823,10 @@ export function App() {
     await enrollStoredCustomVoice({ capability, voice: record });
   }, [capability]);
 
-  const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string, signal?: AbortSignal) => {
+  const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string, tonePrompt?: string, signal?: AbortSignal) => {
     if (!capability) throw new Error('The session capability is not ready yet.');
     await ensureCustomVoiceEnrolled(voiceId);
-    return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), ...(signal ? { signal } : {}), capability });
+    return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), ...(tonePrompt ? { tonePrompt } : {}), ...(signal ? { signal } : {}), capability });
   }, [capability, ensureCustomVoiceEnrolled]);
 
   const enrollVoice = useCallback(async (name: string, take: ReferenceTake) => {

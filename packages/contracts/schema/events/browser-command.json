@@ -73,6 +73,11 @@
                           "type": "number",
                           "minimum": 0.5,
                           "maximum": 2.0
+                        },
+                        "tonePrompt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
                         }
                       },
                       "dependentRequired": {

@@ -98,9 +98,10 @@ def test_selected_qwen_catalog_owns_voice_and_speed_for_its_stream() -> None:
         default_voice = "Ryan"
         speed = 1.0
 
-        def synthesize_stream(self, text, cancel, on_audio=None, voice=None):
+        def synthesize_stream(self, text, cancel, on_audio=None, voice=None, tone_prompt=None):
             assert text == "response"
             self.speeds.append(getattr(self, "speed", 1.0))
+            self.tone_prompt = tone_prompt
             for sequence in range(2):
                 cancel.raise_if_cancelled()
                 if on_audio:
@@ -125,12 +126,13 @@ def test_selected_qwen_catalog_owns_voice_and_speed_for_its_stream() -> None:
     events = []
     stream = "018f1f32-7abc-7def-8abc-0123456789ab"
     runtime.open_stream(stream, 12, events.append, lambda _: None, "capture", "qwen3", "qwen3-tts-0.6b")
-    runtime.request_tts(stream, "018f1f32-7abd-7def-8abc-0123456789ab", 0, "response", voice_id="Serena", speed_modifier=1.15)
+    runtime.request_tts(stream, "018f1f32-7abd-7def-8abc-0123456789ab", 0, "response", voice_id="Serena", speed_modifier=1.15, tone_prompt="Warm and reassuring")
     wait_for(events, "tts.ended")
     started = next(event for event in events if event["type"] == "tts.started")
     assert started["payload"]["backendId"] == "qwen3"
     assert started["payload"]["modelId"] == "qwen3-tts-0.6b"
     assert qwen.speeds == [1.15]
+    assert qwen.tone_prompt == "Warm and reassuring"
     with pytest.raises(ValueError, match="selected model range"):
         runtime.open_tts(stream, "018f1f32-7abe-7def-8abc-0123456789ab", 1, voice_id="Serena", speed_modifier=1.5)
     runtime.close_stream(stream)
