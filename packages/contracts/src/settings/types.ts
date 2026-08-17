@@ -18,6 +18,22 @@ export const MAX_VOICE_SPEED_MODIFIER = 2.0;
 /** Upper bound for an optional Qwen delivery-style instruction. */
 export const MAX_VOICE_TONE_PROMPT_BYTES = 1024;
 
+/** Languages supported by Qwen3-TTS CustomVoice and Base voice cloning. */
+export const QWEN_VOICE_LANGUAGES = [
+  "Chinese",
+  "English",
+  "Japanese",
+  "Korean",
+  "German",
+  "French",
+  "Russian",
+  "Portuguese",
+  "Spanish",
+  "Italian",
+] as const;
+export type QwenVoiceLanguage = (typeof QWEN_VOICE_LANGUAGES)[number];
+export const DEFAULT_QWEN_VOICE_LANGUAGE: QwenVoiceLanguage = "English";
+
 /** The stable identity of one selectable local TTS backend/model. */
 export interface TtsModelSelection {
   backendId: string;
@@ -93,6 +109,8 @@ export interface VoicePreference {
   speedModifier: number;
   /** Optional Qwen CustomVoice delivery/style instruction; ignored by Kokoro. */
   tonePrompt?: string;
+  /** Optional Qwen synthesis language; ignored by Kokoro. */
+  language?: QwenVoiceLanguage;
   /** Optional to keep settings/session snapshots written before model selection valid. */
   backendId?: string;
   /** Optional to keep settings/session snapshots written before model selection valid. */

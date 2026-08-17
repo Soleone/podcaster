@@ -2,7 +2,7 @@
 // store (no schema version bump), validated on every read. A failed save
 // preserves the last committed row and reports failure to the caller.
 
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, SETTINGS_VERSION, ttsModelKey, type TtsModelSelection, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, QWEN_VOICE_LANGUAGES, SETTINGS_VERSION, ttsModelKey, type TtsModelSelection, type VoicePreference } from '@app/contracts/settings';
 import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory } from '../storage/schema';
 
 export const SETTINGS_KEY = 'settings:v1';
@@ -30,6 +30,8 @@ function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
   if (typeof voice.catalogId !== 'string' || typeof voice.voiceId !== 'string' || typeof speedModifier !== 'number' || !Number.isFinite(speedModifier) || speedModifier < MIN_VOICE_SPEED_MODIFIER || speedModifier > MAX_VOICE_SPEED_MODIFIER) return undefined;
   const tonePrompt = voice.tonePrompt === undefined ? undefined : voice.tonePrompt;
   if (tonePrompt !== undefined && (typeof tonePrompt !== 'string' || !tonePrompt.trim() || new TextEncoder().encode(tonePrompt).length > MAX_VOICE_TONE_PROMPT_BYTES)) return undefined;
+  const language = voice.language === undefined ? undefined : voice.language;
+  if (language !== undefined && (typeof language !== 'string' || !(QWEN_VOICE_LANGUAGES as readonly string[]).includes(language))) return undefined;
   const hasBackend = voice.backendId !== undefined || voice.modelId !== undefined;
   if (hasBackend
     && (typeof voice.backendId !== 'string' || voice.backendId.length === 0
@@ -39,6 +41,7 @@ function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
     voiceId: voice.voiceId,
     speedModifier,
     ...(tonePrompt !== undefined ? { tonePrompt: tonePrompt.trim() } : {}),
+    ...(language !== undefined ? { language: language as Exclude<VoicePreference['language'], undefined> } : {}),
     ...(hasBackend ? { backendId: voice.backendId as string, modelId: voice.modelId as string } : {}),
   };
 }

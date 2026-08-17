@@ -57,7 +57,7 @@ export function settingsDigest(settings: { agentName: string; persona: string; v
     backendId: settings.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
     modelId: settings.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
   };
-  const source = `${settings.agentName}\u0000${settings.persona}\u0000${model.backendId}\u0000${model.modelId}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}\u0000${settings.voice.speedModifier}\u0000${settings.voice.tonePrompt ?? ''}`;
+  const source = `${settings.agentName}\u0000${settings.persona}\u0000${model.backendId}\u0000${model.modelId}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}\u0000${settings.voice.speedModifier}\u0000${settings.voice.tonePrompt ?? ''}\u0000${settings.voice.language ?? ''}`;
   let hash1 = 0x811c9dc5;
   let hash2 = 0x01000193 ^ 0x3f08;
   for (const byte of new TextEncoder().encode(source)) {
@@ -96,9 +96,9 @@ export function reconcileVoice(preference: VoicePreference | undefined, catalog:
       : { voice: preference };
   }
   if (preference && isValidVoicePreference(preference) && isVoiceInCatalog(catalog, preference.voiceId)) {
-    return { voice: { catalogId: catalog.catalogId, voiceId: preference.voiceId, speedModifier: speed, ...(preference.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}) }, notice: speedNotice ?? 'rebase' };
+    return { voice: { catalogId: catalog.catalogId, voiceId: preference.voiceId, speedModifier: speed, ...(preference.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}), ...(preference.language ? { language: preference.language } : {}) }, notice: speedNotice ?? 'rebase' };
   }
-  return { voice: { catalogId: catalog.catalogId, voiceId: catalog.defaultVoiceId, speedModifier: speed, ...(preference?.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}) }, notice: speedNotice ?? 'defaulted' };
+  return { voice: { catalogId: catalog.catalogId, voiceId: catalog.defaultVoiceId, speedModifier: speed, ...(preference?.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}), ...(preference?.language ? { language: preference.language } : {}) }, notice: speedNotice ?? 'defaulted' };
 }
 
 function descriptorCatalog(descriptor: TtsModelDescriptor | undefined): VoiceCatalog | undefined {

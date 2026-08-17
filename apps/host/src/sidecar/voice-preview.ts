@@ -22,6 +22,7 @@ export interface VoicePreviewRequest {
   voiceId: string;
   speedModifier?: number;
   tonePrompt?: string;
+  language?: string;
   backendId?: string;
   modelId?: string;
   phrases: string[];
@@ -49,7 +50,7 @@ export async function synthesizeVoicePreview(
     sidecar,
     {},
     encoded => { chunks.push(decodeBinaryAudioFrame(encoded, MAX_FRAME_PAYLOAD).pcm16); },
-    { catalogId: input.catalogId, voiceId: input.voiceId, ...(input.speedModifier !== undefined ? { speedModifier: input.speedModifier } : {}), ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}), ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}) },
+    { catalogId: input.catalogId, voiceId: input.voiceId, ...(input.speedModifier !== undefined ? { speedModifier: input.speedModifier } : {}), ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}), ...(input.language ? { language: input.language } : {}), ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}) },
   );
   try {
     await client.connect();

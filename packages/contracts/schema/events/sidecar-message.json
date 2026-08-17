@@ -597,6 +597,20 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 1024
+            },
+            "language": {
+              "enum": [
+                "Chinese",
+                "English",
+                "Japanese",
+                "Korean",
+                "German",
+                "French",
+                "Russian",
+                "Portuguese",
+                "Spanish",
+                "Italian"
+              ]
             }
           },
           "additionalProperties": false
@@ -645,6 +659,20 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 1024
+            },
+            "language": {
+              "enum": [
+                "Chinese",
+                "English",
+                "Japanese",
+                "Korean",
+                "German",
+                "French",
+                "Russian",
+                "Portuguese",
+                "Spanish",
+                "Italian"
+              ]
             },
             "partIndex": {
               "type": "integer",

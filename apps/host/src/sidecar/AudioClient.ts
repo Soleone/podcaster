@@ -26,7 +26,7 @@ export interface VadStartEvent { streamId: string; utteranceId: string; captureS
 export interface VadEndEvent { streamId: string; utteranceId: string; captureStartSequence: number; captureEndSequence: number }
 export interface SttPartial { streamId: string; utteranceId: string; epoch: number; sequence: number; text: string; replacedCharacters: number }
 export interface SttFinal { streamId: string; utteranceId: string; epoch: number; text: string; endpointComplete: true }
-export interface AudioClientVoiceSelection { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; backendId?: string; modelId?: string }
+export interface AudioClientVoiceSelection { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; language?: string; backendId?: string; modelId?: string }
 export interface AudioClientEvents {
   speechStart?(event: VadStartEvent): void;
   speechEnd?(event: VadEndEvent): void;
@@ -98,6 +98,7 @@ export class AudioClient implements SpeechOutputPort {
   private readonly voiceId: string;
   private readonly speedModifier: number;
   private readonly tonePrompt: string | undefined;
+  private readonly language: string | undefined;
   private readonly backendId: string;
   private readonly modelId: string;
   private readonly explicitModelSelection: boolean;
@@ -115,6 +116,7 @@ export class AudioClient implements SpeechOutputPort {
     this.voiceId = selection?.voiceId ?? 'af_heart';
     this.speedModifier = selection?.speedModifier ?? DEFAULT_VOICE_SPEED_MODIFIER;
     this.tonePrompt = selection?.tonePrompt;
+    this.language = selection?.language;
     this.backendId = selection?.backendId ?? DEFAULT_TTS_MODEL.backendId;
     this.modelId = selection?.modelId ?? DEFAULT_TTS_MODEL.modelId;
     this.explicitModelSelection = selection?.backendId !== undefined || selection?.modelId !== undefined;
@@ -283,7 +285,7 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   private ttsFields(input: { responseId: string; epoch: number; partIndex?: number; partId?: string }): Record<string, unknown> {
-    return { responseId: input.responseId, epoch: input.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}), ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
+    return { responseId: input.responseId, epoch: input.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}), ...(this.language && this.backendId === 'qwen3' ? { language: this.language } : {}), ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
   }
 
   private removeAdmitted(pending: PendingTts): void {
@@ -296,7 +298,7 @@ export class AudioClient implements SpeechOutputPort {
       const pending = this.queued.shift()!;
       pending.queued = false;
       this.admitted.push(pending);
-      this.sendForStream('tts.open', { responseId: pending.responseId, epoch: pending.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}), ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+      this.sendForStream('tts.open', { responseId: pending.responseId, epoch: pending.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}), ...(this.language && this.backendId === 'qwen3' ? { language: this.language } : {}), ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
       for (let index = 0; index < pending.bufferedAppends.length; index++) {
         this.sendForStream('tts.append', { responseId: pending.responseId, epoch: pending.epoch, sequence: index, text: pending.bufferedAppends[index]!, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
       }

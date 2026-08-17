@@ -22,7 +22,7 @@ import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn
 import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type QwenVoiceLanguage, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
@@ -823,10 +823,10 @@ export function App() {
     await enrollStoredCustomVoice({ capability, voice: record });
   }, [capability]);
 
-  const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string, tonePrompt?: string, signal?: AbortSignal) => {
+  const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string, tonePrompt?: string, language?: QwenVoiceLanguage, signal?: AbortSignal) => {
     if (!capability) throw new Error('The session capability is not ready yet.');
     await ensureCustomVoiceEnrolled(voiceId);
-    return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), ...(tonePrompt ? { tonePrompt } : {}), ...(signal ? { signal } : {}), capability });
+    return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), ...(tonePrompt ? { tonePrompt } : {}), ...(language ? { language } : {}), ...(signal ? { signal } : {}), capability });
   }, [capability, ensureCustomVoiceEnrolled]);
 
   const enrollVoice = useCallback(async (name: string, take: ReferenceTake) => {

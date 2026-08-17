@@ -22,6 +22,7 @@ import {
   VOICE_PREVIEW_MAX_TEXT_CHARS,
   VOICE_PREVIEW_PHRASES,
   VOICE_PREVIEW_PHRASE_COUNT,
+  QWEN_VOICE_LANGUAGES,
   utf8ByteLength,
 } from "../src/settings/index.js";
 
@@ -125,6 +126,13 @@ describe("settings validators", () => {
     expect(isValidSessionSettingsSnapshot({ ...snapshot, persona: "x".repeat(MAX_PERSONA_BYTES + 1) })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, voice: { catalogId: "", voiceId: "v" } })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, voice: { catalogId: "c", voiceId: "v", backendId: "qwen3" } })).toBe(false);
+  });
+
+  it("accepts each supported Qwen language and rejects unknown languages", () => {
+    for (const language of QWEN_VOICE_LANGUAGES) {
+      expect(isValidVoicePreference({ catalogId: "qwen-catalog", voiceId: "Ryan", speedModifier: 1.0, language })).toBe(true);
+    }
+    expect(isValidVoicePreference({ catalogId: "qwen-catalog", voiceId: "Ryan", speedModifier: 1.0, language: "Dutch" })).toBe(false);
   });
 
   it("accepts a Qwen-valued voice snapshot on the session.start wire shape", () => {

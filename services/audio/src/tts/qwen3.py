@@ -84,6 +84,18 @@ QWEN_REQUIREMENTS_PATH = (ROOT / "services/audio/qwen-requirements.lock").resolv
 SAMPLE_RATE = 24_000
 SPEAKER = "Ryan"
 VOICE = SPEAKER
+QWEN_SUPPORTED_LANGUAGES = (
+    "Chinese",
+    "English",
+    "Japanese",
+    "Korean",
+    "German",
+    "French",
+    "Russian",
+    "Portuguese",
+    "Spanish",
+    "Italian",
+)
 LANGUAGE = "English"
 PROVIDER = "CUDA"
 DEVICE = "cuda"
@@ -1027,6 +1039,7 @@ class Qwen3StreamingAdapter:
         on_audio: AudioCallback | None = None,
         voice: str | None = None,
         tone_prompt: str | None = None,
+        language: str | None = None,
     ) -> SynthesisResult:
         text = validate_text(text, self.max_text_characters)
         if tone_prompt is not None:
@@ -1052,6 +1065,9 @@ class Qwen3StreamingAdapter:
             backend = self.backend
             clone_backend = self._clone_backend
             custom_prompt = custom_voice.get("prompt") if custom_voice is not None else None
+            selected_language = self.language if language is None else language
+            if selected_language not in QWEN_SUPPORTED_LANGUAGES:
+                raise ValueError("requested Qwen language is not supported")
 
         started = time.perf_counter()
         inference_queue: queue.Queue[bytes | BaseException | None] = queue.Queue(maxsize=2)
@@ -1089,7 +1105,7 @@ class Qwen3StreamingAdapter:
                         stream = (clone_backend.create_stream(
                             segment,
                             self._prompt_to_device(custom_prompt),
-                            self.language,
+                            selected_language,
                             tone_prompt=tone_prompt,
                         ) if tone_prompt is not None else clone_backend.create_stream(
                             segment,
@@ -1099,9 +1115,9 @@ class Qwen3StreamingAdapter:
                     else:
                         if native_voice is None:
                             raise RuntimeError("stock Qwen voice is unavailable")
-                        stream = (backend.create_stream(segment, native_voice, self.language, tone_prompt=tone_prompt)
+                        stream = (backend.create_stream(segment, native_voice, selected_language, tone_prompt=tone_prompt)
                                   if tone_prompt is not None
-                                  else backend.create_stream(segment, native_voice, self.language))
+                                  else backend.create_stream(segment, native_voice, selected_language))
                     try:
                         for native in stream:
                             cancel.raise_if_cancelled()
@@ -1315,6 +1331,7 @@ __all__ = [
     "PRECISION",
     "PROVIDER",
     "QWEN_LOCK_SHA256",
+    "QWEN_SUPPORTED_LANGUAGES",
     "QWEN_REQUIREMENTS_LOCK_SHA256",
     "Qwen3StreamingAdapter",
     "QwenStreamingAdapter",

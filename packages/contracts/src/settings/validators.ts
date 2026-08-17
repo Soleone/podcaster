@@ -9,7 +9,7 @@ import type {
   VoicePreference,
 } from "./types.js";
 import { normalizePersona } from "./persona.js";
-import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_CAPABILITY, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, type TtsModelDescriptor, type VoiceSpeedCapability } from "./types.js";
+import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_CAPABILITY, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, QWEN_VOICE_LANGUAGES, type TtsModelDescriptor, type VoiceSpeedCapability } from "./types.js";
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -84,6 +84,7 @@ export function isValidVoicePreference(value: unknown): value is VoicePreference
     && value.speedModifier >= MIN_VOICE_SPEED_MODIFIER
     && value.speedModifier <= MAX_VOICE_SPEED_MODIFIER
     && (value.tonePrompt === undefined || (isNonEmptyString(value.tonePrompt) && new TextEncoder().encode(value.tonePrompt).length <= MAX_VOICE_TONE_PROMPT_BYTES))
+    && (value.language === undefined || (typeof value.language === "string" && (QWEN_VOICE_LANGUAGES as readonly string[]).includes(value.language)))
     && (value.backendId === undefined || isNonEmptyString(value.backendId))
     && (value.modelId === undefined || isNonEmptyString(value.modelId))
     && ((value.backendId === undefined && value.modelId === undefined) || (isNonEmptyString(value.backendId) && isNonEmptyString(value.modelId)));
@@ -99,6 +100,7 @@ export function normalizeVoicePreference(value: unknown): VoicePreference | unde
     voiceId: value.voiceId,
     speedModifier,
     ...(typeof value.tonePrompt === "string" && value.tonePrompt.trim() ? { tonePrompt: value.tonePrompt.trim() } : {}),
+    ...(typeof value.language === "string" && (QWEN_VOICE_LANGUAGES as readonly string[]).includes(value.language) ? { language: value.language as Exclude<VoicePreference["language"], undefined> } : {}),
     ...(value.backendId === undefined && value.modelId === undefined ? {} : { backendId: value.backendId as string, modelId: value.modelId as string }),
   };
   return isValidVoicePreference(normalized) ? normalized : undefined;
