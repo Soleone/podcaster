@@ -31,6 +31,7 @@ import { bootstrapCapability } from './sessions/session-archive';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
 import { Spinner } from './components/ui/spinner';
 import { persistTheme, readTheme } from './theme';
+import { initialServiceStatuses, serviceStatusesFromSnapshot, type ReadinessSnapshot, type ServiceStatuses } from './services/service-status';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 
@@ -128,10 +129,46 @@ export function App() {
   const settingsModelRef = useRef(settingsModel);
   settingsModelRef.current = settingsModel;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [serviceStatuses, setServiceStatuses] = useState<ServiceStatuses>(initialServiceStatuses);
+  const [refreshingServiceStatus, setRefreshingServiceStatus] = useState(false);
   const [darkMode, setDarkMode] = useState(() => readTheme() === 'dark');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaveError, setSettingsSaveError] = useState<string | undefined>(undefined);
   const toggleDarkMode = useCallback(() => setDarkMode(value => !value), []);
+
+  const applyReadinessSnapshot = useCallback((snapshot: ReadinessSnapshot) => {
+    setServiceStatuses(serviceStatusesFromSnapshot(snapshot));
+  }, []);
+
+  const refreshServiceStatus = useCallback(async () => {
+    if (!capability) return;
+    setRefreshingServiceStatus(true);
+    try {
+      const microphoneGranted = await navigator.permissions?.query({ name: 'microphone' as PermissionName }).then(permission => permission.state === 'granted').catch(() => false) ?? false;
+      const response = await fetch('/api/readiness', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-podcaster-capability': capability },
+        body: JSON.stringify({ microphoneGranted, ttsModel: settingsModelRef.current.selectedModel }),
+      });
+      if (!response.ok) throw new Error('service status request failed');
+      const snapshot = await response.json() as ReadinessSnapshot;
+      applyReadinessSnapshot(snapshot);
+    } catch {
+      // Keep the last known state visible. A single dropped poll should not
+      // make healthy services flash unavailable.
+    } finally {
+      setRefreshingServiceStatus(false);
+    }
+  }, [applyReadinessSnapshot, capability]);
+
+  useEffect(() => {
+    if (!capability) return;
+    let cancelled = false;
+    void refreshServiceStatus();
+    const timer = setInterval(() => { if (!cancelled) void refreshServiceStatus(); }, 4_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [capability, refreshServiceStatus]);
 
   const refreshElapsed = useCallback(() => {
     const clock = sessionClockRef.current;
@@ -977,7 +1014,7 @@ export function App() {
   const settingsDialog = settingsOpen ? <Suspense fallback={null}>
     <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} models={ttsModels} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} customVoices={customVoices} onEnrollCustomVoice={enrollVoice} onDeleteCustomVoice={deleteVoice} onRenameCustomVoice={renameVoice} />
   </Suspense> : null;
-  const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} />;
+  const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} serviceStatuses={serviceStatuses} onRefreshServiceStatus={() => void refreshServiceStatus()} refreshingServiceStatus={refreshingServiceStatus} />;
 
   if (!writer) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading…</main>;
 
@@ -997,6 +1034,7 @@ export function App() {
             onCatalog={onCatalog}
             onModels={onModels}
             onCapability={setCapability}
+            onSnapshot={applyReadinessSnapshot}
             onContinueSession={id => void continueSession(id)}
           />
         </Suspense>

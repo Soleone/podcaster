@@ -159,6 +159,18 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       : descriptor?.status === 'unavailable'
         ? `${activeLabel} is unavailable. ${descriptor.reason ?? 'Install its local runtime or choose another backend.'}`
         : `${activeLabel} is not available from the local audio engine yet.`;
+    const audioService = !snapshot
+      ? { state: 'unavailable' as const, label: 'Audio server', detail: 'The local audio server could not be reached.', correctiveAction: 'Retry the readiness check.' }
+      : snapshot.status === 'starting'
+        ? { state: 'starting' as const, label: 'Audio server', detail: 'The audio server is loading its speech models.', correctiveAction: 'Keep this page open while the local runtime starts.' }
+        : snapshot.status === 'failed'
+          ? { state: 'unavailable' as const, label: 'Audio server', detail: 'The audio server failed to load its runtime.', correctiveAction: 'Restart Podcaster and check the local runtime logs.' }
+          : activeReady
+            ? { state: 'ready' as const, label: 'Audio server', detail: `${activeLabel} and local speech recognition are ready.`, correctiveAction: 'No action needed.' }
+            : { state: 'degraded' as const, label: 'Audio server', detail: voiceOutputReason, correctiveAction: 'Choose an available voice backend in settings, then retry.' };
+    const piService = pi === piChecking
+      ? { state: 'starting' as const, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction }
+      : { state: pi.status, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction };
     return {
       capabilities: [
         {
@@ -169,7 +181,10 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         },
         { id: 'voice_output', label: 'Voice output', state: activeReady ? 'ready' : 'unavailable', reason: voiceOutputReason, action: activeReady ? (unavailableTts.length > 0 ? 'Choose another backend in Voice settings, or install the unavailable model runtime.' : 'No action needed.') : 'Choose an available backend in Voice settings, then check again.' },
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
-      ], sidecar: activeReady ? 'ready' : 'unavailable', reasoning: pi === piChecking ? 'checking' : pi.status,
+      ],
+      sidecar: activeReady ? 'ready' : snapshot?.status === 'starting' ? 'starting' : 'unavailable',
+      reasoning: pi === piChecking ? 'checking' : pi.status,
+      services: { audio: audioService, pi: piService },
       ...(responseCatalog ? { voiceCatalog: responseCatalog } : {}),
       ...(snapshot?.ttsModels ? { ttsModels: snapshot.ttsModels } : {}),
       activeTtsModel: requestedModel,

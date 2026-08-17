@@ -9,7 +9,7 @@ import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
 import { ExportPopover } from '../components/ExportPopover';
 import type { ExportOnProgress } from '../recording/splice';
-import { Readiness } from '../readiness/Readiness';
+import { Readiness, type Snapshot } from '../readiness/Readiness';
 import { RecordingStore } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
 import { exportSessionRecording, loadSessionArchive, sessionDurationSeconds, type SessionSummary } from './session-archive';
@@ -41,6 +41,7 @@ export interface SessionIndexProps {
   onCatalog: (catalog: VoiceCatalog) => void;
   onModels: (models: TtsModelDescriptor[]) => void;
   onCapability: (capability: string) => void;
+  onSnapshot: (snapshot: Snapshot) => void;
   onContinueSession: (sessionId: string) => void;
 }
 
@@ -85,7 +86,7 @@ export function SessionIndex(props: SessionIndexProps) {
     </Card> : null}
 
     <section aria-label="Start a new session" className="mb-10">
-      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} selectedModel={props.selectedModel} onStart={props.onStart} onCatalog={props.onCatalog} onModels={props.onModels} onCapability={props.onCapability} />
+      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} selectedModel={props.selectedModel} onStart={props.onStart} onCatalog={props.onCatalog} onModels={props.onModels} onCapability={props.onCapability} onSnapshot={props.onSnapshot} />
     </section>
 
     <section aria-labelledby="session-list-title">

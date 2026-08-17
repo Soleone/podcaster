@@ -11,6 +11,11 @@ test('the shared app header returns home from a session and stays anchored acros
   const sessionHeaderBox = await header.boundingBox();
   await expect(header.getByRole('link', { name: 'Podcaster home' })).toBeVisible();
   await expect(header.getByRole('button', { name: /Open settings/ })).toBeVisible();
+  await header.getByRole('button', { name: /Service status/ }).click();
+  await expect(page.getByRole('heading', { name: 'Service status' })).toBeVisible();
+  await expect(page.getByText('Audio server', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pi service', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
 
   await header.getByRole('link', { name: 'Podcaster home' }).click();
   await expect(page.getByRole('heading', { name: 'Your sessions' })).toBeVisible();
