@@ -404,6 +404,13 @@ function partOk(value: Record<string, unknown>): boolean {
   if (partId !== undefined && (typeof partId !== 'string' || !UUID_V7.test(partId))) return false;
   return true;
 }
+function modelIdentityOk(value: Record<string, unknown>): boolean {
+  const backendId = value.backendId;
+  const modelId = value.modelId;
+  if (backendId === undefined && modelId === undefined) return true;
+  return typeof backendId === 'string' && backendId.length > 0
+    && typeof modelId === 'string' && modelId.length > 0;
+}
 function isStrictHostEvent(value: unknown): value is StableEvent {
   if (typeof value !== 'object' || value === null) return false;
   const event = value as Record<string, unknown>;
@@ -426,7 +433,7 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
     case 'reasoning.delta': return hasOnly(payload, ['turnId', 'responseId', 'text'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096 && partOk(payload);
     case 'response.failed': return hasOnly(payload, ['turnId', 'responseId', 'reasonCode'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && ['reasoning_unavailable', 'reasoning_invalid', 'tts_failed'].includes(String(payload.reasonCode)) && partOk(payload);
     case 'reasoning.final': return hasOnly(payload, ['turnId', 'responseId', 'posture', 'text'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture)) && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096 && partOk(payload);
-    case 'tts.started': return hasOnly(payload, ['responseId', 'playbackId', 'sampleRate'], ['outputStreamId', 'partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0 && (payload.outputStreamId === undefined || (integer(payload.outputStreamId) && Number(payload.outputStreamId) <= 4_294_967_295)) && partOk(payload);
+    case 'tts.started': return hasOnly(payload, ['responseId', 'playbackId', 'sampleRate'], ['backendId', 'modelId', 'outputStreamId', 'partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0 && (payload.outputStreamId === undefined || (integer(payload.outputStreamId) && Number(payload.outputStreamId) <= 4_294_967_295)) && modelIdentityOk(payload) && partOk(payload);
     case 'tts.ended': return hasOnly(payload, ['responseId', 'playbackId', 'generatedSamples'], ['partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.generatedSamples) && partOk(payload);
     case 'response.part_started': case 'response.part_final': return hasOnly(payload, ['turnId', 'responseId', 'partIndex', 'kind'], ['partId']) && uuid('turnId') && uuid('responseId') && integer(payload.partIndex) && Number(payload.partIndex) <= 7 && ['stall', 'body'].includes(String(payload.kind)) && (payload.partId === undefined || (typeof payload.partId === 'string' && UUID_V7.test(payload.partId))) && ((payload.kind === 'stall' && payload.partIndex === 0) || (payload.kind === 'body' && Number(payload.partIndex) >= 1));
     case 'barge_in.provisional': case 'barge_in.confirmed': case 'barge_in.rejected': case 'barge_in.timed_out': return hasOnly(payload, ['responseId', 'outputEpoch', 'resumable'], ['rewindMs', 'partIndex', 'partId', 'playbackId']) && uuid('responseId') && integer(payload.outputEpoch) && typeof payload.resumable === 'boolean' && (payload.rewindMs === undefined || (integer(payload.rewindMs) && Number(payload.rewindMs) <= 1_000)) && partOk(payload) && (payload.playbackId === undefined || uuid('playbackId'));

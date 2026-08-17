@@ -321,6 +321,20 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     expect(chunks).toEqual([480]);
   });
 
+  it('accepts the selected backend identity on tts.started', async () => {
+    const socket = new EventSocket();
+    await wiredTransport(socket);
+    emitText(socket, REASONING(responseA));
+    emitText(socket, hostEvent('tts.started', {
+      responseId: responseA,
+      playbackId: playbackA,
+      sampleRate: 24_000,
+      backendId: 'qwen3',
+      modelId: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+    }));
+    expectNoProtocolFailure(socket);
+  });
+
   it('accepts response.failed followed by the generic failure without disconnecting', async () => {
     const socket = new EventSocket();
     await wiredTransport(socket);

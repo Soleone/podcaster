@@ -31,7 +31,7 @@ export type SidecarMessageSpeedCapability = { "supported": boolean; "min": numbe
 export type SidecarMessageTtsModel = { "backendId": string; "modelId": string; };
 export type SidecarMessageTtsModelDescriptor = { "backendId": string; "modelId": string; "label": string; "status": "ready" | "unavailable"; "speed"?: SidecarMessageSpeedCapability; "voiceCatalog"?: SidecarMessageVoiceCatalog; "reason"?: string; "fallback"?: SidecarMessageTtsModel; };
 export type SidecarMessageVoiceCatalog = { "catalogId": string; "backendId": string; "modelId": string; "runtimeConfigId": string; "revision": string; "defaultVoiceId": string; "speed"?: SidecarMessageSpeedCapability; "voices": Array<{ "id": string; "label": string; }>; };
-export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": string; "activeTtsModel"?: SidecarMessageTtsModel; "ttsModels"?: Array<SidecarMessageTtsModelDescriptor>; "voiceCatalog"?: SidecarMessageVoiceCatalog; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; "streamMode"?: "capture" | "preview"; "backendId"?: string; "modelId"?: string; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; "backendId"?: string; "modelId"?: string; "voiceCatalog"?: SidecarMessageVoiceCatalog; "fallback"?: SidecarMessageTtsModel; }; } | { "type": "vad.speech_start"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; "captureEndSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; "voiceId": string; "speedModifier"?: number; }; } | { "type": "tts.open"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "voiceId": string; "speedModifier"?: number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.append"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "sequence": number; "text": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.commit"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "nextSequence": number; "textSha256": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; "voiceId": string; "backendId"?: string; "modelId"?: string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; };
+export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": string; "activeTtsModel"?: SidecarMessageTtsModel; "ttsModels"?: Array<SidecarMessageTtsModelDescriptor>; "voiceCatalog"?: SidecarMessageVoiceCatalog; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; "streamMode"?: "capture" | "preview"; "catalogId"?: string; "backendId"?: string; "modelId"?: string; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; "backendId"?: string; "modelId"?: string; "voiceCatalog"?: SidecarMessageVoiceCatalog; "fallback"?: SidecarMessageTtsModel; }; } | { "type": "vad.speech_start"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; "captureEndSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; "voiceId": string; "speedModifier"?: number; }; } | { "type": "tts.open"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "voiceId": string; "speedModifier"?: number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.append"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "sequence": number; "text": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.commit"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "nextSequence": number; "textSha256": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; "voiceId": string; "backendId"?: string; "modelId"?: string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; };
 export type TranscriptFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.final"; "monotonicMs": number; "payload": { "turnId": string; "text": string; "endpointComplete": true; }; };
 export type TranscriptPartialEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.partial"; "monotonicMs": number; "payload": { "utteranceId": string; "sequence": number; "text": string; "replacedCharacters": number; }; };
 export type TtsEndedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.ended"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; };
@@ -1656,6 +1656,14 @@ export const CONTRACT_SCHEMAS = {
                             "maximum": 2
                           }
                         },
+                        "dependentRequired": {
+                          "backendId": [
+                            "modelId"
+                          ],
+                          "modelId": [
+                            "backendId"
+                          ]
+                        },
                         "additionalProperties": false
                       }
                     },
@@ -3149,6 +3157,10 @@ export const CONTRACT_SCHEMAS = {
                   "preview"
                 ]
               },
+              "catalogId": {
+                "type": "string",
+                "minLength": 1
+              },
               "backendId": {
                 "type": "string",
                 "minLength": 1
@@ -3157,6 +3169,14 @@ export const CONTRACT_SCHEMAS = {
                 "type": "string",
                 "minLength": 1
               }
+            },
+            "dependentRequired": {
+              "backendId": [
+                "modelId"
+              ],
+              "modelId": [
+                "backendId"
+              ]
             },
             "additionalProperties": false
           }
@@ -3713,6 +3733,17 @@ export const CONTRACT_SCHEMAS = {
                 "format": "uuid"
               }
             },
+            "dependentRequired": {
+              "backendId": [
+                "modelId"
+              ],
+              "modelId": [
+                "backendId"
+              ],
+              "partId": [
+                "partIndex"
+              ]
+            },
             "additionalProperties": false
           }
         },
@@ -4068,6 +4099,12 @@ export const CONTRACT_SCHEMAS = {
               }
             },
             "dependentRequired": {
+              "backendId": [
+                "modelId"
+              ],
+              "modelId": [
+                "backendId"
+              ],
               "partId": [
                 "partIndex"
               ]

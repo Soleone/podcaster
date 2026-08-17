@@ -19,7 +19,7 @@ import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn
 import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, ttsModelKey, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, isValidSessionSettingsSnapshot, ttsModelKey, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
@@ -35,7 +35,7 @@ const SessionIndex = lazy(() => import('./sessions/SessionIndex').then(({ Sessio
 const SessionScreen = lazy(() => import('./session/SessionScreen').then(({ SessionScreen: component }) => ({ default: component })));
 const StoppedSession = lazy(() => import('./sessions/StoppedSession').then(({ StoppedSession: component }) => ({ default: component })));
 const SettingsDialog = lazy(() => import('./settings/SettingsDialog').then(({ SettingsDialog: component }) => ({ default: component })));
-type SessionStartSettings = { version: 1; persona: string; voice: VoicePreference };
+type SessionStartSettings = SessionSettingsSnapshot;
 type LifecycleAction = 'idle' | 'pausing' | 'resuming' | 'ending';
 
 interface FakeRuntimeStats {
@@ -108,6 +108,11 @@ export function App() {
   const recordingGenRef = useRef(0);
   const lastCheapRef = useRef<{ enabled: boolean; signature: string } | null>(null);
   const settingsStoreRef = useRef<SettingsStore | undefined>(undefined);
+  const settingsReadyPromiseRef = useRef<Promise<void> | undefined>(undefined);
+  const resolveSettingsReadyRef = useRef<(() => void) | undefined>(undefined);
+  if (!settingsReadyPromiseRef.current) {
+    settingsReadyPromiseRef.current = new Promise<void>(resolve => { resolveSettingsReadyRef.current = resolve; });
+  }
   const voiceCatalogRef = useRef<VoiceCatalog | undefined>(undefined);
   const ttsModelsRef = useRef<TtsModelDescriptor[]>([]);
   const [ttsModels, setTtsModels] = useState<TtsModelDescriptor[]>([]);
@@ -357,6 +362,11 @@ export function App() {
       writerRef.current = opened;
       const target = sessionIdFromPath(locationRef.current.pathname);
       if (target) {
+        // SettingsStore opens independently from the session store. Do not let
+        // an active-session recovery race that load and silently reopen a Qwen
+        // session with the Kokoro defaults.
+        await settingsReadyPromiseRef.current!;
+        if (cancelled) return;
         const stored = await opened.getSession(target);
         if (!cancelled && stored?.state === 'active') {
           setResuming(true);
@@ -364,8 +374,12 @@ export function App() {
           sessionPausedRef.current = false;
           try {
             const restored = await sessionViewStateFromTurns(opened, target, 'active');
-            const settings = stored.settings ?? currentStartSettings().settings;
-            const digest = stored.personaDigest || settingsDigest({ agentName: settingsModelRef.current.agentName, persona: settings.persona, voice: { ...settings.voice } });
+            const current = currentStartSettings();
+            const storedSettings = stored.settings && isValidSessionSettingsSnapshot(stored.settings) ? stored.settings : undefined;
+            const settings = storedSettings ?? current.settings;
+            const digest = storedSettings
+              ? (stored.personaDigest || current.digest)
+              : current.digest;
             const reopened = await opened.beginSession({ sessionId: target, sessionSeed: stored.sessionSeed, personaDigest: digest, settings });
             if (!reopened.ok) throw new Error(reopened.degradedReason);
             const reopenedSession = await opened.getSession(target);
@@ -427,19 +441,25 @@ export function App() {
   async function start(cap: string, reasoningMode: 'full' | 'transcript_only' = 'full', existingId?: string) {
     const opened = writerRef.current;
     if (!opened) throw new Error('Local session storage is not ready yet.');
+    await settingsReadyPromiseRef.current!;
+    const reconciled = reconcileSettings({ selectedModel: settingsModelRef.current.selectedModel, voice: settingsModelRef.current.voice, voiceProfiles: settingsModelRef.current.voiceProfiles }, ttsModelsRef.current, voiceCatalogRef.current);
+    const activeSettings = applyReconciled(settingsModelRef.current, reconciled);
+    settingsModelRef.current = activeSettings;
+    setSettingsModel(activeSettings);
     const id = existingId ?? uuidV7();
     const existing = existingId ? await opened.getSession(id) : undefined;
     const preserveIdentity = Boolean(existing && existing.state !== 'stopped');
     const seed = preserveIdentity ? existing!.sessionSeed : uuidV7();
     const current: SettingsModel = {
-      agentName: settingsModel.agentName,
-      persona: settingsModel.persona,
-      selectedModel: { ...settingsModel.selectedModel },
-      voice: { ...settingsModel.voice },
-      voiceProfiles: { ...settingsModel.voiceProfiles },
+      agentName: activeSettings.agentName,
+      persona: activeSettings.persona,
+      selectedModel: { ...activeSettings.selectedModel },
+      voice: { ...activeSettings.voice },
+      voiceProfiles: { ...activeSettings.voiceProfiles },
     };
-    const settings: SessionStartSettings = preserveIdentity && existing?.settings
-      ? existing.settings
+    const storedSettings = existing?.settings && isValidSessionSettingsSnapshot(existing.settings) ? existing.settings : undefined;
+    const settings: SessionStartSettings = preserveIdentity && storedSettings
+      ? storedSettings
       : { version: 1, persona: current.persona, voice: { ...current.voice } };
     const frozen: SettingsModel = preserveIdentity
       ? {
@@ -453,7 +473,9 @@ export function App() {
         }
       : current;
     settingsFrozenRef.current = frozen;
-    const personaDigest = preserveIdentity ? existing!.personaDigest : settingsDigest(frozen);
+    const personaDigest = preserveIdentity && storedSettings
+      ? (existing!.personaDigest || settingsDigest(frozen))
+      : settingsDigest(frozen);
     const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest, settings });
     if (!persisted.ok) throw new Error(persisted.degradedReason);
     stoppedRef.current = false;
@@ -744,9 +766,9 @@ export function App() {
     reconcileCurrentSettings(models, voiceCatalogRef.current);
   }, [reconcileCurrentSettings]);
 
-  const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string) => {
+  const previewVoice = useCallback(async (voiceId: string, speedModifier: number, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, catalogId?: string, signal?: AbortSignal) => {
     if (!capability) throw new Error('The session capability is not ready yet.');
-    return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), capability });
+    return startVoicePreview({ voiceId, speedModifier, backendId: selectedModel.backendId, modelId: selectedModel.modelId, ...(catalogId ? { catalogId } : {}), ...(signal ? { signal } : {}), capability });
   }, [capability]);
 
   const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, voiceProfiles: Record<string, VoicePreference> = {}) => {
@@ -759,7 +781,9 @@ export function App() {
       const profiles = { ...voiceProfiles, [ttsModelKey(selectedModel)]: activeVoice };
       const ok = await store.save({ version: 1, agentName, persona, selectedModel, voice: activeVoice, voiceProfiles: profiles });
       if (!ok) throw new Error('Settings could not be saved on this device.');
-      setSettingsModel(applyReconciled({ agentName, persona, selectedModel, voiceProfiles: profiles }, { voice: activeVoice, selectedModel, voiceProfiles: profiles }));
+      const next = applyReconciled({ agentName, persona, selectedModel, voiceProfiles: profiles }, { voice: activeVoice, selectedModel, voiceProfiles: profiles });
+      settingsModelRef.current = next;
+      setSettingsModel(next);
       setSettingsOpen(false);
     } catch (error) {
       setSettingsSaveError(error instanceof Error ? error.message : 'Settings could not be saved.');
@@ -770,17 +794,27 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    void SettingsStore.open().then(async store => {
-      settingsStoreRef.current = store;
-      const stored = await store.load();
-      if (cancelled) return;
-      const selectedModel = stored?.selectedModel ?? {
-        backendId: stored?.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
-        modelId: stored?.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
-      };
-      const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, ttsModelsRef.current, voiceCatalogRef.current);
-      setSettingsModel(applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled));
-    });
+    void (async () => {
+      try {
+        const store = await SettingsStore.open();
+        settingsStoreRef.current = store;
+        const stored = await store.load();
+        if (cancelled) return;
+        const selectedModel = stored?.selectedModel ?? {
+          backendId: stored?.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
+          modelId: stored?.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
+        };
+        const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, ttsModelsRef.current, voiceCatalogRef.current);
+        const next = applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled);
+        settingsModelRef.current = next;
+        setSettingsModel(next);
+      } catch {
+        // Keep the in-memory defaults when local settings storage is unavailable.
+      } finally {
+        resolveSettingsReadyRef.current?.();
+        resolveSettingsReadyRef.current = undefined;
+      }
+    })();
     return () => { cancelled = true; };
   }, []);
 
@@ -825,6 +859,7 @@ export function App() {
           <SessionIndex
             writer={writer}
             sessionAvailable={fakeServices}
+            selectedModel={settingsModel.selectedModel}
             liveSessionId={sessionId}
             liveSessionPaused={sessionPaused}
             elapsedSeconds={elapsed}

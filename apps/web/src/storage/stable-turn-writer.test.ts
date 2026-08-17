@@ -17,6 +17,16 @@ describe('StableTurnWriter', () => {
     reopened.close();
   });
 
+  it('persists the frozen session voice/backend snapshot for active-session recovery', async () => {
+    const { name, writer } = await open();
+    const settings = { version: 1 as const, persona: 'persona', voice: { backendId: 'qwen3', modelId: 'qwen-model', catalogId: 'qwen-catalog', voiceId: 'Ryan', speedModifier: 1 } };
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-1', personaDigest: 'digest', settings });
+    writer.close();
+    const reopened = await StableTurnWriter.open(indexedDB, name);
+    expect((await reopened.recoverActiveSession())?.settings).toEqual(settings);
+    reopened.close();
+  });
+
   it('reopens a stopped session as active with a fresh seed and clears its end time', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-1', personaDigest: 'digest' });

@@ -291,6 +291,10 @@
                 "preview"
               ]
             },
+            "catalogId": {
+              "type": "string",
+              "minLength": 1
+            },
             "backendId": {
               "type": "string",
               "minLength": 1
@@ -299,6 +303,10 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "dependentRequired": {
+            "backendId": ["modelId"],
+            "modelId": ["backendId"]
           },
           "additionalProperties": false
         }
@@ -854,6 +862,11 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "dependentRequired": {
+            "backendId": ["modelId"],
+            "modelId": ["backendId"],
+            "partId": ["partIndex"]
           },
           "additionalProperties": false
         }

@@ -136,6 +136,38 @@ def test_selected_qwen_catalog_owns_voice_and_speed_for_its_stream() -> None:
     runtime.close_stream(stream)
 
 
+def test_selected_model_catalog_identity_is_checked_before_stream_admission() -> None:
+    class QwenFake(FakeTts):
+        default_voice = "Ryan"
+
+        def voice_catalog(self):
+            return {
+                "catalogId": "qwen-catalog",
+                "backendId": "qwen3",
+                "modelId": "qwen3-tts-0.6b",
+                "runtimeConfigId": "qwen-runtime",
+                "revision": "qwen-rev",
+                "defaultVoiceId": self.default_voice,
+                "speed": {"supported": False, "min": 1.0, "max": 1.0, "default": 1.0},
+                "voices": [{"id": self.default_voice, "label": self.default_voice}],
+            }
+
+    runtime = SelectedAudioRuntime(FakeStt(), FakeTts(), tts_adapters={"qwen3:qwen3-tts-0.6b": QwenFake()})
+    runtime.mark_ready_for_test()
+    with pytest.raises(ValueError, match="catalog"):
+        runtime.open_stream(
+            "018f1f32-7abc-7def-8abc-0123456789ab",
+            12,
+            lambda _: None,
+            lambda _: None,
+            "capture",
+            "qwen3",
+            "qwen3-tts-0.6b",
+            "stale-catalog",
+        )
+    runtime.close()
+
+
 def test_unavailable_optional_qwen_keeps_kokoro_ready_and_reports_fallback() -> None:
     class MissingQwen(FakeTts):
         def voice_catalog(self):

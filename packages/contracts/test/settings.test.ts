@@ -124,6 +124,7 @@ describe("settings validators", () => {
     expect(isValidSessionSettingsSnapshot({ ...snapshot, version: 2 })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, persona: "x".repeat(MAX_PERSONA_BYTES + 1) })).toBe(false);
     expect(isValidSessionSettingsSnapshot({ ...snapshot, voice: { catalogId: "", voiceId: "v" } })).toBe(false);
+    expect(isValidSessionSettingsSnapshot({ ...snapshot, voice: { catalogId: "c", voiceId: "v", backendId: "qwen3" } })).toBe(false);
   });
 });
 

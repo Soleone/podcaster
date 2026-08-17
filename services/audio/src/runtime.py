@@ -280,7 +280,7 @@ class SelectedAudioRuntime:
                 descriptor: dict[str, object] = {
                     "backendId": backend_id,
                     "modelId": model_id,
-                    "label": "Kokoro CUDA" if backend_id == KOKORO_BACKEND_ID else "faster-Qwen CUDA" if backend_id == QWEN_BACKEND_ID else f"{backend_id} · {model_id}",
+                    "label": "Kokoro CUDA" if backend_id == KOKORO_BACKEND_ID else "Qwen CustomVoice" if backend_id == QWEN_BACKEND_ID else f"{backend_id} · {model_id}",
                     "status": "ready",
                     "speed": self._catalog_speed(catalog),
                     "voiceCatalog": catalog,
@@ -289,7 +289,7 @@ class SelectedAudioRuntime:
                 descriptor = {
                     "backendId": backend_id,
                     "modelId": model_id,
-                    "label": "Kokoro CUDA" if backend_id == KOKORO_BACKEND_ID else "faster-Qwen CUDA" if backend_id == QWEN_BACKEND_ID else f"{backend_id} · {model_id}",
+                    "label": "Kokoro CUDA" if backend_id == KOKORO_BACKEND_ID else "Qwen CustomVoice" if backend_id == QWEN_BACKEND_ID else f"{backend_id} · {model_id}",
                     "status": "unavailable",
                     "speed": {"supported": False, "min": 1.0, "max": 1.0, "default": 1.0},
                     "reason": self._tts_errors.get(key, "TTS model is not available on this device."),
@@ -392,12 +392,15 @@ class SelectedAudioRuntime:
         stream_mode: str = "capture",
         backend_id: str | None = None,
         model_id: str | None = None,
+        catalog_id: str | None = None,
     ) -> None:
         if self.status != "ready":
             raise RuntimeError("selected runtime is unavailable")
         if stream_mode not in {"capture", "preview"}:
             raise ValueError("invalid stream mode")
         key, adapter, catalog, fallback = self._select_tts(backend_id, model_id)
+        if catalog_id is not None and catalog.get("catalogId") != catalog_id:
+            raise ValueError("requested TTS catalog does not match the selected model")
         with self._lock:
             if any(state.stream_mode == stream_mode for state in self._streams.values()):
                 raise RuntimeError(f"one active {stream_mode} stream is allowed")

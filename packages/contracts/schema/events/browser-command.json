@@ -75,6 +75,10 @@
                           "maximum": 2.0
                         }
                       },
+                      "dependentRequired": {
+                        "backendId": ["modelId"],
+                        "modelId": ["backendId"]
+                      },
                       "additionalProperties": false
                     }
                   },

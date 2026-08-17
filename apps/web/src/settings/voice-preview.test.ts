@@ -107,6 +107,15 @@ describe('startVoicePreview', () => {
     expect(settled).toBe(true);
   });
 
+  it('cancels before playback when the caller invalidates a preview request', async () => {
+    installAudioMock();
+    installFetchMock();
+    const player = await loadPlayer();
+    const request = new AbortController();
+    request.abort(new Error('model changed'));
+    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1', signal: request.signal })).rejects.toThrow('model changed');
+  });
+
   it('surfaces the server error code when the preview is rejected', async () => {
     installAudioMock();
     installFetchMock({ ok: false, status: 503, error: 'preview_unavailable' });

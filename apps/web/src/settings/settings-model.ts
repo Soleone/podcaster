@@ -103,7 +103,9 @@ export function reconcileVoice(preference: VoicePreference | undefined, catalog:
 
 function descriptorCatalog(descriptor: TtsModelDescriptor | undefined): VoiceCatalog | undefined {
   if (descriptor?.status !== 'ready' || !descriptor.voiceCatalog) return undefined;
-  return descriptor.speed && !descriptor.voiceCatalog.speed ? { ...descriptor.voiceCatalog, speed: descriptor.speed } : descriptor.voiceCatalog;
+  // The model descriptor is the current capability snapshot. Prefer its speed
+  // contract even when an older catalog omitted or retained a stale speed field.
+  return descriptor.speed ? { ...descriptor.voiceCatalog, speed: descriptor.speed } : descriptor.voiceCatalog;
 }
 
 function modelDescriptor(models: readonly TtsModelDescriptor[], selection: TtsModelSelection): TtsModelDescriptor | undefined {
@@ -112,15 +114,15 @@ function modelDescriptor(models: readonly TtsModelDescriptor[], selection: TtsMo
 
 function sameModel(preference: VoicePreference | undefined, model: TtsModelSelection): boolean {
   if (!preference?.backendId && !preference?.modelId) return model.backendId === DEFAULT_TTS_MODEL.backendId && model.modelId === DEFAULT_TTS_MODEL.modelId;
-  return preference?.backendId === model.backendId && preference?.modelId === model.modelId;
+  if (!preference?.backendId || !preference.modelId) return false;
+  return preference.backendId === model.backendId && preference.modelId === model.modelId;
 }
 
 function scopedProfiles(value: Record<string, VoicePreference> | undefined): Record<string, VoicePreference> {
   if (!value) return {};
   return Object.fromEntries(Object.entries(value).filter(([key, preference]) =>
-    !preference.backendId
-    || !preference.modelId
-    || key === ttsModelKey({ backendId: preference.backendId, modelId: preference.modelId }),
+    Boolean(preference.backendId && preference.modelId)
+    && key === ttsModelKey({ backendId: preference.backendId!, modelId: preference.modelId! }),
   ));
 }
 

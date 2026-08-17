@@ -12,7 +12,7 @@ import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifie
 import { BrowserSession } from './BrowserSession.js';
 import { encodeWav } from '../sidecar/wav.js';
 import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
-import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, randomVoicePreviewPhrases } from '@app/contracts';
+import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, randomVoicePreviewPhrases, type TtsModelSelection } from '@app/contracts';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_DISCONNECT_GRACE_MS = 30_000;
@@ -27,6 +27,15 @@ const unavailablePi: PiClient = {
 export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; researchPi?: PiResearchClient; createResponseClient?: (personaAppend: string) => PiClient; createResearchClient?: (personaAppend: string) => PiResearchClient; createClassifierClient?: () => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; sessionDisconnectGraceMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
+function parseTtsModel(value: unknown): TtsModelSelection | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const model = value as { backendId?: unknown; modelId?: unknown };
+  if (typeof model.backendId !== 'string' || model.backendId.length === 0 || typeof model.modelId !== 'string' || model.modelId.length === 0) return undefined;
+  return { backendId: model.backendId, modelId: model.modelId };
+}
+function sameTtsModel(left: TtsModelSelection, right: TtsModelSelection): boolean {
+  return left.backendId === right.backendId && left.modelId === right.modelId;
+}
 
 export async function buildApp(options: BuildOptions): Promise<FastifyInstance> {
   const app = Fastify({ bodyLimit: 16 * 1024, logger: false, forceCloseConnections: true });
@@ -127,16 +136,27 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     // The browser owns microphone permission; the server cannot observe it, so the
     // readiness screen reports the client's granted state instead of always showing
     // a perpetual needs-action warning for voice input.
-    const body = (request.body ?? {}) as { microphoneGranted?: unknown };
+    const body = (request.body ?? {}) as { microphoneGranted?: unknown; ttsModel?: unknown; selectedModel?: unknown };
     const microphoneGranted = body.microphoneGranted === true;
     const [snapshot, pi] = await Promise.all([sidecarSnapshot(options.sidecar), probePi()]);
-    const audioReady = Boolean(snapshot?.status === 'ready' && snapshot.voiceCatalog !== undefined);
+    const requestedModel = parseTtsModel(body.ttsModel ?? body.selectedModel) ?? snapshot?.activeTtsModel ?? DEFAULT_TTS_MODEL;
+    const descriptor = snapshot?.ttsModels?.find(model => sameTtsModel(model, requestedModel));
+    const selectedCatalog = descriptor?.status === 'ready'
+      ? descriptor.voiceCatalog
+      : !descriptor && sameTtsModel(requestedModel, DEFAULT_TTS_MODEL)
+        ? snapshot?.voiceCatalog
+        : undefined;
+    const activeReady = Boolean(snapshot?.status === 'ready' && selectedCatalog && (descriptor === undefined || descriptor.status === 'ready'));
+    const responseCatalog = selectedCatalog ?? snapshot?.voiceCatalog;
+    const activeLabel = descriptor?.label ?? (sameTtsModel(requestedModel, DEFAULT_TTS_MODEL) ? 'Kokoro' : `${requestedModel.backendId} · ${requestedModel.modelId}`);
     const unavailableTts = snapshot?.ttsModels?.filter(model => model.status === 'unavailable') ?? [];
-    const voiceOutputReason = audioReady
+    const voiceOutputReason = activeReady
       ? unavailableTts.length > 0
-        ? `Kokoro is ready. ${unavailableTts.map(model => `${model.label} is unavailable`).join('; ')}. Kokoro remains the local fallback.`
-        : 'Your local audio engine is running.'
-      : "Your local audio engine isn't running yet.";
+        ? `${activeLabel} is ready. ${unavailableTts.map(model => `${model.label} is unavailable`).join('; ')}. Kokoro remains the local fallback.`
+        : `${activeLabel} is ready. Your local audio engine is running.`
+      : descriptor?.status === 'unavailable'
+        ? `${activeLabel} is unavailable. ${descriptor.reason ?? 'Install its local runtime or choose another backend.'}`
+        : `${activeLabel} is not available from the local audio engine yet.`;
     return {
       capabilities: [
         {
@@ -145,12 +165,12 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
           reason: microphoneGranted ? 'Microphone access is allowed.' : 'Microphone access is needed before capture.',
           action: microphoneGranted ? 'No action needed.' : 'Enable the microphone below.',
         },
-        { id: 'voice_output', label: 'Voice output', state: audioReady ? 'ready' : 'unavailable', reason: voiceOutputReason, action: audioReady ? (unavailableTts.length > 0 ? 'Choose Kokoro in Voice settings, or install the unavailable model runtime.' : 'No action needed.') : 'Wait a moment, then check again.' },
+        { id: 'voice_output', label: 'Voice output', state: activeReady ? 'ready' : 'unavailable', reason: voiceOutputReason, action: activeReady ? (unavailableTts.length > 0 ? 'Choose another backend in Voice settings, or install the unavailable model runtime.' : 'No action needed.') : 'Choose an available backend in Voice settings, then check again.' },
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
-      ], sidecar: audioReady ? 'ready' : 'unavailable', reasoning: pi === piChecking ? 'checking' : pi.status,
-      ...(snapshot?.voiceCatalog ? { voiceCatalog: snapshot.voiceCatalog } : {}),
+      ], sidecar: activeReady ? 'ready' : 'unavailable', reasoning: pi === piChecking ? 'checking' : pi.status,
+      ...(responseCatalog ? { voiceCatalog: responseCatalog } : {}),
       ...(snapshot?.ttsModels ? { ttsModels: snapshot.ttsModels } : {}),
-      ...(snapshot?.activeTtsModel ? { activeTtsModel: snapshot.activeTtsModel } : {}),
+      activeTtsModel: requestedModel,
     };
   });
   app.post('/api/voice-preview', { schema: { body: { type: 'object', additionalProperties: false, required: ['voiceId'], properties: { voiceId: { type: 'string', minLength: 1, maxLength: 128 }, catalogId: { type: 'string', minLength: 1, maxLength: 128 }, backendId: { type: 'string', minLength: 1, maxLength: 128 }, modelId: { type: 'string', minLength: 1, maxLength: 256 }, speedModifier: { type: 'number', minimum: MIN_VOICE_SPEED_MODIFIER, maximum: MAX_VOICE_SPEED_MODIFIER } } } } }, async (request, reply) => {

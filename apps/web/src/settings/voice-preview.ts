@@ -24,37 +24,50 @@ export function stopVoicePreview(): void {
 
 /**
  * Fetches and plays a preview for one voice. Starting a new preview stops any
- * preview still playing.
+ * preview still playing. An in-flight request can be cancelled when the user
+ * changes backend, voice, or closes the settings dialog.
  */
-export async function startVoicePreview(input: { voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; catalogId?: string; capability: string }): Promise<VoicePreviewHandle> {
+export async function startVoicePreview(input: { voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; catalogId?: string; capability: string; signal?: AbortSignal }): Promise<VoicePreviewHandle> {
   stopVoicePreview();
   context ??= new AudioContext();
   if (context.state === 'suspended') await context.resume();
-  const response = await fetch('/api/voice-preview', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-podcaster-capability': input.capability },
-    body: JSON.stringify({ voiceId: input.voiceId, speedModifier: input.speedModifier ?? 1.0, ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}), ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : {}) }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) {
-    const detail = await response.json().catch(() => undefined) as { error?: string } | undefined;
-    throw new Error(detail?.error ?? `voice preview failed with status ${response.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error('voice preview timed out')), 30_000);
+  const onAbort = () => controller.abort(input.signal?.reason);
+  input.signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    if (input.signal?.aborted) controller.abort(input.signal.reason);
+    const response = await fetch('/api/voice-preview', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-podcaster-capability': input.capability },
+      body: JSON.stringify({ voiceId: input.voiceId, speedModifier: input.speedModifier ?? 1.0, ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}), ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : {}) }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => undefined) as { error?: string } | undefined;
+      throw new Error(detail?.error ?? `voice preview failed with status ${response.status}`);
+    }
+    if (controller.signal.aborted) throw controller.signal.reason ?? new Error('voice preview cancelled');
+    const audioBuffer = await context.decodeAudioData(await response.arrayBuffer());
+    if (controller.signal.aborted) throw controller.signal.reason ?? new Error('voice preview cancelled');
+    const source = context.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(context.destination);
+    const finished = new Promise<void>(resolve => {
+      source.onended = () => { if (activeSource === source) activeSource = undefined; resolve(); };
+    });
+    source.start();
+    activeSource = source;
+    return {
+      finished,
+      stop() {
+        if (activeSource === source) activeSource = undefined;
+        try { source.stop(); } catch { /* already stopped */ }
+      },
+    };
+  } finally {
+    clearTimeout(timeout);
+    input.signal?.removeEventListener('abort', onAbort);
   }
-  const audioBuffer = await context.decodeAudioData(await response.arrayBuffer());
-  const source = context.createBufferSource();
-  source.buffer = audioBuffer;
-  source.connect(context.destination);
-  const finished = new Promise<void>(resolve => {
-    source.onended = () => { if (activeSource === source) activeSource = undefined; resolve(); };
-  });
-  source.start();
-  activeSource = source;
-  return {
-    finished,
-    stop() {
-      if (activeSource === source) activeSource = undefined;
-      try { source.stop(); } catch { /* already stopped */ }
-    },
-  };
 }

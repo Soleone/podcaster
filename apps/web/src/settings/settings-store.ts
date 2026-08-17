@@ -28,12 +28,15 @@ function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
   const voice = value as Record<string, unknown>;
   const speedModifier = voice.speedModifier === undefined ? DEFAULT_VOICE_SPEED_MODIFIER : voice.speedModifier;
   if (typeof voice.catalogId !== 'string' || typeof voice.voiceId !== 'string' || typeof speedModifier !== 'number' || !Number.isFinite(speedModifier) || speedModifier < MIN_VOICE_SPEED_MODIFIER || speedModifier > MAX_VOICE_SPEED_MODIFIER) return undefined;
-  if ((voice.backendId !== undefined && typeof voice.backendId !== 'string') || (voice.modelId !== undefined && typeof voice.modelId !== 'string') || (voice.backendId === undefined) !== (voice.modelId === undefined)) return undefined;
+  const hasBackend = voice.backendId !== undefined || voice.modelId !== undefined;
+  if (hasBackend
+    && (typeof voice.backendId !== 'string' || voice.backendId.length === 0
+      || typeof voice.modelId !== 'string' || voice.modelId.length === 0)) return undefined;
   return {
     catalogId: voice.catalogId,
     voiceId: voice.voiceId,
     speedModifier,
-    ...(typeof voice.backendId === 'string' && typeof voice.modelId === 'string' ? { backendId: voice.backendId, modelId: voice.modelId } : {}),
+    ...(hasBackend ? { backendId: voice.backendId as string, modelId: voice.modelId as string } : {}),
   };
 }
 
@@ -50,8 +53,8 @@ function normalizeVoiceProfiles(value: unknown): Record<string, VoicePreference>
   const profiles: Record<string, VoicePreference> = {};
   for (const [key, candidate] of Object.entries(value)) {
     const normalized = normalizeStoredVoice(candidate);
-    if (!normalized) return undefined;
-    if (normalized.backendId && normalized.modelId && key !== ttsModelKey({ backendId: normalized.backendId, modelId: normalized.modelId })) return undefined;
+    if (!normalized || !normalized.backendId || !normalized.modelId) return undefined;
+    if (key !== ttsModelKey({ backendId: normalized.backendId, modelId: normalized.modelId })) return undefined;
     profiles[key] = normalized;
   }
   return profiles;
@@ -73,6 +76,7 @@ export function isValidStoredSettings(value: unknown): value is StoredSettings {
   const selectedModel = normalizeSelectedModel(record.selectedModel);
   if (record.selectedModel !== undefined && !selectedModel) return false;
   const activeVoice = normalizeStoredVoice(record.voice);
+  if (selectedModel && activeVoice && ((activeVoice.backendId === undefined) !== (activeVoice.modelId === undefined))) return false;
   if (selectedModel && activeVoice?.backendId && activeVoice.modelId && ttsModelKey(selectedModel) !== ttsModelKey({ backendId: activeVoice.backendId, modelId: activeVoice.modelId })) return false;
   if (record.voiceProfiles !== undefined && !normalizeVoiceProfiles(record.voiceProfiles)) return false;
   if (utf8ByteLength(record.agentName) > MAX_AGENT_NAME_BYTES) return false;

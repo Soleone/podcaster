@@ -222,7 +222,9 @@ def test_native_multiword_speaker_ids_are_mapped_to_catalog_labels() -> None:
 
     adapter, _ = prepared(NativeVoiceBackend())
     assert adapter.has_voice("Ono Anna")
-    assert adapter.voice_catalog()["defaultVoiceId"] == SPEAKER
+    catalog = adapter.voice_catalog()
+    assert catalog["defaultVoiceId"] == SPEAKER
+    assert catalog["speed"] == {"supported": False, "min": 1.0, "max": 1.0, "default": 1.0}
     adapter.synthesize_stream("Mapped voice.", CancelToken(), voice="Ono Anna")
     adapter.close()
 

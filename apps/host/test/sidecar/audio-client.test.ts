@@ -78,6 +78,52 @@ async function fakeSidecar(options: { gap?: boolean; cancelRace?: boolean; cance
   return { child: {} as SidecarProcess['child'], origin: `http://127.0.0.1:${address.port}`, secret: 'secret', stop: closer.close } satisfies SidecarProcess;
 }
 
+async function fakeQwenSidecar() {
+  const http = createServer();
+  const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
+  await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+  const address = http.address();
+  if (!address || typeof address === 'string') throw new Error('missing address');
+  const qwenCatalog = {
+    catalogId: 'qwen-catalog',
+    backendId: 'qwen3',
+    modelId: 'qwen3-model',
+    runtimeConfigId: 'qwen-runtime',
+    revision: 'qwen-revision',
+    defaultVoiceId: 'Ryan',
+    speed: { supported: false, min: 1, max: 1, default: 1 },
+    voices: [{ id: 'Ryan', label: 'Ryan' }, { id: 'Serena', label: 'Serena' }],
+  };
+  wss.on('connection', socket => {
+    expect(socket).toBeDefined();
+    socket.send(JSON.stringify({ type: 'readiness.snapshot', payload: {
+      status: 'ready',
+      stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1',
+      tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1',
+      voiceCatalog,
+      ttsModels: [{ backendId: 'qwen3', modelId: 'qwen3-model', label: 'Qwen CustomVoice', status: 'ready', speed: qwenCatalog.speed, voiceCatalog: qwenCatalog }],
+    } }));
+    socket.on('message', raw => {
+      if (Buffer.isBuffer(raw) && raw[0] === 1) return;
+      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      if (message.type === 'stream.open') {
+        expect(message.payload.backendId).toBe('qwen3');
+        expect(message.payload.modelId).toBe('qwen3-model');
+        expect(message.payload.catalogId).toBe('qwen-catalog');
+        socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId, backendId: 'qwen3', modelId: 'qwen3-model', voiceCatalog: qwenCatalog } }));
+      } else if (message.type === 'tts.open') {
+        socket.send(JSON.stringify({ type: 'tts.started', payload: { streamId: message.payload.streamId, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, outputStreamId: 99, sampleRate: 24000, voiceId: 'Ryan', backendId: 'qwen3', modelId: 'qwen3-model' } }));
+        socket.send(encodeBinaryAudioFrame({ channel: 2, streamId: 99, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(480) }, 64 * 1024));
+      } else if (message.type === 'tts.commit') {
+        socket.send(JSON.stringify({ type: 'tts.ended', payload: { streamId: message.payload.streamId, responseId: message.payload.responseId, epoch: message.payload.epoch, playbackId, generatedSamples: 480 } }));
+      }
+    });
+  });
+  const closer = { close: async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => http.close(() => resolve())); } };
+  servers.push(closer);
+  return { child: {} as SidecarProcess['child'], origin: `http://127.0.0.1:${address.port}`, secret: 'secret', stop: closer.close } satisfies SidecarProcess;
+}
+
 async function fakeVadSidecar() {
   const http = createServer();
   const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
@@ -139,6 +185,28 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
 }
 
 describe('AudioClient', () => {
+  it('routes a Qwen CustomVoice selection with its fixed speed and catalog identity', async () => {
+    const sidecar = await fakeQwenSidecar();
+    const client = new AudioClient(sidecar, {}, () => {}, {
+      catalogId: 'qwen-catalog',
+      voiceId: 'Ryan',
+      speedModifier: 1,
+      backendId: 'qwen3',
+      modelId: 'qwen3-model',
+    });
+    await client.connect();
+    await client.open(7);
+    const stream = client.begin({ sessionId: streamId, epoch: 0, responseId, signal: new AbortController().signal });
+    stream.append('Qwen response');
+    stream.finish();
+    const started = await stream.started;
+    expect(started).toMatchObject({ backendId: 'qwen3', modelId: 'qwen3-model', sampleRate: 24_000 });
+    client.release(responseId);
+    await expect(started.completion).resolves.toEqual({ generatedSamples: 480 });
+    expect(client.readiness()).toBe('ready');
+    await client.close();
+  });
+
   it('validates captureEndSequence on speech_end and relays VAD ownership events', async () => {
     const { sidecar, send } = await fakeVadSidecar();
     const starts: VadStartEvent[] = [];
@@ -364,7 +432,7 @@ async function fakeRecordedSidecar() {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
       const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
       if (message.type === 'stream.open') socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
-      else if (message.type.startsWith('tts.')) commands.push(message);
+      if (message.type === 'stream.open' || message.type.startsWith('tts.')) commands.push(message);
     });
   });
   const closer = { close: async () => { for (const socket of wss.clients) socket.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => http.close(() => resolve())); } };
@@ -375,6 +443,18 @@ async function fakeRecordedSidecar() {
     push: (message: unknown) => sidecarSocket!.send(message instanceof Uint8Array ? message : JSON.stringify(message)),
   };
 }
+
+describe('AudioClient model selection compatibility', () => {
+  it('keeps the legacy Kokoro stream.open shape without a catalog extension', async () => {
+    const { sidecar, commands } = await fakeRecordedSidecar();
+    const client = new AudioClient(sidecar, {}, () => {}, { catalogId: 'sess-catalog', voiceId: 'af_heart', backendId: 'kokoro', modelId: 'kokoro-82m-onnx' });
+    await client.connect();
+    await client.open(7);
+    const open = commands.find(command => command.type === 'stream.open');
+    expect(open?.payload).not.toHaveProperty('catalogId');
+    await client.close();
+  });
+});
 
 describe('AudioClient TTS admission gate (decision 007 two-stream prefetch)', () => {
   it('opens at most two streams; a third flushes only after the oldest terminalizes', async () => {

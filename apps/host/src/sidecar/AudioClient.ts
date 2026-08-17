@@ -157,7 +157,19 @@ export class AudioClient implements SpeechOutputPort {
     this.streamId = streamId;
     this.captureStreamId = captureStreamId;
     const opened = new Promise<void>((resolve, reject) => { this.openWaiter = { resolve, reject }; });
-    this.send('stream.open', { streamId, captureStreamId, sampleRate: 16_000, frameSamples: 320, streamMode, ...(this.explicitModelSelection && (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) ? { backendId: this.backendId, modelId: this.modelId } : {}) });
+    this.send('stream.open', {
+      streamId,
+      captureStreamId,
+      sampleRate: 16_000,
+      frameSamples: 320,
+      streamMode,
+      // The catalog identity is part of the selectable-model extension. Keep
+      // the legacy Kokoro stream shape unchanged for older sidecars; Qwen and
+      // other non-default backends must carry it so the sidecar can reject
+      // stale catalog-bound preferences before TTS admission.
+      ...(this.selection && (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) ? { catalogId: this.selection.catalogId } : {}),
+      ...(this.explicitModelSelection && (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) ? { backendId: this.backendId, modelId: this.modelId } : {}),
+    });
     await opened;
     return streamId;
   }
@@ -371,15 +383,31 @@ export class AudioClient implements SpeechOutputPort {
       // legacy clients.
       if (this.readyStatus === 'ready' && this.selection) {
         const selection = this.selection;
-        const models = Array.isArray(payload.ttsModels) ? payload.ttsModels as Array<{ backendId?: unknown; modelId?: unknown; status?: unknown; voiceCatalog?: { catalogId?: unknown; voices?: Array<{ id?: unknown }> } }> : [];
+        const models = Array.isArray(payload.ttsModels) ? payload.ttsModels as Array<{
+          backendId?: unknown;
+          modelId?: unknown;
+          status?: unknown;
+          speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown };
+          voiceCatalog?: { catalogId?: unknown; backendId?: unknown; modelId?: unknown; speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown }; voices?: Array<{ id?: unknown }> };
+        }> : [];
         const descriptor = models.find(model => model.backendId === this.backendId && model.modelId === this.modelId);
         const catalog = descriptor?.voiceCatalog ?? (this.backendId === DEFAULT_TTS_MODEL.backendId && this.modelId === DEFAULT_TTS_MODEL.modelId
-          ? payload.voiceCatalog as { catalogId?: unknown; voices?: Array<{ id?: unknown }> } | undefined
+          ? payload.voiceCatalog as { catalogId?: unknown; backendId?: unknown; modelId?: unknown; speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown }; voices?: Array<{ id?: unknown }> } | undefined
           : undefined);
         const voices = catalog?.voices;
+        const speed = descriptor?.speed ?? catalog?.speed;
         const modelAvailable = descriptor === undefined || descriptor.status === 'ready';
         const catalogMatches = typeof catalog?.catalogId === 'string' && catalog.catalogId === selection.catalogId;
         const voicePresent = Array.isArray(voices) && voices.some(voice => voice.id === selection.voiceId);
+        const speedValid = speed === undefined || (
+          typeof speed === 'object' && speed !== null
+          && typeof speed.supported === 'boolean'
+          && typeof speed.min === 'number' && typeof speed.max === 'number' && typeof speed.default === 'number'
+          && Number.isFinite(speed.min) && Number.isFinite(speed.max) && Number.isFinite(speed.default)
+          && Number.isFinite(this.speedModifier)
+          && this.speedModifier >= speed.min && this.speedModifier <= speed.max
+          && (speed.supported || this.speedModifier === speed.default)
+        );
         if (!modelAvailable) {
           this.failed = true;
           this.readyStatus = 'failed';
@@ -392,6 +420,12 @@ export class AudioClient implements SpeechOutputPort {
           this.events.failure?.('catalog_mismatch');
           this.failAll(new Error('audio sidecar catalog drifted from the session voice selection'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio voice catalog mismatch');
+        } else if (!speedValid) {
+          this.failed = true;
+          this.readyStatus = 'failed';
+          this.events.failure?.('unsupported_speed');
+          this.failAll(new Error('selected TTS speed is not supported by the active model'));
+          this.socket?.close(CLOSE_SIDECAR_FAILURE, 'unsupported TTS speed');
         }
       }
       return;
@@ -423,6 +457,12 @@ export class AudioClient implements SpeechOutputPort {
     if (payload.modelId !== undefined && payload.modelId !== this.modelId) return this.protocolFailure();
     if ((this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)
       && (payload.backendId !== this.backendId || payload.modelId !== this.modelId)) return this.protocolFailure();
+    if (this.selection && payload.voiceCatalog !== undefined) {
+      const catalog = payload.voiceCatalog as JsonObject;
+      if (catalog.catalogId !== this.selection.catalogId
+        || catalog.backendId !== this.backendId
+        || catalog.modelId !== this.modelId) return this.protocolFailure();
+    }
     this.streamOpened = true;
     const waiter = this.openWaiter;
     this.openWaiter = undefined;
@@ -459,6 +499,7 @@ export class AudioClient implements SpeechOutputPort {
     const outputStreamId = Number(payload.outputStreamId);
     if (!pending || pending.sidecarStarted || pending.epoch !== payload.epoch || this.usedOutputStreams.has(outputStreamId)) return this.protocolFailure();
     if (this.selection && payload.voiceId !== this.selection.voiceId) return this.protocolFailure();
+    if ((payload.backendId === undefined) !== (payload.modelId === undefined)) return this.protocolFailure();
     if (payload.backendId !== undefined && payload.backendId !== this.backendId) return this.protocolFailure();
     if (payload.modelId !== undefined && payload.modelId !== this.modelId) return this.protocolFailure();
     if ((this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)

@@ -68,4 +68,12 @@ describe('SettingsStore', () => {
     expect(await store.save(longName)).toBe(false);
     expect(await store.load()).toBeUndefined();
   });
+
+  it('rejects empty or cross-key model identities in persisted profiles', async () => {
+    dbName = 'settings-test-invalid-model-profile';
+    const store = await SettingsStore.open(indexedDB, dbName);
+    const base = { version: 1 as const, agentName: 'Ada', persona: 'You are a sharp skeptic.', voice: { backendId: 'qwen3', modelId: 'qwen3-model', catalogId: 'q1', voiceId: 'Ryan', speedModifier: 1.0 } };
+    expect(await store.save({ ...base, selectedModel: { backendId: 'qwen3', modelId: 'qwen3-model' }, voiceProfiles: { 'qwen3:qwen3-model': { ...base.voice, backendId: '', modelId: 'qwen3-model' } } })).toBe(false);
+    expect(await store.save({ ...base, selectedModel: { backendId: 'qwen3', modelId: 'qwen3-model' }, voiceProfiles: { 'kokoro:kokoro-82m-onnx': base.voice } })).toBe(false);
+  });
 });

@@ -26,7 +26,7 @@ const qwenCatalog = {
   voices: [{ id: 'Ryan', label: 'Ryan' }, { id: 'Serena', label: 'Serena' }],
 };
 const kokoroModel: TtsModelDescriptor = { ...catalog, label: 'Kokoro CUDA', status: 'ready', voiceCatalog: catalog };
-const qwenModel: TtsModelDescriptor = { ...qwenCatalog, label: 'faster-Qwen CUDA', status: 'ready', voiceCatalog: qwenCatalog };
+const qwenModel: TtsModelDescriptor = { ...qwenCatalog, label: 'Qwen CustomVoice', status: 'ready', voiceCatalog: qwenCatalog };
 
  describe('settings-model voice reconciliation', () => {
   it('keeps a matching voice preference against the same catalog', () => {
@@ -92,6 +92,16 @@ const qwenModel: TtsModelDescriptor = { ...qwenCatalog, label: 'faster-Qwen CUDA
     } }, [qwenModel]);
     expect(result.voice).toMatchObject({ catalogId: 'q1', voiceId: 'Ryan', speedModifier: 1, backendId: 'qwen3' });
     expect(result.notice).toBe('speed_defaulted');
+  });
+
+  it('drops identity-less profiles instead of allowing them to cross backends', () => {
+    const qwen = { backendId: 'qwen3', modelId: 'qwen3-tts-0.6b' };
+    const result = reconcileSettings({ selectedModel: qwen, voiceProfiles: {
+      legacy: { catalogId: 'c1', voiceId: 'af_bella', speedModifier: 1.2 },
+      [ttsModelKey(qwen)]: { catalogId: 'q1', voiceId: 'Serena', speedModifier: 1.0, ...qwen },
+    } }, [kokoroModel, qwenModel]);
+    expect(result.voice.voiceId).toBe('Serena');
+    expect(result.voiceProfiles).not.toHaveProperty('legacy');
   });
 
   it('falls back to Kokoro when the saved Qwen model is unavailable', () => {

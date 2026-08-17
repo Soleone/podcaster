@@ -33,7 +33,7 @@ export interface SettingsDialogProps {
   saving: boolean;
   saveError: string | undefined;
   onSave: (agentName: string, persona: string, voice: VoicePreference, selectedModel?: TtsModelSelection, voiceProfiles?: Record<string, VoicePreference>) => Promise<void>;
-  onPreviewVoice?: (voiceId: string, speedModifier: number, selectedModel?: TtsModelSelection, catalogId?: string) => Promise<VoicePreviewHandle>;
+  onPreviewVoice?: (voiceId: string, speedModifier: number, selectedModel?: TtsModelSelection, catalogId?: string, signal?: AbortSignal) => Promise<VoicePreviewHandle>;
 }
 
 export function SettingsDialog({ open, onOpenChange, model, catalog, models = [], saving, saveError, onSave, onPreviewVoice }: SettingsDialogProps) {
@@ -47,12 +47,24 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
   const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing'>('idle');
   const [previewError, setPreviewError] = useState<string | undefined>(undefined);
   const previewHandleRef = useRef<VoicePreviewHandle | undefined>(undefined);
+  const previewRequestRef = useRef<AbortController | undefined>(undefined);
+  const previewGenerationRef = useRef(0);
+
+  const invalidatePreview = (resetState = true) => {
+    previewGenerationRef.current++;
+    previewRequestRef.current?.abort();
+    previewRequestRef.current = undefined;
+    previewHandleRef.current?.stop();
+    previewHandleRef.current = undefined;
+    stopVoicePreview();
+    if (resetState) setPreviewState('idle');
+  };
 
   useEffect(() => {
-    // Stop anything audible before the dialog resets or closes; the unmount
-    // cleanup below covers the remaining lifecycles.
-    stopVoicePreview();
-    previewHandleRef.current = undefined;
+    // Stop anything audible before the dialog resets or closes; also cancel a
+    // request that has not produced a handle yet so an old backend cannot win
+    // after the dialog moves to a new model.
+    invalidatePreview();
     if (!open) return;
     setAgentName(model.agentName);
     setPersona(model.persona);
@@ -65,7 +77,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     setPreviewError(undefined);
   }, [open, model.agentName, model.persona, model.selectedModel?.backendId, model.selectedModel?.modelId, model.voice.voiceId, model.voice.speedModifier, model.notice, model.voiceProfiles]);
 
-  useEffect(() => () => { previewHandleRef.current?.stop(); }, []);
+  useEffect(() => () => { invalidatePreview(false); }, []);
 
   const agentNameInvalid = utf8ByteLength(agentName) > MAX_AGENT_NAME_BYTES;
   const personaBytes = useMemo(() => utf8ByteLength(persona), [persona]);
@@ -87,7 +99,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     if (!next || next.status !== 'ready' || !next.voiceCatalog) return;
     const nextModel = { backendId: next.backendId, modelId: next.modelId };
     const key = ttsModelKey(nextModel);
-    const nextCatalog = next.speed && !next.voiceCatalog.speed ? { ...next.voiceCatalog, speed: next.speed } : next.voiceCatalog;
+    const nextCatalog = next.speed ? { ...next.voiceCatalog, speed: next.speed } : next.voiceCatalog;
     const reconciled = reconcileVoice(voiceProfiles[key], nextCatalog);
     const nextVoice = { ...reconciled.voice, ...nextModel };
     setSelectedModel(nextModel);
@@ -95,7 +107,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     setVoiceId(nextVoice.voiceId);
     setSpeedModifier(String(nextVoice.speedModifier));
     setVoiceNotice(reconciled.notice);
-    if (previewHandleRef.current) { previewHandleRef.current.stop(); previewHandleRef.current = undefined; setPreviewState('idle'); }
+    invalidatePreview();
   };
 
   const commit = async () => {
@@ -108,17 +120,22 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
 
   const togglePreview = async () => {
     if (previewState === 'playing') {
-      previewHandleRef.current?.stop();
-      previewHandleRef.current = undefined;
-      setPreviewState('idle');
+      invalidatePreview();
       return;
     }
     if (previewState === 'loading' || !onPreviewVoice || !catalogReady) return;
     setPreviewError(undefined);
     setPreviewState('loading');
+    const request = new AbortController();
+    const generation = ++previewGenerationRef.current;
+    previewRequestRef.current = request;
     try {
-      const handle = await onPreviewVoice(voiceId, speedCapability.supported ? speedModifierValue : speedCapability.default, selectedModel, selectedCatalog?.catalogId);
+      const handle = await onPreviewVoice(voiceId, speedCapability.supported ? speedModifierValue : speedCapability.default, selectedModel, selectedCatalog?.catalogId, request.signal);
       // The dialog may have closed or moved on while the fetch was in flight.
+      if (generation !== previewGenerationRef.current || request.signal.aborted || !open) {
+        handle.stop();
+        return;
+      }
       previewHandleRef.current = handle;
       setPreviewState('playing');
       void handle.finished.then(
@@ -130,9 +147,12 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
         },
       );
     } catch {
+      if (generation !== previewGenerationRef.current || request.signal.aborted) return;
       previewHandleRef.current = undefined;
       setPreviewState('idle');
       setPreviewError('Voice preview is unavailable right now. It needs the audio engine free, so try before starting a session.');
+    } finally {
+      if (previewRequestRef.current === request) previewRequestRef.current = undefined;
     }
   };
 
@@ -235,7 +255,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                 <FieldContent>
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
-                      {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: selectedCatalog!.catalogId, voiceId: value, speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default, ...selectedModel } })); if (previewHandleRef.current) { previewHandleRef.current.stop(); previewHandleRef.current = undefined; setPreviewState('idle'); } } }} disabled={!catalogReady}>
+                      {catalogReady ? <Select value={voiceId} onValueChange={value => { if (value) { setVoiceId(value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: selectedCatalog!.catalogId, voiceId: value, speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default, ...selectedModel } })); invalidatePreview(); } }} disabled={!catalogReady}>
                         <SelectTrigger id="settings-voice" className="w-full" aria-label="Voice">
                           <SelectValue>{selectedVoice?.label ?? voiceId}</SelectValue>
                         </SelectTrigger>
@@ -273,7 +293,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                     step="0.05"
                     value={speedModifier}
                     disabled={!speedCapability.supported}
-                    onChange={event => { setSpeedModifier(event.target.value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: selectedCatalog?.catalogId ?? '', voiceId, speedModifier: Number(event.target.value), ...selectedModel } })); }}
+                    onChange={event => { setSpeedModifier(event.target.value); setVoiceProfiles(previous => ({ ...previous, [ttsModelKey(selectedModel)]: { catalogId: selectedCatalog?.catalogId ?? '', voiceId, speedModifier: Number(event.target.value), ...selectedModel } })); invalidatePreview(); }}
                     aria-invalid={speedModifierInvalid || undefined}
                     aria-describedby="settings-voice-speed-description"
                   />

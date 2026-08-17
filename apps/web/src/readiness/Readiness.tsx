@@ -6,12 +6,12 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
-import type { TtsModelDescriptor, VoiceCatalog } from '@app/contracts/settings';
+import type { TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
 
 type Capability = { id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string };
-type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: 'ready' | 'checking' | 'login_required' | 'unavailable' | 'incompatible' | 'rate_limited'; voiceCatalog?: VoiceCatalog; ttsModels?: TtsModelDescriptor[] };
+type Snapshot = { capabilities: Capability[]; sidecar: string; reasoning?: 'ready' | 'checking' | 'login_required' | 'unavailable' | 'incompatible' | 'rate_limited'; voiceCatalog?: VoiceCatalog; ttsModels?: TtsModelDescriptor[]; activeTtsModel?: TtsModelSelection };
 
-type ReadinessProps = { sessionAvailable: boolean; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string) => void; className?: string };
+type ReadinessProps = { sessionAvailable: boolean; selectedModel?: TtsModelSelection; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string) => void; className?: string };
 
 const DISCLOSURE_KEY = 'podcaster.disclosure';
 const DISCLOSURE_VERSION = 'voice-cloud-boundary-v1';
@@ -30,6 +30,7 @@ export function Readiness(props: ReadinessProps) {
   const [starting, setStarting] = useState(false);
   const restored = useRef(false);
   const lastReportedMic = useRef<boolean | undefined>(undefined);
+  const lastReportedModel = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (restored.current) return;
@@ -47,19 +48,21 @@ export function Readiness(props: ReadinessProps) {
   useEffect(() => {
     if (!acknowledged || !capability) return;
     // Poll while the sidecar is still starting; once ready, only refresh to
-    // re-report microphone-state changes so the voice-input row stops showing a
-    // stale needs-action warning after the mic is granted.
-    if (snapshot?.sidecar === 'ready' && lastReportedMic.current === microphoneReady) return;
+    // re-report microphone-state or active-backend changes so the status copy
+    // and start gate track the model selected in Voice settings.
+    const modelKey = props.selectedModel ? `${props.selectedModel.backendId}:${props.selectedModel.modelId}` : '';
+    if (snapshot?.sidecar === 'ready' && lastReportedMic.current === microphoneReady && lastReportedModel.current === modelKey) return;
     let cancelled = false;
     const refresh = async () => {
       try {
         const response = await fetch('/api/readiness', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'content-type': 'application/json', 'x-podcaster-capability': capability },
-          body: JSON.stringify({ microphoneGranted: microphoneReady }),
+          body: JSON.stringify({ microphoneGranted: microphoneReady, ...(props.selectedModel ? { ttsModel: props.selectedModel } : {}) }),
         });
         if (response.ok && !cancelled) {
           lastReportedMic.current = microphoneReady;
+          lastReportedModel.current = modelKey;
           const next = await response.json() as Snapshot;
           setSnapshot(next);
           // Publish the complete model set first. Otherwise a persisted Qwen
@@ -73,7 +76,7 @@ export function Readiness(props: ReadinessProps) {
     const timer = setInterval(() => void refresh(), 2_000);
     void refresh();
     return () => { cancelled = true; clearInterval(timer); };
-  }, [acknowledged, capability, snapshot?.sidecar, microphoneReady]);
+  }, [acknowledged, capability, snapshot?.sidecar, microphoneReady, props.selectedModel?.backendId, props.selectedModel?.modelId]);
 
   async function microphoneGrantedStatus(): Promise<boolean> {
     try {
@@ -91,7 +94,7 @@ export function Readiness(props: ReadinessProps) {
       if (!bootstrap.ok) throw new Error('Secure bootstrap failed. Retry from this page.');
       const boot = await bootstrap.json() as { capability: string };
       const granted = await microphoneGrantedStatus();
-      const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-podcaster-capability': boot.capability }, body: JSON.stringify({ microphoneGranted: granted }) });
+      const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-podcaster-capability': boot.capability }, body: JSON.stringify({ microphoneGranted: granted, ...(props.selectedModel ? { ttsModel: props.selectedModel } : {}) }) });
       if (!response.ok) throw new Error('Readiness check failed. Retry from this page.');
       setCapability(boot.capability);
       props.onCapability?.(boot.capability);
@@ -107,6 +110,8 @@ export function Readiness(props: ReadinessProps) {
         try { localStorage.setItem(DISCLOSURE_KEY, DISCLOSURE_VERSION); } catch { /* session can continue without persistence */ }
       }
       if (granted) setMicrophoneReady(true);
+      lastReportedMic.current = granted;
+      lastReportedModel.current = props.selectedModel ? `${props.selectedModel.backendId}:${props.selectedModel.modelId}` : '';
     } catch (cause) {
       // If a returning user's silent refresh fails, restore the explicit retry
       // surface instead of leaving them on an unusable status card.
@@ -127,6 +132,8 @@ export function Readiness(props: ReadinessProps) {
     } finally { setLoading(false); }
   }
 
+  const activeDescriptor = snapshot?.ttsModels?.find(model => snapshot.activeTtsModel && model.backendId === snapshot.activeTtsModel.backendId && model.modelId === snapshot.activeTtsModel.modelId);
+  const activeBackendLabel = activeDescriptor?.label ?? snapshot?.activeTtsModel?.backendId;
   const audioReady = snapshot?.sidecar === 'ready';
   const reasoningReady = snapshot?.capabilities.find(item => item.id === 'cloud_reasoning')?.state === 'ready';
   const reasoningChecking = snapshot?.reasoning === 'checking';
@@ -155,7 +162,7 @@ export function Readiness(props: ReadinessProps) {
     : realSessionReady && reasoningChecking
       ? 'Pi is still warming up. You can start now.'
       : realSessionReady
-        ? 'Everything is ready on this device.'
+        ? `${activeBackendLabel ? `${activeBackendLabel} is ready. ` : ''}Everything is ready on this device.`
         : transcriptOnlyReady
           ? 'Transcript-only mode is ready. Assistant responses are unavailable.'
           : 'A few things need your attention before you can start.';
@@ -196,7 +203,7 @@ export function Readiness(props: ReadinessProps) {
       </CardContent>
       <CardFooter className="flex-wrap gap-3">
         <DisclosureToggle />
-        <DetailsToggle sidecar={snapshot?.sidecar} capability={capability} />
+        <DetailsToggle sidecar={snapshot?.sidecar} capability={capability} activeBackend={activeBackendLabel} />
       </CardFooter>
     </Card>}
     {error ? <Alert variant="destructive" className="mt-4">
@@ -244,7 +251,7 @@ function DisclosureToggle() {
   </>;
 }
 
-function DetailsToggle({ sidecar, capability }: { sidecar: string | undefined; capability: string | undefined }) {
+function DetailsToggle({ sidecar, capability, activeBackend }: { sidecar: string | undefined; capability: string | undefined; activeBackend: string | undefined }) {
   const [open, setOpen] = useState(false);
   return <>
     <Button variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={open} onClick={() => setOpen(value => !value)}>
@@ -253,7 +260,7 @@ function DetailsToggle({ sidecar, capability }: { sidecar: string | undefined; c
     </Button>
     {open ? <div className="basis-full w-full border-t pt-3" role="region" aria-label="Readiness diagnostics">
       <p className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">Diagnostics</p>
-      <p className="text-sm leading-relaxed text-muted-foreground">Audio sidecar: {sidecar ?? 'unknown'}. Session capability: {capability ? 'issued in memory' : 'not issued'}.</p>
+      <p className="text-sm leading-relaxed text-muted-foreground">Audio sidecar: {sidecar ?? 'unknown'}. Active backend: {activeBackend ?? 'unknown'}. Session capability: {capability ? 'issued in memory' : 'not issued'}.</p>
     </div> : null}
   </>;
 }

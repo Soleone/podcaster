@@ -16,6 +16,8 @@ export interface StoredSession {
   sessionId: string;
   sessionSeed: string;
   personaDigest: string;
+  /** Frozen TTS/persona settings used by the active session, when recorded. */
+  settings?: SessionSettingsSnapshot;
   startedAt: string;
   updatedAt: string;
   endedAt: string | null;
@@ -25,8 +27,6 @@ export interface StoredSession {
   /** Start of the current foreground run. Null while paused or ended. */
   runningSince?: string | null;
   pausedAt?: string | null;
-  /** Frozen voice/persona settings used whenever this session is rehydrated. */
-  settings?: SessionSettingsSnapshot;
   failures: string[];
 }
 

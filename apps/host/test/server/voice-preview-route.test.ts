@@ -7,12 +7,13 @@ import { VOICE_PREVIEW_MAX_PHRASE_CHARS, VOICE_PREVIEW_MAX_TEXT_CHARS, VOICE_PRE
 import type { SidecarProcess } from '../../src/sidecar/process.js';
 
 const voiceCatalog = Object.freeze({ catalogId: 'catalog-1', backendId: 'kokoro', modelId: 'kokoro-82m-onnx', runtimeConfigId: 'rc', revision: 'rev-1', defaultVoiceId: 'af_heart', voices: [{ id: 'af_heart', label: 'af_heart' }, { id: 'af_bella', label: 'Bella' }] });
+const qwenCatalog = Object.freeze({ catalogId: 'qwen-catalog', backendId: 'qwen3', modelId: 'qwen-model', runtimeConfigId: 'qwen-runtime', revision: 'qwen-rev', defaultVoiceId: 'Ryan', speed: { supported: false, min: 1, max: 1, default: 1 }, voices: [{ id: 'Ryan', label: 'Ryan' }, { id: 'Serena', label: 'Serena' }] });
 
 interface CapturedPreview { catalogId: string; voiceId: string; phrases: string[] }
 
 type PreviewStub = (input: CapturedPreview, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>;
 
-async function fakeSidecarHealth(options: { ready: boolean }) {
+async function fakeSidecarHealth(options: { ready: boolean; qwen?: boolean }) {
   const http = createServer();
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
@@ -20,7 +21,19 @@ async function fakeSidecarHealth(options: { ready: boolean }) {
   http.on('request', (request, response) => {
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(options.ready
-      ? { status: 'ready', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1', voiceCatalog }
+      ? {
+        status: 'ready',
+        stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1',
+        tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1',
+        voiceCatalog,
+        ...(options.qwen ? {
+          ttsModels: [
+            { backendId: 'kokoro', modelId: 'kokoro-82m-onnx', label: 'Kokoro CUDA', status: 'ready', voiceCatalog },
+            { backendId: 'qwen3', modelId: 'qwen-model', label: 'Qwen CustomVoice', status: 'ready', voiceCatalog: qwenCatalog },
+          ],
+          activeTtsModel: { backendId: 'kokoro', modelId: 'kokoro-82m-onnx' },
+        } : {}),
+      }
       : { status: 'starting', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' }));
   });
   return {
@@ -33,8 +46,8 @@ const apps: FastifyInstance[] = [];
 const closed: Array<Promise<void>> = [];
 afterEach(async () => { for (const app of apps.splice(0)) await app.close(); for (const close of closed.splice(0)) await close; });
 
-async function makeApp(voicePreview: PreviewStub, ready: boolean = true): Promise<{ app: FastifyInstance; origin: string }> {
-  const { sidecar, close } = await fakeSidecarHealth({ ready });
+async function makeApp(voicePreview: PreviewStub, ready: boolean = true, qwen: boolean = false): Promise<{ app: FastifyInstance; origin: string }> {
+  const { sidecar, close } = await fakeSidecarHealth({ ready, qwen });
   closed.push(close);
   const app = await buildApp({ sidecar, voicePreview });
   apps.push(app);
@@ -53,6 +66,38 @@ async function bootstrap(origin: string) {
 async function preview(origin: string, auth: { capability: string; cookie: string; headers: Record<string, string> }, voiceId: string) {
   return fetch(`${origin}/api/voice-preview`, { method: 'POST', headers: { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' }, body: JSON.stringify({ voiceId }) });
 }
+
+describe('POST /api/readiness', () => {
+  it('reports the selected Qwen CustomVoice backend as the active ready backend', async () => {
+    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, true);
+    const auth = await bootstrap(origin);
+    const response = await fetch(`${origin}/api/readiness`, {
+      method: 'POST',
+      headers: { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' },
+      body: JSON.stringify({ microphoneGranted: true, ttsModel: { backendId: 'qwen3', modelId: 'qwen-model' } }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { capabilities: Array<{ id: string; state: string; reason: string }>; sidecar: string; activeTtsModel?: { backendId: string; modelId: string } };
+    const output = body.capabilities.find(capability => capability.id === 'voice_output')!;
+    expect(output.state).toBe('ready');
+    expect(output.reason).toContain('Qwen CustomVoice is ready');
+    expect(body.sidecar).toBe('ready');
+    expect(body.activeTtsModel).toEqual({ backendId: 'qwen3', modelId: 'qwen-model' });
+  });
+
+  it('keeps the verified Kokoro catalog visible when an old sidecar lacks model descriptors', async () => {
+    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }));
+    const auth = await bootstrap(origin);
+    const response = await fetch(`${origin}/api/readiness`, {
+      method: 'POST',
+      headers: { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' },
+      body: JSON.stringify({ microphoneGranted: true, ttsModel: { backendId: 'qwen3', modelId: 'qwen-model' } }),
+    });
+    const body = await response.json() as { capabilities: Array<{ id: string; state: string }>; voiceCatalog?: { backendId: string } };
+    expect(body.voiceCatalog?.backendId).toBe('kokoro');
+    expect(body.capabilities.find(capability => capability.id === 'voice_output')?.state).toBe('unavailable');
+  });
+});
 
 describe('POST /api/voice-preview', () => {
   it('returns a playable WAV for a verified voice with three randomized phrases', async () => {
