@@ -1,6 +1,7 @@
-import { AlertTriangle, Check, CircleAlert, RefreshCw, Server, Sparkles } from 'lucide-react';
+import { Activity, AlertTriangle, Check, ChevronDown, CircleAlert, RefreshCw, Server, Sparkles } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from './ui/popover';
 import { cn } from '../lib/utils';
 import { aggregateServiceState, serviceStateLabel, type ServiceState, type ServiceStatuses } from '../services/service-status';
@@ -26,20 +27,24 @@ function StatusLed({ state, className }: { state: ServiceState; className?: stri
   return <span aria-hidden="true" className={cn('inline-block size-2 rounded-full', tone.dot, tone.animate && 'animate-pulse', className)} />;
 }
 
-function ServiceRow({ status, icon: Icon }: { status: ServiceStatuses['audio']; icon: typeof Server }) {
+function ServiceCard({ status, icon: Icon }: { status: ServiceStatuses['audio']; icon: typeof Server }) {
   const tone = stateTone[status.state];
   const StateIcon = tone.icon;
-  return <li className="flex items-start gap-3 border-t py-3 first:border-t-0 first:pt-0 last:pb-0">
-    <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="size-4" aria-hidden="true" /></span>
-    <div className="min-w-0 flex-1">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium">{status.label}</span>
-        <Badge variant={tone.badge}><StateIcon className="size-3" aria-hidden="true" />{serviceStateLabel(status.state)}</Badge>
+  return <Card size="sm" className="gap-2 bg-muted/20 shadow-none ring-1 ring-border/70">
+    <CardHeader className="gap-2 px-3.5 pb-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground ring-1 ring-border/70"><Icon aria-hidden="true" /></span>
+          <CardTitle className="truncate text-sm">{status.label}</CardTitle>
+        </div>
+        <Badge variant={tone.badge}><StateIcon aria-hidden="true" />{serviceStateLabel(status.state)}</Badge>
       </div>
-      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{status.detail}</p>
-      {status.state !== 'ready' ? <p className="mt-1 text-xs leading-relaxed"><span className="font-medium">Next:</span> {status.correctiveAction}</p> : null}
-    </div>
-  </li>;
+      <CardDescription className="text-xs leading-relaxed">{status.detail}</CardDescription>
+    </CardHeader>
+    {status.state !== 'ready' ? <CardFooter className="border-t px-3.5 pt-2.5 pb-3.5 text-xs leading-relaxed">
+      <span><span className="font-medium text-foreground">Next:</span> {status.correctiveAction}</span>
+    </CardFooter> : null}
+  </Card>;
 }
 
 export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false }: ServiceStatusPopoverProps) {
@@ -48,14 +53,16 @@ export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false }
   return <Popover>
     <PopoverTrigger render={
       <Button
-        variant="ghost"
+        variant="outline"
         size="sm"
-        className="h-9 gap-2 rounded-full px-2.5 text-muted-foreground hover:text-foreground"
+        className="h-9 gap-2 rounded-full px-3"
         aria-label={label}
         title={label}
       >
+        <Activity data-icon="inline-start" aria-hidden="true" />
         <StatusLed state={aggregate} />
         <span className="hidden sm:inline">Services</span>
+        <ChevronDown data-icon="inline-end" aria-hidden="true" />
       </Button>
     } />
     <PopoverContent align="end" className="w-[min(22rem,calc(100vw_-_2rem))] gap-3">
@@ -63,17 +70,17 @@ export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false }
         <div className="flex items-start justify-between gap-3">
           <div>
             <PopoverTitle>Service status</PopoverTitle>
-            <PopoverDescription className="mt-1">Live health for the local audio runtime and Pi.</PopoverDescription>
+            <PopoverDescription className="mt-1">Live health for audio and Pi.</PopoverDescription>
           </div>
           {onRefresh ? <Button variant="ghost" size="icon-xs" aria-label="Refresh service status" title="Refresh service status" onClick={onRefresh} disabled={refreshing}>
             <RefreshCw className={cn(refreshing && 'animate-spin')} aria-hidden="true" />
           </Button> : null}
         </div>
       </PopoverHeader>
-      <ul>
-        <ServiceRow status={statuses.audio} icon={Server} />
-        <ServiceRow status={statuses.pi} icon={Sparkles} />
-      </ul>
+      <div className="flex flex-col gap-2">
+        <ServiceCard status={statuses.audio} icon={Server} />
+        <ServiceCard status={statuses.pi} icon={Sparkles} />
+      </div>
       <p className="border-t pt-3 text-xs text-muted-foreground">This indicator updates automatically while Podcaster is open.</p>
     </PopoverContent>
   </Popover>;
