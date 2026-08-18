@@ -95,7 +95,10 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         .then(value => { probeAt = now(); probeValue = value; return value; })
         .finally(() => { probePromise = undefined; });
     }
-    return Promise.resolve(piChecking);
+    // Once Pi has reported a real state, keep showing that last known state
+    // while its next probe is in flight. Returning the synthetic checking value
+    // here made a healthy Pi visibly flap to Starting on every TTL refresh.
+    return Promise.resolve(probeValue ?? piChecking);
   };
   let origin = '';
   app.decorate('setCanonicalOrigin', (value: string) => { origin = value; });

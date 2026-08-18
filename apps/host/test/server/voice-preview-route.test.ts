@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/server/app.js';
 import { WAV_HEADER_BYTES } from '../../src/sidecar/wav.js';
 import { VOICE_PREVIEW_MAX_PHRASE_CHARS, VOICE_PREVIEW_MAX_TEXT_CHARS, VOICE_PREVIEW_PHRASE_COUNT } from '@app/contracts/settings';
+import type { PiClient } from '../../src/pi/PiClient.js';
 import type { SidecarProcess } from '../../src/sidecar/process.js';
 
 const voiceCatalog = Object.freeze({ catalogId: 'catalog-1', backendId: 'kokoro', modelId: 'kokoro-82m-onnx', runtimeConfigId: 'rc', revision: 'rev-1', defaultVoiceId: 'af_heart', voices: [{ id: 'af_heart', label: 'af_heart' }, { id: 'af_bella', label: 'Bella' }] });
@@ -46,10 +47,10 @@ const apps: FastifyInstance[] = [];
 const closed: Array<Promise<void>> = [];
 afterEach(async () => { for (const app of apps.splice(0)) await app.close(); for (const close of closed.splice(0)) await close; });
 
-async function makeApp(voicePreview: PreviewStub, ready: boolean = true, qwen: boolean = false): Promise<{ app: FastifyInstance; origin: string }> {
+async function makeApp(voicePreview: PreviewStub, ready: boolean = true, qwen: boolean = false, options: { pi?: PiClient; now?: () => number } = {}): Promise<{ app: FastifyInstance; origin: string }> {
   const { sidecar, close } = await fakeSidecarHealth({ ready, qwen });
   closed.push(close);
-  const app = await buildApp({ sidecar, voicePreview });
+  const app = await buildApp({ sidecar, voicePreview, ...options });
   apps.push(app);
   const origin = await app.listen({ host: '127.0.0.1', port: 0 });
   app.setCanonicalOrigin(origin);
@@ -68,6 +69,34 @@ async function preview(origin: string, auth: { capability: string; cookie: strin
 }
 
 describe('POST /api/readiness', () => {
+  it('keeps the last Pi state visible while a refresh probe is in flight', async () => {
+    let clock = 1_000;
+    let probeCount = 0;
+    let releaseRefresh!: () => void;
+    const pi: PiClient = {
+      async probe() {
+        probeCount++;
+        if (probeCount === 1) return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' };
+        return new Promise(resolve => { releaseRefresh = () => resolve({ status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' }); });
+      },
+      async *request() {},
+      async shutdown() {},
+    };
+    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, false, { pi, now: () => clock });
+    const auth = await bootstrap(origin);
+    const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
+    const read = () => fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+
+    await read();
+    const ready = await read();
+    expect((await ready.json() as { services: { pi: { state: string } } }).services.pi.state).toBe('ready');
+    clock += 10_001;
+    const duringRefresh = await read();
+    expect((await duringRefresh.json() as { services: { pi: { state: string } } }).services.pi.state).toBe('ready');
+    expect(probeCount).toBe(2);
+    releaseRefresh();
+  });
+
   it('reports the selected Qwen CustomVoice backend as the active ready backend', async () => {
     const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, true);
     const auth = await bootstrap(origin);
