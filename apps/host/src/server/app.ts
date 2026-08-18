@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
-import type { SidecarProcess } from '../sidecar/process.js';
+import type { SidecarProcess, SidecarRuntimeSnapshot } from '../sidecar/process.js';
 import { sidecarSnapshot } from '../sidecar/process.js';
 import { createPiClient, type PiClient, type PiReadiness } from '../pi/PiClient.js';
 import { createPiResearchClient, type PiResearchClient } from '../pi/PiResearchClient.js';
@@ -79,25 +79,59 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     }, Math.max(0, sessionDisconnectGraceMs));
     session.disconnectTimer.unref?.();
   };
-  // Readiness polls every couple of seconds, but a Pi probe is a full provider
-  // round trip. Never make the browser wait for that probe: share one in-flight
-  // probe, return a checking snapshot immediately, and reuse fresh results.
+  // Readiness polls every couple of seconds. A single missed loopback health
+  // response is not evidence that a loaded audio runtime disappeared, so retain
+  // the last valid snapshot briefly while later polls confirm or clear the miss.
+  const SIDECAR_SNAPSHOT_GRACE_MS = 15_000;
+  let sidecarValue: SidecarRuntimeSnapshot | undefined;
+  let sidecarAt = 0;
+  let sidecarPromise: Promise<SidecarRuntimeSnapshot | undefined> | undefined;
+  const snapshotSidecar = async (): Promise<SidecarRuntimeSnapshot | undefined> => {
+    if (!sidecarPromise) {
+      sidecarPromise = sidecarSnapshot(options.sidecar)
+        .then(value => {
+          if (value) {
+            sidecarValue = value;
+            sidecarAt = now();
+          }
+          return value;
+        })
+        .finally(() => { sidecarPromise = undefined; });
+    }
+    const value = await sidecarPromise;
+    return value ?? (sidecarValue && now() - sidecarAt < SIDECAR_SNAPSHOT_GRACE_MS ? sidecarValue : undefined);
+  };
+
+  // A Pi probe is a full provider round trip. Never make the browser wait for
+  // it: share one in-flight probe, return a checking snapshot immediately, and
+  // reuse fresh results. Once ready, require the same downgrade twice so one
+  // malformed provider reply or transient network failure cannot flap the UI.
   const PROBE_TTL_MS = 10_000;
+  const PI_DOWNGRADE_CONFIRMATIONS = 2;
   const piChecking: PiReadiness = { status: 'unavailable', detail: 'Pi is still starting.', correctiveAction: 'You can start now; the first response may take a little longer.' };
   let probeValue: PiReadiness | undefined;
   let probeAt = 0;
   let probePromise: Promise<PiReadiness> | undefined;
+  let downgradeCount = 0;
+  const acceptProbeValue = (value: PiReadiness): PiReadiness => {
+    probeAt = now();
+    if (probeValue?.status === 'ready' && value.status !== 'ready') {
+      downgradeCount++;
+      if (downgradeCount < PI_DOWNGRADE_CONFIRMATIONS) return probeValue;
+    }
+    probeValue = value;
+    downgradeCount = 0;
+    return value;
+  };
   const probePi = (): Promise<PiReadiness> => {
     if (probeValue && now() - probeAt < PROBE_TTL_MS) return Promise.resolve(probeValue);
     if (!probePromise) {
       probePromise = (options.pi ?? unavailablePi).probe()
         .catch(() => unavailablePi.probe())
-        .then(value => { probeAt = now(); probeValue = value; return value; })
+        .then(acceptProbeValue)
         .finally(() => { probePromise = undefined; });
     }
-    // Once Pi has reported a real state, keep showing that last known state
-    // while its next probe is in flight. Returning the synthetic checking value
-    // here made a healthy Pi visibly flap to Starting on every TTL refresh.
+    // Keep the last confirmed state visible while the next probe is in flight.
     return Promise.resolve(probeValue ?? piChecking);
   };
   let origin = '';
@@ -143,7 +177,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     // a perpetual needs-action warning for voice input.
     const body = (request.body ?? {}) as { microphoneGranted?: unknown; ttsModel?: unknown; selectedModel?: unknown };
     const microphoneGranted = body.microphoneGranted === true;
-    const [snapshot, pi] = await Promise.all([sidecarSnapshot(options.sidecar), probePi()]);
+    const [snapshot, pi] = await Promise.all([snapshotSidecar(), probePi()]);
     const requestedModel = parseTtsModel(body.ttsModel ?? body.selectedModel) ?? snapshot?.activeTtsModel ?? DEFAULT_TTS_MODEL;
     const descriptor = snapshot?.ttsModels?.find(model => sameTtsModel(model, requestedModel));
     const selectedCatalog = descriptor?.status === 'ready'

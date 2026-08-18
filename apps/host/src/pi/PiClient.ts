@@ -116,7 +116,7 @@ export class StdioPiClient implements PiClient {
       await this.send("prompt", { message: `Reply with exactly ${PROBE_MARKER} and no other text.` }, this.requestDeadlineMs);
       await this.waitUntil(() => lifecycle.messageEnded && lifecycle.settled, this.requestDeadlineMs, "probe completion timed out");
       if (lifecycle.stopReason !== "stop" || lifecycle.providerError) throw new Error(lifecycle.providerError ?? "provider did not complete normally");
-      if (lifecycle.textExceeded || lifecycle.assistantText !== PROBE_MARKER) throw new Error("provider probe response was incompatible");
+      if (lifecycle.textExceeded || lifecycle.assistantText !== PROBE_MARKER) throw new Error("provider probe returned an invalid readiness marker");
       return readiness("ready");
     } catch (error) {
       try { await this.terminateOwnedChild(); } catch { this.closed = true; return readiness("unavailable"); }

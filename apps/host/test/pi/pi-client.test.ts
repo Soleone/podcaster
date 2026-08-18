@@ -49,9 +49,9 @@ describe("production Pi RPC boundary", () => {
     expect(status.detail).not.toMatch(/secret|token=/i);
   });
 
-  it("does not accept unrelated normally settled assistant text as readiness", async () => {
+  it("does not accept unrelated normally settled assistant text as readiness or mislabel it as an installation mismatch", async () => {
     const { value } = await client("unrelated-probe");
-    expect(await value.probe()).toMatchObject({ status: "incompatible" });
+    expect(await value.probe()).toMatchObject({ status: "unavailable" });
     await value.shutdown();
   });
 

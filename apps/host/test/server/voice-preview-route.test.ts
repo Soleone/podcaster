@@ -14,14 +14,18 @@ interface CapturedPreview { catalogId: string; voiceId: string; phrases: string[
 
 type PreviewStub = (input: CapturedPreview, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>;
 
-async function fakeSidecarHealth(options: { ready: boolean; qwen?: boolean }) {
+async function fakeSidecarHealth(options: { ready: boolean; qwen?: boolean; failHealthRequests?: number[]; delayHealthRequests?: Record<number, number> }) {
   const http = createServer();
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
   if (!address || typeof address === 'string') throw new Error('missing address');
-  http.on('request', (request, response) => {
-    response.setHeader('content-type', 'application/json');
-    response.end(JSON.stringify(options.ready
+  let healthRequestCount = 0;
+  http.on('request', (_request, response) => {
+    healthRequestCount++;
+    const requestNumber = healthRequestCount;
+    const body = JSON.stringify(options.failHealthRequests?.includes(requestNumber)
+      ? { status: 'invalid' }
+      : options.ready
       ? {
         status: 'ready',
         stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1',
@@ -35,10 +39,14 @@ async function fakeSidecarHealth(options: { ready: boolean; qwen?: boolean }) {
           activeTtsModel: { backendId: 'kokoro', modelId: 'kokoro-82m-onnx' },
         } : {}),
       }
-      : { status: 'starting', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' }));
+      : { status: 'starting', stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1', tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1' });
+    const send = () => { response.setHeader('content-type', 'application/json'); response.end(body); };
+    const delay = options.delayHealthRequests?.[requestNumber] ?? 0;
+    if (delay > 0) setTimeout(send, delay); else send();
   });
   return {
     sidecar: { child: {} as SidecarProcess['child'], origin: `http://127.0.0.1:${address.port}`, secret: 'secret', stop: async () => undefined } satisfies SidecarProcess,
+    healthRequests: () => healthRequestCount,
     close: async () => { await new Promise<void>(resolve => http.close(() => resolve())); },
   };
 }
@@ -47,14 +55,15 @@ const apps: FastifyInstance[] = [];
 const closed: Array<Promise<void>> = [];
 afterEach(async () => { for (const app of apps.splice(0)) await app.close(); for (const close of closed.splice(0)) await close; });
 
-async function makeApp(voicePreview: PreviewStub, ready: boolean = true, qwen: boolean = false, options: { pi?: PiClient; now?: () => number } = {}): Promise<{ app: FastifyInstance; origin: string }> {
-  const { sidecar, close } = await fakeSidecarHealth({ ready, qwen });
+async function makeApp(voicePreview: PreviewStub, ready: boolean = true, qwen: boolean = false, options: { pi?: PiClient; now?: () => number; sidecarFailHealthRequests?: number[]; sidecarDelayHealthRequests?: Record<number, number> } = {}): Promise<{ app: FastifyInstance; origin: string; sidecarHealthRequests: () => number }> {
+  const { sidecarFailHealthRequests, sidecarDelayHealthRequests, ...buildOptions } = options;
+  const { sidecar, healthRequests, close } = await fakeSidecarHealth({ ready, qwen, failHealthRequests: sidecarFailHealthRequests, delayHealthRequests: sidecarDelayHealthRequests });
   closed.push(close);
-  const app = await buildApp({ sidecar, voicePreview, ...options });
+  const app = await buildApp({ sidecar, voicePreview, ...buildOptions });
   apps.push(app);
   const origin = await app.listen({ host: '127.0.0.1', port: 0 });
   app.setCanonicalOrigin(origin);
-  return { app, origin };
+  return { app, origin, sidecarHealthRequests: healthRequests };
 }
 
 async function bootstrap(origin: string) {
@@ -69,6 +78,47 @@ async function preview(origin: string, auth: { capability: string; cookie: strin
 }
 
 describe('POST /api/readiness', () => {
+  it('keeps the last audio snapshot across one transient health failure but expires it when failures continue', async () => {
+    let clock = 1_000;
+    const { origin } = await makeApp(
+      async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }),
+      true,
+      false,
+      { now: () => clock, sidecarFailHealthRequests: [2, 3] },
+    );
+    const auth = await bootstrap(origin);
+    const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
+    const read = async () => {
+      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+      return response.json() as Promise<{ services: { audio: { state: string } } }>;
+    };
+
+    expect((await read()).services.audio.state).toBe('ready');
+    expect((await read()).services.audio.state).toBe('ready');
+    clock += 15_001;
+    expect((await read()).services.audio.state).toBe('unavailable');
+  });
+
+  it('coalesces concurrent audio health checks so responses cannot update the cache out of order', async () => {
+    const { origin, sidecarHealthRequests } = await makeApp(
+      async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }),
+      true,
+      false,
+      { sidecarDelayHealthRequests: { 1: 50 } },
+    );
+    const auth = await bootstrap(origin);
+    const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
+    const read = async () => {
+      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+      return response.json() as Promise<{ services: { audio: { state: string } } }>;
+    };
+
+    const [first, second] = await Promise.all([read(), read()]);
+    expect(first.services.audio.state).toBe('ready');
+    expect(second.services.audio.state).toBe('ready');
+    expect(sidecarHealthRequests()).toBe(1);
+  });
+
   it('keeps the last Pi state visible while a refresh probe is in flight', async () => {
     let clock = 1_000;
     let probeCount = 0;
@@ -95,6 +145,39 @@ describe('POST /api/readiness', () => {
     expect((await duringRefresh.json() as { services: { pi: { state: string } } }).services.pi.state).toBe('ready');
     expect(probeCount).toBe(2);
     releaseRefresh();
+  });
+
+  it('requires two consecutive Pi failures before publishing the latest downgrade', async () => {
+    let clock = 1_000;
+    let probeCount = 0;
+    const pi: PiClient = {
+      async probe() {
+        probeCount++;
+        if (probeCount === 1) return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' };
+        if (probeCount === 2) return { status: 'unavailable', detail: 'Pi is unavailable.', correctiveAction: 'Retry.' };
+        return { status: 'incompatible', detail: 'Pi is incompatible.', correctiveAction: 'Retry.' };
+      },
+      async *request() {},
+      async shutdown() {},
+    };
+    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, false, { pi, now: () => clock });
+    const auth = await bootstrap(origin);
+    const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
+    const read = async () => {
+      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+      return response.json() as Promise<{ services: { pi: { state: string } } }>;
+    };
+
+    await read();
+    expect((await read()).services.pi.state).toBe('ready');
+    clock += 10_001;
+    expect((await read()).services.pi.state).toBe('ready');
+    await new Promise(resolve => setImmediate(resolve));
+    expect((await read()).services.pi.state).toBe('ready');
+    clock += 10_001;
+    expect((await read()).services.pi.state).toBe('ready');
+    await new Promise(resolve => setImmediate(resolve));
+    expect((await read()).services.pi.state).toBe('incompatible');
   });
 
   it('reports the selected Qwen CustomVoice backend as the active ready backend', async () => {
