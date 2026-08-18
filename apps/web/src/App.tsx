@@ -1017,7 +1017,7 @@ export function App() {
   const settingsDialog = settingsOpen ? <Suspense fallback={null}>
     <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} models={ttsModels} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} customVoices={customVoices} onEnrollCustomVoice={enrollVoice} onDeleteCustomVoice={deleteVoice} onRenameCustomVoice={renameVoice} />
   </Suspense> : null;
-  const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} serviceStatuses={serviceStatuses} onRefreshServiceStatus={() => void refreshServiceStatus()} refreshingServiceStatus={refreshingServiceStatus} />;
+  const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} serviceStatuses={serviceStatuses} piSettings={settingsModel.pi} onRefreshServiceStatus={() => void refreshServiceStatus()} refreshingServiceStatus={refreshingServiceStatus} />;
 
   if (!writer) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading…</main>;
 

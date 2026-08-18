@@ -1,3 +1,4 @@
+import type { PiSettings } from '@app/contracts/settings';
 import { Activity, AlertTriangle, Check, ChevronDown, CircleAlert, RefreshCw, Server, Sparkles } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -10,6 +11,7 @@ export interface ServiceStatusPopoverProps {
   statuses: ServiceStatuses;
   onRefresh?: (() => void) | undefined;
   refreshing?: boolean | undefined;
+  piSettings?: PiSettings | undefined;
 }
 
 const stateTone: Record<ServiceState, { dot: string; icon: typeof Check; badge: 'default' | 'secondary' | 'destructive'; animate?: boolean }> = {
@@ -27,9 +29,12 @@ function StatusLed({ state, className }: { state: ServiceState; className?: stri
   return <span aria-hidden="true" className={cn('inline-block size-2 rounded-full', tone.dot, tone.animate && 'animate-pulse', className)} />;
 }
 
-function ServiceCard({ status, icon: Icon }: { status: ServiceStatuses['audio']; icon: typeof Server }) {
+function ServiceCard({ status, icon: Icon, piSettings }: { status: ServiceStatuses['audio']; icon: typeof Server; piSettings?: PiSettings | undefined }) {
   const tone = stateTone[status.state];
   const StateIcon = tone.icon;
+  const detail = status.label === 'Pi service' && status.state === 'ready' && piSettings
+    ? `Loaded with ${piSettings.model} at ${piSettings.thinkingLevel} thinking.`
+    : status.detail;
   return <Card size="sm" className="gap-2 bg-muted/20 shadow-none ring-1 ring-border/70">
     <CardHeader className="gap-2 px-3.5 pb-0">
       <div className="flex items-center justify-between gap-3">
@@ -39,7 +44,7 @@ function ServiceCard({ status, icon: Icon }: { status: ServiceStatuses['audio'];
         </div>
         <Badge variant={tone.badge}><StateIcon aria-hidden="true" />{serviceStateLabel(status.state)}</Badge>
       </div>
-      <CardDescription className="text-xs leading-relaxed">{status.detail}</CardDescription>
+      <CardDescription className="text-xs leading-relaxed">{detail}</CardDescription>
     </CardHeader>
     {status.state !== 'ready' ? <CardFooter className="border-t px-3.5 pt-2.5 pb-3.5 text-xs leading-relaxed">
       <span><span className="font-medium text-foreground">Next:</span> {status.correctiveAction}</span>
@@ -47,7 +52,7 @@ function ServiceCard({ status, icon: Icon }: { status: ServiceStatuses['audio'];
   </Card>;
 }
 
-export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false }: ServiceStatusPopoverProps) {
+export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false, piSettings }: ServiceStatusPopoverProps) {
   const aggregate = aggregateServiceState(statuses);
   const label = `Service status: audio ${serviceStateLabel(statuses.audio.state)}, Pi ${serviceStateLabel(statuses.pi.state)}`;
   return <Popover>
@@ -79,7 +84,7 @@ export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false }
       </PopoverHeader>
       <div className="flex flex-col gap-2">
         <ServiceCard status={statuses.audio} icon={Server} />
-        <ServiceCard status={statuses.pi} icon={Sparkles} />
+        <ServiceCard status={statuses.pi} icon={Sparkles} piSettings={piSettings} />
       </div>
       <p className="border-t pt-3 text-xs text-muted-foreground">This indicator updates automatically while Podcaster is open.</p>
     </PopoverContent>

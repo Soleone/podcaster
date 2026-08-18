@@ -1,3 +1,4 @@
+import type { PiSettings } from '@app/contracts/settings';
 import { Radio } from 'lucide-react';
 import { Link } from 'react-router';
 import { ServiceStatusPopover } from './ServiceStatusPopover';
@@ -11,9 +12,10 @@ export interface AppHeaderProps {
   serviceStatuses: ServiceStatuses;
   onRefreshServiceStatus?: () => void;
   refreshingServiceStatus?: boolean;
+  piSettings: PiSettings;
 }
 
-export function AppHeader({ darkMode, onToggleDarkMode, onOpenSettings, serviceStatuses, onRefreshServiceStatus, refreshingServiceStatus }: AppHeaderProps) {
+export function AppHeader({ darkMode, onToggleDarkMode, onOpenSettings, serviceStatuses, onRefreshServiceStatus, refreshingServiceStatus, piSettings }: AppHeaderProps) {
   return <header className="sticky top-0 z-10 bg-background py-3" data-slot="app-header">
     <div className="mx-auto flex min-h-12 w-[min(56rem,calc(100%_-_2rem))] items-center justify-between gap-2 rounded-full border border-primary/20 bg-primary-foreground px-2 py-1.5 shadow-sm">
       <Link
@@ -25,7 +27,7 @@ export function AppHeader({ darkMode, onToggleDarkMode, onOpenSettings, serviceS
         <span className="font-semibold tracking-tight">Podcaster</span>
       </Link>
       <div className="flex items-center gap-1">
-        <ServiceStatusPopover statuses={serviceStatuses} onRefresh={onRefreshServiceStatus} refreshing={refreshingServiceStatus} />
+        <ServiceStatusPopover statuses={serviceStatuses} piSettings={piSettings} onRefresh={onRefreshServiceStatus} refreshing={refreshingServiceStatus} />
         <SettingsButtonGroup
           darkMode={darkMode}
           onToggleDarkMode={onToggleDarkMode}
