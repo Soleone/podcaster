@@ -55,7 +55,7 @@ export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false }
       <Button
         variant="outline"
         size="sm"
-        className="h-9 gap-2 rounded-full px-3"
+        className="h-9 gap-2 rounded-full px-3 text-primary hover:text-primary"
         aria-label={label}
         title={label}
       >
