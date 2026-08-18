@@ -20,6 +20,17 @@ async function events(value: StdioPiClient, signal = new AbortController().signa
 }
 
 describe("production Pi RPC boundary", () => {
+  it("passes a configured model and thinking level to Pi", async () => {
+    const { value, fake } = await client();
+    const configured = new StdioPiClient({ executable: fake.executable, model: "anthropic/claude-sonnet", thinkingLevel: "high", startupDeadlineMs: 300, requestDeadlineMs: 500 });
+    expect(await configured.probe()).toMatchObject({ status: "incompatible" });
+    await configured.shutdown();
+    const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(calls[0].argv).toContain("--thinking");
+    expect(calls[0].argv).toContain("high");
+    expect(calls[0].argv).toContain("anthropic/claude-sonnet");
+  });
+
   it("maps ready and keeps executable, model and disabled-resource argv pinned", async () => {
     const { value, fake } = await client();
     expect(await value.probe()).toMatchObject({ status: "ready", correctiveAction: "None." });

@@ -2,7 +2,7 @@
 // store (no schema version bump), validated on every read. A failed save
 // preserves the last committed row and reports failure to the caller.
 
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, QWEN_VOICE_LANGUAGES, SETTINGS_VERSION, ttsModelKey, type TtsModelSelection, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MAX_PI_MODEL_BYTES, MIN_VOICE_SPEED_MODIFIER, PI_THINKING_LEVELS, QWEN_VOICE_LANGUAGES, SETTINGS_VERSION, ttsModelKey, type PiSettings, type TtsModelSelection, type VoicePreference } from '@app/contracts/settings';
 import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory } from '../storage/schema';
 
 export const SETTINGS_KEY = 'settings:v1';
@@ -13,6 +13,8 @@ export interface StoredSettings {
   /** Editable agent display name used in the conversation bubbles; never sent to the host. */
   agentName: string;
   persona: string;
+  /** Pi controls, optional for rows written before this setting existed. */
+  pi?: PiSettings;
   /** Active model, optional for rows written before model selection existed. */
   selectedModel?: TtsModelSelection;
   /** Active preference retained for wire/session compatibility. */
@@ -21,7 +23,7 @@ export interface StoredSettings {
   voiceProfiles?: Record<string, VoicePreference>;
 }
 
-export const DEFAULT_SETTINGS: StoredSettings = { version: 1, agentName: DEFAULT_AGENT_NAME, persona: DEFAULT_AGENT_PERSONA, selectedModel: { ...DEFAULT_TTS_MODEL }, voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER, ...DEFAULT_TTS_MODEL }, voiceProfiles: {} };
+export const DEFAULT_SETTINGS: StoredSettings = { version: 1, agentName: DEFAULT_AGENT_NAME, persona: DEFAULT_AGENT_PERSONA, pi: { ...DEFAULT_PI_SETTINGS }, selectedModel: { ...DEFAULT_TTS_MODEL }, voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER, ...DEFAULT_TTS_MODEL }, voiceProfiles: {} };
 
 function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -44,6 +46,14 @@ function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
     ...(language !== undefined ? { language: language as Exclude<VoicePreference['language'], undefined> } : {}),
     ...(hasBackend ? { backendId: voice.backendId as string, modelId: voice.modelId as string } : {}),
   };
+}
+
+function normalizePiSettings(value: unknown): PiSettings | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const pi = value as Record<string, unknown>;
+  if (typeof pi.model !== 'string' || !pi.model || pi.model.startsWith('-') || new TextEncoder().encode(pi.model).length > MAX_PI_MODEL_BYTES || /\s/u.test(pi.model)) return undefined;
+  if (typeof pi.thinkingLevel !== 'string' || !(PI_THINKING_LEVELS as readonly string[]).includes(pi.thinkingLevel)) return undefined;
+  return { model: pi.model, thinkingLevel: pi.thinkingLevel as PiSettings['thinkingLevel'] };
 }
 
 function normalizeSelectedModel(value: unknown): TtsModelSelection | undefined {
@@ -79,6 +89,8 @@ export function isValidStoredSettings(value: unknown): value is StoredSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   if (record.version !== 1 || typeof record.persona !== 'string' || typeof record.agentName !== 'string') return false;
+  const pi = normalizePiSettings(record.pi);
+  if (record.pi !== undefined && !pi) return false;
   const selectedModel = normalizeSelectedModel(record.selectedModel);
   if (record.selectedModel !== undefined && !selectedModel) return false;
   const activeVoice = normalizeStoredVoice(record.voice);
@@ -105,11 +117,13 @@ export class SettingsStore {
       const { key: _key, ...settings } = row;
       if (!isValidStoredSettings(settings)) return undefined;
       const voice = normalizeStoredVoice(settings.voice)!;
+      const pi = normalizePiSettings(settings.pi);
       const selectedModel = normalizeSelectedModel(settings.selectedModel);
       const voiceProfiles = normalizeVoiceProfiles(settings.voiceProfiles);
       return {
         ...settings,
         voice,
+        ...(pi ? { pi } : {}),
         ...(selectedModel ? { selectedModel } : {}),
         ...(voiceProfiles ? { voiceProfiles } : {}),
       };

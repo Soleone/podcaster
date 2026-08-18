@@ -3,6 +3,7 @@ import { access, lstat, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
 
 import { PI_EXECUTABLE, PI_MODEL, type PiEvent, type PiPosture } from "./PiClient.js";
+import type { PiThinkingLevel } from "@app/contracts";
 import { PODCASTER_SYSTEM_PROMPT } from "@app/contracts";
 import { log } from "../logger.js";
 
@@ -30,7 +31,7 @@ export interface PiResearchClient {
   shutdown(): Promise<void>;
 }
 
-export interface PiResearchClientOptions { executable?: string; model?: string; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number; maxWords?: number }
+export interface PiResearchClientOptions { executable?: string; model?: string; thinkingLevel?: PiThinkingLevel; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number; maxWords?: number }
 
 interface Pending { resolve(value: ObjectValue): void; reject(error: Error): void; timer: NodeJS.Timeout }
 interface Lifecycle { messageEnded: boolean; stopReason: string | undefined; providerError: string | undefined; settled: boolean; assistantText: string; responseBytes: number; textExceeded: boolean }
@@ -85,7 +86,7 @@ function promptForBody(input: PiResearchRequestInput, maxWords: number): string 
 }
 
 export class StdioPiResearchClient implements PiResearchClient {
-  private readonly executable: string; private readonly model: string;
+  private readonly executable: string; private readonly model: string; private readonly thinkingLevel: PiThinkingLevel | undefined;
   private readonly systemPrompt: string; private readonly personaAppend: string;
   private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number; private readonly maxWords: number;
   private child: ChildProcessWithoutNullStreams | undefined; private buffer = Buffer.alloc(0); private stderrBytes = 0;
@@ -93,7 +94,7 @@ export class StdioPiResearchClient implements PiResearchClient {
   private readonly activeToolStarts = new Map<string, number>();
   private starting: Promise<void> | undefined; private ownership: Promise<void> = Promise.resolve(); private closed = false;
   constructor(options: PiResearchClientOptions = {}) {
-    this.executable = options.executable ?? PI_EXECUTABLE; this.model = options.model ?? PI_MODEL;
+    this.executable = options.executable ?? PI_EXECUTABLE; this.model = options.model ?? PI_MODEL; this.thinkingLevel = options.thinkingLevel;
     this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? "";
     this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
     this.maxWords = options.maxWords ?? DEFAULT_MAX_WORDS;
@@ -164,7 +165,7 @@ export class StdioPiResearchClient implements PiResearchClient {
     const info = await lstat(this.executable); if (!info.isFile()) throw new Error("incompatible pinned Pi executable");
     const canonical = await realpath(this.executable); if (canonical !== this.executable) throw new Error("incompatible non-canonical Pi executable path");
     await access(canonical, constants.X_OK);
-    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--tools", "read,grep,find,ls", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--tools", "read,grep,find,ls", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, ...(this.thinkingLevel ? ["--thinking", this.thinkingLevel] : []), "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
     this.child = child; this.buffer = Buffer.alloc(0); this.stderrBytes = 0;
     child.stdout.on("data", (chunk: Buffer) => this.consume(chunk));
     child.stderr.on("data", (chunk: Buffer) => { this.stderrBytes += chunk.length; if (this.stderrBytes > MAX_STDERR_BYTES) this.protocolFailure("Pi stderr exceeded bound"); });

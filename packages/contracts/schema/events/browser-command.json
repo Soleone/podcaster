@@ -46,6 +46,15 @@
                       "type": "string",
                       "maxUtf8Bytes": 8192
                     },
+                    "pi": {
+                      "type": "object",
+                      "required": ["model", "thinkingLevel"],
+                      "properties": {
+                        "model": { "type": "string", "pattern": "^[^-\\s][^\\s]*$", "minLength": 1, "maxUtf8Bytes": 256 },
+                        "thinkingLevel": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"] }
+                      },
+                      "additionalProperties": false
+                    },
                     "voice": {
                       "type": "object",
                       "required": [

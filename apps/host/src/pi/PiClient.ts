@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { access, lstat, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
-import { PODCASTER_SYSTEM_PROMPT } from "@app/contracts";
+import { PODCASTER_SYSTEM_PROMPT, type PiThinkingLevel } from "@app/contracts";
 
 export const PI_EXECUTABLE = "/home/soleone/.local/share/pnpm/bin/pi";
 export const PI_MODEL = "openai-codex/gpt-5.6-sol";
@@ -27,7 +27,7 @@ export type PiEvent =
   | { type: "final"; text: string }
   | { type: "error"; state: Exclude<PiReadinessStatus, "ready">; detail: string; correctiveAction: string };
 export interface PiClient { probe(): Promise<PiReadiness>; request(input: PiRequestInput, signal: AbortSignal): AsyncIterable<PiEvent>; shutdown(): Promise<void> }
-export interface PiClientOptions { executable?: string; model?: string; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number }
+export interface PiClientOptions { executable?: string; model?: string; thinkingLevel?: PiThinkingLevel; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number }
 interface Pending { resolve(value: ObjectValue): void; reject(error: Error): void; timer: NodeJS.Timeout }
 interface Lifecycle { messageEnded: boolean; stopReason: string | undefined; providerError: string | undefined; settled: boolean; assistantText: string; responseBytes: number; textExceeded: boolean }
 interface ActiveRequest extends Lifecycle {
@@ -95,13 +95,13 @@ function promptFor(input: PiRequestInput): string {
 }
 
 export class StdioPiClient implements PiClient {
-  private readonly executable: string; private readonly model: string;
+  private readonly executable: string; private readonly model: string; private readonly thinkingLevel: PiThinkingLevel | undefined;
   private readonly systemPrompt: string; private readonly personaAppend: string;
   private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number;
   private child: ChildProcessWithoutNullStreams | undefined; private buffer = Buffer.alloc(0); private stderrBytes = 0;
   private pending = new Map<string, Pending>(); private sequence = 0; private active: ActiveRequest | undefined; private probeLifecycle: Lifecycle | undefined;
   private starting: Promise<void> | undefined; private ownership: Promise<void> = Promise.resolve(); private closed = false;
-  constructor(options: PiClientOptions = {}) { this.executable = options.executable ?? PI_EXECUTABLE; this.model = options.model ?? PI_MODEL; this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? ""; this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS; }
+  constructor(options: PiClientOptions = {}) { this.executable = options.executable ?? PI_EXECUTABLE; this.model = options.model ?? PI_MODEL; this.thinkingLevel = options.thinkingLevel; this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? ""; this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS; }
 
   private async acquire(): Promise<() => void> {
     let release!: () => void; const next = new Promise<void>(resolve => { release = resolve; });
@@ -187,7 +187,7 @@ export class StdioPiClient implements PiClient {
     const info = await lstat(this.executable); if (!info.isFile()) throw new Error("incompatible pinned Pi executable");
     const canonical = await realpath(this.executable); if (canonical !== this.executable) throw new Error("incompatible non-canonical Pi executable path");
     await access(canonical, constants.X_OK);
-    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, ...(this.thinkingLevel ? ["--thinking", this.thinkingLevel] : []), "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
     this.child = child; this.buffer = Buffer.alloc(0); this.stderrBytes = 0;
     child.stdout.on("data", (chunk: Buffer) => this.consume(chunk));
     child.stderr.on("data", (chunk: Buffer) => { this.stderrBytes += chunk.length; if (this.stderrBytes > MAX_STDERR_BYTES) this.protocolFailure("Pi stderr exceeded bound"); });

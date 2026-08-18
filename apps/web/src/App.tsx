@@ -22,7 +22,7 @@ import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn
 import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type QwenVoiceLanguage, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
@@ -198,7 +198,7 @@ export function App() {
   const currentStartSettings = useCallback((): { settings: SessionStartSettings; digest: string } => {
     const model = settingsModelRef.current;
     return {
-      settings: { version: 1, persona: model.persona, voice: { ...model.voice } },
+      settings: { version: 1, persona: model.persona, voice: { ...model.voice }, pi: { ...model.pi } },
       digest: settingsDigest(model),
     };
   }, []);
@@ -497,6 +497,7 @@ export function App() {
     const current: SettingsModel = {
       agentName: activeSettings.agentName,
       persona: activeSettings.persona,
+      pi: { ...activeSettings.pi },
       selectedModel: { ...activeSettings.selectedModel },
       voice: { ...activeSettings.voice },
       voiceProfiles: { ...activeSettings.voiceProfiles },
@@ -504,12 +505,13 @@ export function App() {
     const storedSettings = existing?.settings && isValidSessionSettingsSnapshot(existing.settings) ? existing.settings : undefined;
     const settings: SessionStartSettings = preserveIdentity && storedSettings
       ? storedSettings
-      : { version: 1, persona: current.persona, voice: { ...current.voice } };
+      : { version: 1, persona: current.persona, voice: { ...current.voice }, pi: { ...current.pi } };
     const frozen: SettingsModel = preserveIdentity
       ? {
           ...current,
           persona: settings.persona,
           voice: { ...settings.voice },
+          pi: { ...(settings.pi ?? current.pi) },
           selectedModel: {
             backendId: settings.voice.backendId ?? current.selectedModel.backendId,
             modelId: settings.voice.modelId ?? current.selectedModel.modelId,
@@ -912,7 +914,7 @@ export function App() {
     void syncStoredCustomVoices(rawTtsModelsRef.current);
   }, [customVoices, mergeCustomModels, reconcileCurrentSettings, syncStoredCustomVoices]);
 
-  const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, voiceProfiles: Record<string, VoicePreference> = {}) => {
+  const saveSettings = useCallback(async (agentName: string, persona: string, voice: VoicePreference, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, voiceProfiles: Record<string, VoicePreference> = {}, pi: PiSettings = DEFAULT_PI_SETTINGS) => {
     setSettingsSaving(true);
     setSettingsSaveError(undefined);
     try {
@@ -920,9 +922,9 @@ export function App() {
       settingsStoreRef.current = store;
       const activeVoice = { ...voice, backendId: selectedModel.backendId, modelId: selectedModel.modelId };
       const profiles = { ...voiceProfiles, [ttsModelKey(selectedModel)]: activeVoice };
-      const ok = await store.save({ version: 1, agentName, persona, selectedModel, voice: activeVoice, voiceProfiles: profiles });
+      const ok = await store.save({ version: 1, agentName, persona, pi, selectedModel, voice: activeVoice, voiceProfiles: profiles });
       if (!ok) throw new Error('Settings could not be saved on this device.');
-      const next = applyReconciled({ agentName, persona, selectedModel, voiceProfiles: profiles }, { voice: activeVoice, selectedModel, voiceProfiles: profiles });
+      const next = applyReconciled({ agentName, persona, pi, selectedModel, voiceProfiles: profiles }, { voice: activeVoice, selectedModel, voiceProfiles: profiles });
       settingsModelRef.current = next;
       setSettingsModel(next);
       setSettingsOpen(false);
@@ -946,6 +948,7 @@ export function App() {
         const storedCustomVoices = await customStore.list();
         customVoicesRef.current = storedCustomVoices;
         setCustomVoices(storedCustomVoices);
+        const pi = stored?.pi ?? DEFAULT_PI_SETTINGS;
         const selectedModel = stored?.selectedModel ?? {
           backendId: stored?.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
           modelId: stored?.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
@@ -953,7 +956,7 @@ export function App() {
         const availableModels = mergeCustomModels(ttsModelsRef.current);
         const fallbackCatalog = withCustomVoices(voiceCatalogRef.current, storedCustomVoices);
         const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, availableModels, fallbackCatalog);
-        const next = applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled);
+        const next = applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, pi, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled);
         settingsModelRef.current = next;
         setSettingsModel(next);
       } catch {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Square } from 'lucide-react';
-import { DEFAULT_QWEN_VOICE_LANGUAGE, DEFAULT_TTS_MODEL, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_TONE_PROMPT_BYTES, PODCASTER_SYSTEM_PROMPT, QWEN_VOICE_LANGUAGES, ttsModelKey, voiceSpeedCapability, utf8ByteLength, withCustomVoices, type QwenVoiceLanguage, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { DEFAULT_PI_SETTINGS, DEFAULT_QWEN_VOICE_LANGUAGE, DEFAULT_TTS_MODEL, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_PI_MODEL_BYTES, MAX_VOICE_TONE_PROMPT_BYTES, PI_THINKING_LEVELS, PODCASTER_SYSTEM_PROMPT, QWEN_VOICE_LANGUAGES, ttsModelKey, voiceSpeedCapability, utf8ByteLength, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Button } from '../components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
@@ -35,7 +35,7 @@ export interface SettingsDialogProps {
   models?: TtsModelDescriptor[];
   saving: boolean;
   saveError: string | undefined;
-  onSave: (agentName: string, persona: string, voice: VoicePreference, selectedModel?: TtsModelSelection, voiceProfiles?: Record<string, VoicePreference>) => Promise<void>;
+  onSave: (agentName: string, persona: string, voice: VoicePreference, selectedModel?: TtsModelSelection, voiceProfiles?: Record<string, VoicePreference>, pi?: PiSettings) => Promise<void>;
   onPreviewVoice?: (voiceId: string, speedModifier: number, selectedModel?: TtsModelSelection, catalogId?: string, tonePrompt?: string, language?: QwenVoiceLanguage, signal?: AbortSignal) => Promise<VoicePreviewHandle>;
   customVoices?: CustomVoiceRecord[];
   onEnrollCustomVoice?: (name: string, take: ReferenceTake) => Promise<void>;
@@ -46,6 +46,7 @@ export interface SettingsDialogProps {
 export function SettingsDialog({ open, onOpenChange, model, catalog, models = [], saving, saveError, onSave, onPreviewVoice, customVoices = [], onEnrollCustomVoice, onDeleteCustomVoice, onRenameCustomVoice }: SettingsDialogProps) {
   const [agentName, setAgentName] = useState(model.agentName);
   const [persona, setPersona] = useState(model.persona);
+  const [pi, setPi] = useState<PiSettings>(model.pi ?? DEFAULT_PI_SETTINGS);
   const [selectedModel, setSelectedModel] = useState<TtsModelSelection>(model.selectedModel ?? DEFAULT_TTS_MODEL);
   const [voiceProfiles, setVoiceProfiles] = useState<Record<string, VoicePreference>>(model.voiceProfiles ?? {});
   const [voiceId, setVoiceId] = useState(model.voice.voiceId);
@@ -77,6 +78,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     if (!open) return;
     setAgentName(model.agentName);
     setPersona(model.persona);
+    setPi(model.pi ?? DEFAULT_PI_SETTINGS);
     setSelectedModel(model.selectedModel ?? DEFAULT_TTS_MODEL);
     setVoiceProfiles(model.voiceProfiles ?? {});
     setVoiceId(model.voice.voiceId);
@@ -86,13 +88,14 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     setVoiceNotice(model.notice);
     setPreviewState('idle');
     setPreviewError(undefined);
-  }, [open, model.agentName, model.persona, model.selectedModel?.backendId, model.selectedModel?.modelId, model.voice.voiceId, model.voice.speedModifier, model.voice.tonePrompt, model.voice.language, model.notice, model.voiceProfiles, customVoices]);
+  }, [open, model.agentName, model.persona, model.pi?.model, model.pi?.thinkingLevel, model.selectedModel?.backendId, model.selectedModel?.modelId, model.voice.voiceId, model.voice.speedModifier, model.voice.tonePrompt, model.voice.language, model.notice, model.voiceProfiles, customVoices]);
 
   useEffect(() => () => { invalidatePreview(false); }, []);
 
   const agentNameInvalid = utf8ByteLength(agentName) > MAX_AGENT_NAME_BYTES;
   const personaBytes = useMemo(() => utf8ByteLength(persona), [persona]);
   const personaInvalid = personaBytes > MAX_PERSONA_BYTES;
+  const piModelInvalid = !pi.model || pi.model.startsWith('-') || new TextEncoder().encode(pi.model).length > MAX_PI_MODEL_BYTES || /\s/u.test(pi.model);
   const selectedDescriptor = models.find(item => item.backendId === selectedModel.backendId && item.modelId === selectedModel.modelId);
   const selectedCatalog = selectedDescriptor?.voiceCatalog ?? (selectedModel.backendId === DEFAULT_TTS_MODEL.backendId && selectedModel.modelId === DEFAULT_TTS_MODEL.modelId ? catalog : undefined);
   const displayCatalog = selectedModel.backendId === 'qwen3' ? withCustomVoices(selectedCatalog, customVoices) : selectedCatalog;
@@ -106,7 +109,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
   const tonePromptInvalid = selectedModel.backendId === 'qwen3' && tonePromptBytes > MAX_VOICE_TONE_PROMPT_BYTES;
   const catalogReady = Boolean(displayCatalog && displayCatalog.voices.length > 0);
   const selectedVoice = displayCatalog?.voices.find(voice => voice.id === voiceId);
-  const canSave = !agentNameInvalid && !personaInvalid && !speedModifierInvalid && !tonePromptInvalid && !saving && (!catalogReady || Boolean(voiceId));
+  const canSave = !agentNameInvalid && !personaInvalid && !piModelInvalid && !speedModifierInvalid && !tonePromptInvalid && !saving && (!catalogReady || Boolean(voiceId));
 
   const selectModel = (value: string | null) => {
     const next = models.find(item => ttsModelKey(item) === value);
@@ -132,7 +135,7 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
     const selectedSpeed = speedCapability.supported ? speedModifierValue : speedCapability.default;
     const voice: VoicePreference = { catalogId: displayCatalog?.catalogId ?? '', voiceId: catalogReady ? voiceId : '', speedModifier: selectedSpeed, ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : {}), ...(selectedModel.backendId === 'qwen3' ? { language } : {}), backendId: selectedModel.backendId, modelId: selectedModel.modelId };
     const profiles = { ...voiceProfiles, [ttsModelKey(selectedModel)]: voice };
-    await onSave(agentName, persona, voice, selectedModel, profiles);
+    await onSave(agentName, persona, voice, selectedModel, profiles, pi);
   };
 
   const togglePreview = async () => {
@@ -245,6 +248,38 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                     />
                     <FieldDescription id="settings-system-prompt-description">Your saved persona is appended to this base prompt when the next session starts.</FieldDescription>
                   </Field>
+                </AccordionContent>
+              </AccordionItem>
+              <AccordionItem value="pi-service">
+                <AccordionTrigger>Pi service</AccordionTrigger>
+                <AccordionContent>
+                  <FieldGroup>
+                    <Field data-invalid={piModelInvalid || undefined}>
+                      <FieldLabel htmlFor="settings-pi-model">Model</FieldLabel>
+                      <Input
+                        id="settings-pi-model"
+                        value={pi.model}
+                        onChange={event => setPi(previous => ({ ...previous, model: event.target.value }))}
+                        aria-invalid={piModelInvalid || undefined}
+                        aria-describedby="settings-pi-model-description"
+                        placeholder="provider/model"
+                      />
+                      <FieldDescription id="settings-pi-model-description">Pi model identifier, such as openai-codex/gpt-5.6-sol. Changes apply to the next session.</FieldDescription>
+                      {piModelInvalid ? <FieldError>Enter a model without spaces, up to {MAX_PI_MODEL_BYTES} bytes.</FieldError> : null}
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="settings-pi-thinking">Thinking level</FieldLabel>
+                      <Select value={pi.thinkingLevel} onValueChange={value => { if ((PI_THINKING_LEVELS as readonly string[]).includes(value ?? '')) setPi(previous => ({ ...previous, thinkingLevel: value as PiSettings['thinkingLevel'] })); }}>
+                        <SelectTrigger id="settings-pi-thinking" className="w-full" aria-label="Thinking level">
+                          <SelectValue>{pi.thinkingLevel}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>{PI_THINKING_LEVELS.map(level => <SelectItem key={level} value={level}>{level}</SelectItem>)}</SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FieldDescription>Controls how much reasoning Pi uses before answering. The model may support only some levels.</FieldDescription>
+                    </Field>
+                  </FieldGroup>
                 </AccordionContent>
               </AccordionItem>
             </Accordion>

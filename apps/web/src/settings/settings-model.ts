@@ -5,6 +5,7 @@
 import {
   DEFAULT_AGENT_NAME,
   DEFAULT_AGENT_PERSONA,
+  DEFAULT_PI_SETTINGS,
   DEFAULT_TTS_MODEL,
   DEFAULT_VOICE_SPEED_CAPABILITY,
   DEFAULT_VOICE_SPEED_MODIFIER,
@@ -12,6 +13,7 @@ import {
   isValidVoicePreference,
   ttsModelKey,
   voiceSpeedCapability,
+  type PiSettings,
   type TtsModelDescriptor,
   type TtsModelSelection,
   type VoiceCatalog,
@@ -23,6 +25,7 @@ export type VoiceNoticeReason = 'rebase' | 'defaulted' | 'missing_catalog' | 'mo
 export interface SettingsModel {
   agentName: string;
   persona: string;
+  pi: PiSettings;
   selectedModel: TtsModelSelection;
   voice: VoicePreference;
   voiceProfiles: Record<string, VoicePreference>;
@@ -39,12 +42,13 @@ export function defaultVoice(catalog: VoiceCatalog | undefined): VoicePreference
   return { catalogId: catalog?.catalogId ?? '', voiceId: catalog?.defaultVoiceId ?? '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER };
 }
 
-export function defaultSettingsModel(catalog: VoiceCatalog | undefined, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL): SettingsModel {
+export function defaultSettingsModel(catalog: VoiceCatalog | undefined, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, pi: PiSettings = DEFAULT_PI_SETTINGS): SettingsModel {
   const voice = defaultVoice(catalog);
   const key = ttsModelKey(selectedModel);
   return {
     agentName: DEFAULT_AGENT_NAME,
     persona: DEFAULT_AGENT_PERSONA,
+    pi: { ...pi },
     selectedModel: { ...selectedModel },
     voice,
     voiceProfiles: catalog ? { [key]: { ...voice, ...selectedModel } } : {},
@@ -52,12 +56,13 @@ export function defaultSettingsModel(catalog: VoiceCatalog | undefined, selected
 }
 
 /** Stable audit digest over the frozen agent settings snapshot. */
-export function settingsDigest(settings: { agentName: string; persona: string; voice: VoicePreference; selectedModel?: TtsModelSelection }): string {
+export function settingsDigest(settings: { agentName: string; persona: string; voice: VoicePreference; selectedModel?: TtsModelSelection; pi?: PiSettings }): string {
   const model = settings.selectedModel ?? {
     backendId: settings.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
     modelId: settings.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
   };
-  const source = `${settings.agentName}\u0000${settings.persona}\u0000${model.backendId}\u0000${model.modelId}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}\u0000${settings.voice.speedModifier}\u0000${settings.voice.tonePrompt ?? ''}\u0000${settings.voice.language ?? ''}`;
+  const pi = settings.pi ?? DEFAULT_PI_SETTINGS;
+  const source = `${settings.agentName}\u0000${settings.persona}\u0000${pi.model}\u0000${pi.thinkingLevel}\u0000${model.backendId}\u0000${model.modelId}\u0000${settings.voice.catalogId}\u0000${settings.voice.voiceId}\u0000${settings.voice.speedModifier}\u0000${settings.voice.tonePrompt ?? ''}\u0000${settings.voice.language ?? ''}`;
   let hash1 = 0x811c9dc5;
   let hash2 = 0x01000193 ^ 0x3f08;
   for (const byte of new TextEncoder().encode(source)) {
@@ -173,7 +178,7 @@ export const reconcileTtsSettings = reconcileSettings;
 
 /** Build a SettingsModel honoring exactOptionalPropertyTypes. */
 export function applyReconciled(
-  base: { agentName: string; persona: string; selectedModel?: TtsModelSelection; voiceProfiles?: Record<string, VoicePreference> },
+  base: { agentName: string; persona: string; pi?: PiSettings; selectedModel?: TtsModelSelection; voiceProfiles?: Record<string, VoicePreference> },
   reconciled: { voice: VoicePreference; notice?: VoiceNoticeReason; selectedModel?: TtsModelSelection; voiceProfiles?: Record<string, VoicePreference> },
 ): SettingsModel {
   const selectedModel = reconciled.selectedModel ?? base.selectedModel ?? {
@@ -182,7 +187,7 @@ export function applyReconciled(
   };
   const voice = { ...reconciled.voice, backendId: selectedModel.backendId, modelId: selectedModel.modelId };
   const voiceProfiles = reconciled.voiceProfiles ?? base.voiceProfiles ?? { [ttsModelKey(selectedModel)]: voice };
-  const model: SettingsModel = { agentName: base.agentName, persona: base.persona, selectedModel: { ...selectedModel }, voice, voiceProfiles };
+  const model: SettingsModel = { agentName: base.agentName, persona: base.persona, pi: { ...(base.pi ?? DEFAULT_PI_SETTINGS) }, selectedModel: { ...selectedModel }, voice, voiceProfiles };
   if (reconciled.notice) model.notice = reconciled.notice;
   return model;
 }

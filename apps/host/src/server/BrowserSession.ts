@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { composePersonaAppend, CONTRACT_VALIDATORS, decodeBinaryAudioFrame, isValidSessionSettingsSnapshot, normalizeVoicePreference, type SessionSettingsSnapshot } from '@app/contracts';
+import { composePersonaAppend, CONTRACT_VALIDATORS, decodeBinaryAudioFrame, isValidSessionSettingsSnapshot, normalizePiSettings, normalizeVoicePreference, type PiSettings, type SessionSettingsSnapshot } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
 import type { PiResearchClient } from '../pi/PiResearchClient.js';
@@ -16,11 +16,11 @@ interface OutboundFrame { value: string | Buffer; bytes: number; binary: boolean
 export interface BrowserSessionOptions {
   multiPartEnabled?: boolean;
   /** Session-owned response Pi client; receives the frozen persona append. */
-  createResponseClient(personaAppend: string): PiClient;
+  createResponseClient(personaAppend: string, piSettings?: PiSettings): PiClient;
   /** Session-owned research Pi client; receives the frozen persona append. */
-  createResearchClient(personaAppend: string): PiResearchClient;
+  createResearchClient(personaAppend: string, piSettings?: PiSettings): PiResearchClient;
   /** Session-owned persona-neutral classifier client. */
-  createClassifierClient(): PiClient;
+  createClassifierClient(piSettings?: PiSettings): PiClient;
 }
 function rawBytes(raw: RawData): Uint8Array {
   if (Buffer.isBuffer(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
@@ -143,11 +143,12 @@ export class BrowserSession {
     this.sessionId = command.sessionId;
     const reasoningMode = command.payload.reasoningMode;
     const personaAppend = composePersonaAppend(settings.persona);
-    // Session-owned Pi clients carry the frozen persona append; never reuse a
-    // mutable global client across sessions and never log prompt/persona text.
-    this.responsePi = this.options.createResponseClient(personaAppend);
-    this.researchPi = this.options.createResearchClient(personaAppend);
-    this.classifierPi = this.options.createClassifierClient();
+    const piSettings = normalizePiSettings(settings.pi);
+    // Session-owned Pi clients carry the frozen persona and Pi controls; never
+    // reuse a mutable global client across sessions and never log prompt/persona text.
+    this.responsePi = this.options.createResponseClient(personaAppend, piSettings);
+    this.researchPi = this.options.createResearchClient(personaAppend, piSettings);
+    this.classifierPi = this.options.createClassifierClient(piSettings);
     this.ownedPis.push(this.responsePi, this.researchPi, this.classifierPi);
     this.audio = new AudioClient(this.sidecar, {
       speechStart: value => this.speechStart(value),

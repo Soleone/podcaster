@@ -9,6 +9,7 @@ import type {
   VoicePreference,
 } from "./types.js";
 import { normalizePersona } from "./persona.js";
+import { DEFAULT_PI_SETTINGS, MAX_PI_MODEL_BYTES, PI_THINKING_LEVELS, type PiSettings } from "./pi.js";
 import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_CAPABILITY, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, QWEN_VOICE_LANGUAGES, type TtsModelDescriptor, type VoiceSpeedCapability } from "./types.js";
 
 function isNonEmptyString(value: unknown): value is string {
@@ -106,6 +107,15 @@ export function normalizeVoicePreference(value: unknown): VoicePreference | unde
   return isValidVoicePreference(normalized) ? normalized : undefined;
 }
 
+export function isValidPiSettings(value: unknown): value is PiSettings {
+  if (!isPlainObject(value) || typeof value.model !== "string" || value.model.length === 0 || value.model.startsWith("-") || new TextEncoder().encode(value.model).length > MAX_PI_MODEL_BYTES || /\s/u.test(value.model)) return false;
+  return typeof value.thinkingLevel === "string" && (PI_THINKING_LEVELS as readonly string[]).includes(value.thinkingLevel);
+}
+
+export function normalizePiSettings(value: unknown): PiSettings {
+  return isValidPiSettings(value) ? { model: value.model, thinkingLevel: value.thinkingLevel } : { ...DEFAULT_PI_SETTINGS };
+}
+
 export function normalizeTtsModel(value: unknown): { backendId: string; modelId: string } {
   if (isPlainObject(value) && isNonEmptyString(value.backendId) && isNonEmptyString(value.modelId)) {
     return { backendId: value.backendId, modelId: value.modelId };
@@ -125,5 +135,6 @@ export function isValidSessionSettingsSnapshot(value: unknown): value is Session
   if (!isPlainObject(value) || value.version !== 1) return false;
   if (typeof value.persona !== "string") return false;
   try { normalizePersona(value.persona); } catch { return false; }
-  return normalizeVoicePreference(value.voice) !== undefined;
+  return normalizeVoicePreference(value.voice) !== undefined
+    && (value.pi === undefined || isValidPiSettings(value.pi));
 }

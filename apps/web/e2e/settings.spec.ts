@@ -31,6 +31,10 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   await expect(agentName).toBeVisible();
   await expect(page.locator('#settings-agent-name-counter')).toHaveCount(0);
   await expect(agentName).toHaveValue('Oliver');
+  await page.getByRole('button', { name: 'Pi service' }).click();
+  await expect(page.getByLabel('Model')).toHaveValue('openai-codex/gpt-5.6-sol');
+  await page.getByLabel('Thinking level').click();
+  await page.getByRole('option', { name: 'high', exact: true }).click();
   await agentName.fill('Ada');
   const agentFocus = await agentName.evaluate(element => {
     const panel = element.closest('[data-slot="tabs-content"]');
@@ -90,6 +94,9 @@ test('settings survive a reload on the same browser', async ({ page }) => {
   await openSettings(page);
   await page.getByLabel('Agent name').fill('Lin');
   await page.getByLabel('Persona').fill('You are a gentle storyteller.');
+  await page.getByRole('button', { name: 'Pi service' }).click();
+  await page.getByLabel('Thinking level').click();
+  await page.getByRole('option', { name: 'high', exact: true }).click();
   await page.getByRole('tab', { name: 'Voice' }).click();
   await page.getByLabel('Speed modifier').fill('1.25');
   await page.getByRole('button', { name: 'Save settings' }).click();
@@ -99,6 +106,9 @@ test('settings survive a reload on the same browser', async ({ page }) => {
   await page.getByRole('button', { name: /Open settings/ }).first().click();
   await expect(page.getByLabel('Agent name')).toHaveValue('Lin');
   await expect(page.getByLabel('Persona')).toHaveValue('You are a gentle storyteller.');
+  await page.getByRole('button', { name: 'Pi service' }).click();
+  await expect(page.getByLabel('Model')).toHaveValue('openai-codex/gpt-5.6-sol');
+  await expect(page.getByLabel('Thinking level')).toContainText('high');
   await page.getByRole('tab', { name: 'Voice' }).click();
   await expect(page.getByLabel('Speed modifier')).toHaveValue('1.25');
 });

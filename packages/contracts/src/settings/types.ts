@@ -2,6 +2,8 @@
 // imported from the browser as well as Node, so it must stay free of Node
 // built-ins (Buffer, node:crypto, etc.). Use TextEncoder for byte lengths.
 
+import type { PiSettings } from "./pi.js";
+
 export const SETTINGS_VERSION = 1 as const;
 
 export const MAX_PERSONA_BYTES = 8 * 1024;
@@ -126,6 +128,8 @@ export interface SessionSettingsSnapshot {
   /** Free-form AGENTS.md-like persona text; empty is valid. */
   persona: string;
   voice: VoicePreference;
+  /** Optional for sessions written before Pi controls were exposed. */
+  pi?: PiSettings;
 }
 
 /** Stable storage/wire key for a backend/model-owned voice profile. */

@@ -6,6 +6,7 @@ import type { PiClient, PiEvent, PiRequestInput } from '../../src/pi/PiClient.js
 import type { PiResearchClient, PiResearchRequestInput } from '../../src/pi/PiResearchClient.js';
 import { buildApp } from '../../src/server/app.js';
 import type { SidecarProcess } from '../../src/sidecar/process.js';
+import type { PiSettings } from '@app/contracts';
 
 let sequence = 0;
 function command(sessionId: string, type: string, payload: Record<string, unknown>, epoch = 0) {
@@ -17,16 +18,18 @@ const VOICE = { catalogId: 'sess-catalog', voiceId: 'af_heart' };
 /** Records the persona it was created with and whether shutdown was called. */
 class TrackingPi implements PiClient {
   readonly personaAppend: string;
+  readonly piSettings: PiSettings | undefined;
   shutdownCalls = 0;
-  constructor(personaAppend: string) { this.personaAppend = personaAppend; }
+  constructor(personaAppend: string, piSettings?: PiSettings) { this.personaAppend = personaAppend; this.piSettings = piSettings; }
   async probe() { return { status: 'ready' as const, detail: '', correctiveAction: 'None.' }; }
   async *request(): AsyncIterable<PiEvent> { yield { type: 'final', text: 'ok' }; }
   async shutdown() { this.shutdownCalls++; }
 }
 class TrackingResearch implements PiResearchClient {
   readonly personaAppend: string;
+  readonly piSettings: PiSettings | undefined;
   shutdownCalls = 0;
-  constructor(personaAppend: string) { this.personaAppend = personaAppend; }
+  constructor(personaAppend: string, piSettings?: PiSettings) { this.personaAppend = personaAppend; this.piSettings = piSettings; }
   async *requestBody(): AsyncIterable<PiEvent> { yield { type: 'final', text: 'ok' }; }
   async shutdown() { this.shutdownCalls++; }
 }
@@ -61,9 +64,9 @@ async function build(pi: PiClient): Promise<SessionHarness> {
   const classifier: TrackingPi[] = [];
   const app = await buildApp({
     sidecar, pi,
-    createResponseClient: append => { const client = new TrackingPi(append); response.push(client); return client; },
-    createResearchClient: append => { const client = new TrackingResearch(append); research.push(client); return client; },
-    createClassifierClient: () => { const client = new TrackingPi(''); classifier.push(client); return client; },
+    createResponseClient: (append, piSettings) => { const client = new TrackingPi(append, piSettings); response.push(client); return client; },
+    createResearchClient: (append, piSettings) => { const client = new TrackingResearch(append, piSettings); research.push(client); return client; },
+    createClassifierClient: piSettings => { const client = new TrackingPi('', piSettings); classifier.push(client); return client; },
   });
   const origin = await app.listen({ host: '127.0.0.1', port: 0 });
   app.setCanonicalOrigin(origin);
@@ -80,7 +83,7 @@ async function bootstrapSession(app: FastifyInstance, origin: string, persona: s
   const cookie = boot.headers.get('set-cookie')!.split(';')[0]!;
   const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
   await new Promise<void>((resolve, reject) => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', (raw) => raw.toString().includes('authenticated') ? resolve() : reject(new Error('not authenticated'))); });
-  socket.send(JSON.stringify(command(sid, 'session.start', { sessionSeed: '018f1f32-7abd-7def-8abc-0123456789ab', reasoningMode: 'full', settings: { version: 1, persona, voice: VOICE } })));
+  socket.send(JSON.stringify(command(sid, 'session.start', { sessionSeed: '018f1f32-7abd-7def-8abc-0123456789ab', reasoningMode: 'full', settings: { version: 1, persona, voice: VOICE, pi: { model: 'openai-codex/gpt-5.6-sol', thinkingLevel: 'high' } } })));
   await new Promise<void>(resolve => setTimeout(resolve, 50));
   return { cookie, close: () => new Promise<void>(resolve => { socket.once('close', () => resolve()); socket.close(1000, 'done'); }) };
 }
@@ -108,8 +111,10 @@ describe('per-session Pi isolation', () => {
     expect(harness.research.map(client => client.personaAppend)).toEqual([
       expect.stringContaining('Ada'), expect.stringContaining('Lin'),
     ]);
-    // Classifier clients are persona-neutral (empty append).
+    // Classifier clients are persona-neutral (empty append), but share the
+    // frozen Pi controls for this session.
     expect(harness.classifier.every(client => client.personaAppend === '')).toBe(true);
+    expect([...harness.response, ...harness.research, ...harness.classifier].every(client => client.piSettings?.thinkingLevel === 'high')).toBe(true);
     // No client is shared across sessions.
     expect(new Set(harness.response).size).toBe(2);
 
