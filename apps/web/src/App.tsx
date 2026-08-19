@@ -527,12 +527,15 @@ export function App() {
     stoppedRef.current = false;
     sessionPausedRef.current = false;
     setSessionPaused(false);
-    configureSessionClock(await opened.getSession(id));
     activityLog.append({ level: 'info', source: 'app', message: `session started (${cap})` });
-    const initial: SessionViewState = existingId
-      ? await sessionViewStateFromTurns(opened, id, 'active')
-      : { ...initialSessionState, dominant: 'listening', announcement: 'Listening' };
     try {
+      // Rehydrating the transcript is part of the resume transaction. If it
+      // fails after beginSession has reactivated the row, the rollback below
+      // must return it to paused rather than leaving an orphaned active row.
+      configureSessionClock(await opened.getSession(id));
+      const initial: SessionViewState = existingId
+        ? await sessionViewStateFromTurns(opened, id, 'active')
+        : { ...initialSessionState, dominant: 'listening', announcement: 'Listening' };
       if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
       else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
     } catch (error) {
@@ -560,12 +563,16 @@ export function App() {
       fakeTransportRef.current = undefined;
       unsubscribeRef.current?.();
       unsubscribeRef.current = undefined;
-      await opened.pauseSession(id);
+      const rolledBack = await opened.pauseSession(id);
+      if (!rolledBack.ok) {
+        activityLog.append({ level: 'error', source: 'app', message: 'resume failed and could not checkpoint the session', ...(rolledBack.degradedReason ? { detail: rolledBack.degradedReason } : {}) });
+        setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'Resume failed and the session could not be safely paused. Retry resume or end the session.', announcement: 'Session needs attention' } : previous);
+      }
       if (cap !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': cap } }).catch(() => undefined);
       setCapability(undefined);
       sessionPausedRef.current = true;
       setSessionPaused(true);
-      configureSessionClock(await opened.getSession(id));
+      try { configureSessionClock(await opened.getSession(id)); } catch { /* retain the last known timer if storage is still unavailable */ }
       throw error;
     }
     navigate(`/session/${id}`);

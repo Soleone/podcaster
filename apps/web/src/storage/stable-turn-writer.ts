@@ -139,7 +139,10 @@ export class StableTurnWriter {
           // Pause tears down the host and browser playback. Mark any response
           // without a durable terminal receipt as interrupted so a later
           // rehydrate never presents it as if it could continue automatically.
-          if ((turn.assistantText || checkpoint) && turn.terminalReason === null) {
+          // A response can still be in reasoning before tts.started, so the
+          // response identity is part of the in-flight check as well.
+          const responseInFlight = turn.responseId !== null && turn.failures.length === 0;
+          if ((turn.assistantText !== null || responseInFlight || turn.playbackId !== null || checkpoint) && turn.terminalReason === null) {
             turn.terminalReason = 'stopped';
             turn.interrupted = true;
             turn.continuationState = 'discarded';

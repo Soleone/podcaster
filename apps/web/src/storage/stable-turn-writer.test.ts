@@ -57,6 +57,21 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  it('marks a response that is still reasoning as interrupted on pause', async () => {
+    const { writer } = await open();
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed', personaDigest: 'digest' });
+    await writer.apply(event('session', 'transcript.final', { turnId: 'turn', text: 'question' }));
+    await writer.apply(event('session', 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'question' }));
+    expect(await writer.pauseSession('session')).toMatchObject({ ok: true });
+    expect(await writer.getTurns('session')).toMatchObject([{
+      responseId: 'response',
+      terminalReason: 'stopped',
+      interrupted: true,
+      continuationState: 'discarded',
+    }]);
+    writer.close();
+  });
+
   it('lists sessions most recently active first and counts turns per session', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 'older', sessionSeed: 'seed-1', personaDigest: 'digest', startedAt: '2026-01-01T00:00:00.000Z' });
