@@ -6,14 +6,29 @@ UV=$(command -v uv || true)
 if [[ -z "$UV" && -x "$HOME/.local/bin/uv" ]]; then UV="$HOME/.local/bin/uv"; fi
 [[ -n "$UV" ]] || { echo "uv is required" >&2; exit 1; }
 
-before_ts=$(sha256sum packages/contracts/src/generated/contracts.ts 2>/dev/null | cut -d' ' -f1 || true)
-before_py=$(sha256sum services/audio/src/generated/contracts.py 2>/dev/null | cut -d' ' -f1 || true)
+generated_outputs=(
+  packages/contracts/src/generated/contracts.ts
+  packages/contracts/test/types-required.generated.compile.ts
+  services/audio/src/generated/contracts.py
+  services/audio/src/generated/__init__.py
+)
+before_hashes=()
+for path in "${generated_outputs[@]}"; do
+  before_hashes+=("$(sha256sum "$path" 2>/dev/null | cut -d' ' -f1 || true)")
+done
 corepack pnpm contracts:generate
 "$UV" run python scripts/generate_contracts.py
-after_ts=$(sha256sum packages/contracts/src/generated/contracts.ts | cut -d' ' -f1)
-after_py=$(sha256sum services/audio/src/generated/contracts.py | cut -d' ' -f1)
-if [[ -n "$before_ts" && "$before_ts" != "$after_ts" ]] || [[ -n "$before_py" && "$before_py" != "$after_py" ]]; then
-  echo "Generated contracts were stale; run generators and commit their output" >&2
+stale_outputs=()
+for index in "${!generated_outputs[@]}"; do
+  path="${generated_outputs[$index]}"
+  after_hash=$(sha256sum "$path" 2>/dev/null | cut -d' ' -f1 || true)
+  if [[ -z "${before_hashes[$index]}" || -z "$after_hash" || "${before_hashes[$index]}" != "$after_hash" ]]; then
+    stale_outputs+=("$path")
+  fi
+done
+if ((${#stale_outputs[@]} > 0)); then
+  echo "Generated outputs were stale; run generators and commit their output:" >&2
+  printf '  %s\n' "${stale_outputs[@]}" >&2
   exit 1
 fi
 # Every job below reads the generated contracts after the freshness check. The
@@ -37,10 +52,10 @@ run_parallel \
   'corepack pnpm --filter @app/policy typecheck' \
   'corepack pnpm --filter @app/host typecheck' \
   'corepack pnpm --filter @app/web typecheck' \
+  'corepack pnpm --filter @app/web test' \
   'corepack pnpm test --filter @app/contracts' \
   'corepack pnpm test --filter @app/policy' \
-  "$UV run pytest services/audio/tests/test_contracts.py services/audio/tests/test_server_security.py" \
-  "$UV run pytest services/audio/tests/stt" \
+  "$UV run pytest services/audio/tests" \
   "$UV run pytest benchmarks/harness/tests" \
   "$UV run ruff check scripts/generate_contracts.py scripts/verify-models.py services/audio/src services/audio/tests benchmarks/harness packages/test-fixtures/audio/generate.py"
 corepack pnpm test --filter @app/host
