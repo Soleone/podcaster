@@ -14,7 +14,7 @@ const MAX_RECONNECT_QUEUE_MESSAGES = 4_096;
 const MAX_RECONNECT_QUEUE_BYTES = 8 * 1024 * 1024;
 interface OutboundFrame { value: string | Buffer; bytes: number; binary: boolean }
 export interface BrowserSessionOptions {
-  multiPartEnabled?: boolean;
+  multiPartEnabled: boolean;
   /** Session-owned response Pi client; receives the frozen persona append. */
   createResponseClient(personaAppend: string, piSettings?: PiSettings): PiClient;
   /** Session-owned research Pi client; receives the frozen persona append. */
@@ -165,7 +165,7 @@ export class BrowserSession {
       pi: this.responsePi,
       speech: this.audio,
       researchPi: this.researchPi,
-      multiPartEnabled: this.options.multiPartEnabled !== false,
+      multiPartEnabled: this.options.multiPartEnabled,
       transcriptOnly: reasoningMode === 'transcript_only',
       interruptionClassifier: new PiInterruptionIntentClassifier(this.classifierPi),
       emit: value => this.send(value),

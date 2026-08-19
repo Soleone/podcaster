@@ -253,6 +253,46 @@ describe('browser conversation routing', () => {
     socket.close();
   });
 
+  it('uses the single-part path by default without invoking multipart research', async () => {
+    const sidecar = await fakeAudio({ tts: true });
+    const researchCalls: unknown[] = [];
+    const researchPi: PiResearchClient = {
+      async *requestBody(input) {
+        researchCalls.push(input);
+        yield { type: 'final' as const, text: 'Unexpected research response.' };
+      },
+      async shutdown() {},
+    };
+    const app = await buildApp({ sidecar, pi, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    const final = await waitFor(messages, 'transcript.final');
+    const finalPayload = final.payload as Record<string, unknown>;
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));
+    const reasoningStarted = await waitFor(messages, 'reasoning.started');
+    const ttsStarted = await waitFor(messages, 'tts.started');
+    const reasoningFinal = await waitFor(messages, 'reasoning.final');
+    await waitFor(messages, 'tts.ended');
+
+    expect(researchCalls).toHaveLength(0);
+    expect(messages.filter(message => message.type === 'response.part_started' || message.type === 'response.part_final')).toHaveLength(0);
+    expect(messages.filter(message => message.type === 'reasoning.started')).toHaveLength(1);
+    expect(messages.filter(message => message.type === 'reasoning.final')).toHaveLength(1);
+    expect(messages.filter(message => message.type === 'tts.started')).toHaveLength(1);
+    expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe((reasoningFinal.payload as Record<string, unknown>).responseId);
+    expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe((ttsStarted.payload as Record<string, unknown>).responseId);
+    expect((ttsStarted.payload as Record<string, unknown>).partIndex).toBeUndefined();
+    socket.close();
+  });
+
   it('degrades on persistence failure, permits bounded retry, and rejects acknowledgement after Stop', async () => {
     const sidecar = await fakeAudio();
     const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
