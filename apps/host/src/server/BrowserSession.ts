@@ -5,7 +5,7 @@ import type { PiClient } from '../pi/PiClient.js';
 import type { PiResearchClient } from '../pi/PiResearchClient.js';
 import { SessionOrchestrator, type SessionEvent } from '../session/SessionOrchestrator.js';
 import { PiInterruptionIntentClassifier } from '../session/InterruptionIntentClassifier.js';
-import { AudioClient, type SttFinal, type SttPartial, type VadEndEvent, type VadStartEvent } from '../sidecar/AudioClient.js';
+import { AudioClient, type AudioEngineStatusSnapshot, type SttFinal, type SttPartial, type VadEndEvent, type VadStartEvent } from '../sidecar/AudioClient.js';
 import type { SidecarProcess } from '../sidecar/process.js';
 
 const MAX_PENDING_FINALS = 8;
@@ -151,6 +151,7 @@ export class BrowserSession {
     this.classifierPi = this.options.createClassifierClient(piSettings);
     this.ownedPis.push(this.responsePi, this.researchPi, this.classifierPi);
     this.audio = new AudioClient(this.sidecar, {
+      status: value => this.audioStatus(value),
       speechStart: value => this.speechStart(value),
       speechEnd: value => this.speechEnd(value),
       partial: value => this.partial(value),
@@ -171,7 +172,9 @@ export class BrowserSession {
       emit: value => this.send(value),
     });
     await this.audio.connect();
-    this.orchestrator.start();
+    // Do not mark the session listening yet. audio.start must complete the
+    // capture/VAD/TTS warmup contract first, otherwise the first utterance can
+    // race a sidecar that only announced `starting`.
   }
 
   private async startAudio(payload: Record<string, unknown>): Promise<void> {
@@ -181,7 +184,14 @@ export class BrowserSession {
     // socket. Rebinding through AudioClient is safe and resets the sidecar VAD
     // boundary, so a fresh browser capture stream can always take ownership.
     this.captureStreamId = streamId;
-    try { await this.audio!.open(streamId); } catch (error) { this.captureStreamId = undefined; throw error; }
+    try {
+      await this.audio!.open(streamId);
+      this.orchestrator!.start();
+    } catch (error) {
+      this.captureStreamId = undefined;
+      this.failure('audio_engine_not_ready');
+      throw error;
+    }
   }
   private stopAudio(payload: Record<string, unknown>): void {
     // Duplicate or late stops are expected when a reconnect races the last
@@ -192,6 +202,15 @@ export class BrowserSession {
     this.captureStreamId = undefined;
   }
 
+  private audioStatus(value: AudioEngineStatusSnapshot): void {
+    if (!this.sessionId || !this.orchestrator || this.stopped) return;
+    const snapshot = this.orchestrator.snapshot();
+    this.send(event(this.sessionId, snapshot.epoch, 'session.state', {
+      phase: snapshot.phase,
+      personaDigest: snapshot.personaDigest,
+      audio: value,
+    }));
+  }
   private speechStart(value: VadStartEvent): void {
     const orchestrator = this.orchestrator;
     if (!orchestrator || this.stopped) return;

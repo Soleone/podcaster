@@ -318,8 +318,8 @@ export class SessionOrchestrator {
           this.playback.set(meta.playbackId, { outputEpoch: active.epoch, generatedSamples: Math.max(active.generatedSamples, meta.generatedSamples ?? 0), delivered: 0, terminal: false });
           this.emit("tts.started", { responseId: active.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, ...(meta.backendId ? { backendId: meta.backendId } : {}), ...(meta.modelId ? { modelId: meta.modelId } : {}) });
           this.setUnderlyingPhase(active, "playing");
-          // Speech can begin while Pi/TTS is still warming up. In that race
-          // there was no provisional barge-in at speech_start, so create one
+          // Speech can begin while Pi is still warming up. In that race there
+          // was no provisional barge-in at speech_start, so create one
           // before releasing buffered PCM. The browser therefore receives the
           // pause barrier before the first output chunk can be scheduled.
           if (this.userSpeaking && !this.hasProvisional(active.responseId)) this.beginProvisionalBargeIn(active.responseId);

@@ -2,8 +2,18 @@ import type { StableEvent } from '../storage/stable-turn-writer';
 import { joinAssistantParts, type AssistantPart, type ConversationItem } from './conversation';
 
 export type DominantState = 'idle' | 'paused' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
+export type AudioEngineStatus = 'starting' | 'warming' | 'ready' | 'failed' | 'retrying';
+export type AudioEngineSubstep = 'starting' | 'warming' | 'ready' | 'failed';
+export interface AudioEngineViewState {
+  status: AudioEngineStatus;
+  capture: 'starting' | 'ready' | 'failed';
+  vad: AudioEngineSubstep;
+  tts: AudioEngineSubstep;
+  detail?: string;
+}
 export interface SessionViewState {
   dominant: DominantState;
+  audioEngine: AudioEngineViewState;
   epoch: number;
   tentativeText: string;
   stableTurns: Array<{ turnId: string; text: string; posture?: 'riff' | 'question' | 'challenge' | 'silence'; policyReason?: string }>;
@@ -14,7 +24,7 @@ export interface SessionViewState {
   announcement: string;
 }
 
-export const initialSessionState: SessionViewState = { dominant: 'idle', epoch: 0, tentativeText: '', stableTurns: [], conversationItems: [], assistantText: '', playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
+export const initialSessionState: SessionViewState = { dominant: 'idle', audioEngine: { status: 'starting', capture: 'starting', vad: 'starting', tts: 'starting' }, epoch: 0, tentativeText: '', stableTurns: [], conversationItems: [], assistantText: '', playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
 const label: Record<DominantState, string> = {
   idle: 'Session stopped', paused: 'Session paused', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
 };
@@ -183,6 +193,19 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   }
   if (event.type === 'failure') return { ...dominant(next, 'degraded'), degradedMessage: typeof event.payload.detail === 'string' ? event.payload.detail : 'A session component failed.' };
   if (event.type === 'session.state') {
+    const audio = event.payload.audio;
+    let audioStatusUpdated = false;
+    if (audio && typeof audio === 'object' && !Array.isArray(audio)) {
+      const value = audio as Record<string, unknown>;
+      if ((value.status === 'starting' || value.status === 'warming' || value.status === 'ready' || value.status === 'failed' || value.status === 'retrying')
+        && (value.capture === 'starting' || value.capture === 'ready' || value.capture === 'failed')
+        && (value.vad === 'starting' || value.vad === 'warming' || value.vad === 'ready' || value.vad === 'failed')
+        && (value.tts === 'starting' || value.tts === 'warming' || value.tts === 'ready' || value.tts === 'failed')) {
+        next = { ...next, audioEngine: { status: value.status, capture: value.capture, vad: value.vad, tts: value.tts, ...(typeof value.detail === 'string' ? { detail: value.detail } : {}) }, ...(value.status === 'ready' ? { degradedMessage: '' } : {}) };
+        audioStatusUpdated = true;
+      }
+    }
+    if (audioStatusUpdated) return next;
     const phase = event.payload.phase;
     if (phase === 'listening') return dominant(next, 'listening');
     if (phase === 'deciding' || phase === 'interruption_deciding') return dominant(next, 'deciding');

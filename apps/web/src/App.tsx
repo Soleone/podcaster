@@ -203,7 +203,7 @@ export function App() {
     };
   }, []);
 
-  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, settings: SessionStartSettings) => {
+  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, settings: SessionStartSettings, activate: () => Promise<void>) => {
     reconnectUnsubscribeRef.current?.();
     reconnectUnsubscribeRef.current = undefined;
     transportFailureUnsubscribeRef.current?.();
@@ -226,7 +226,7 @@ export function App() {
       sessionId: id,
       transport,
       writer: opened,
-      initialState: initial,
+      initialState: { ...initial, audioEngine: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' } },
       playbackFactory: input => new InstrumentedPlayback(new BrowserPlayback(
         input.playbackId,
         input.outputEpoch,
@@ -263,12 +263,13 @@ export function App() {
         statsRef.current.captureRunning = false;
       },
     };
+    await activate();
     setCapability(cap);
     setSessionId(id);
     stoppedRef.current = false;
   }, []);
 
-  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings) => {
+  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings, activate: () => Promise<void>) => {
     reconnectUnsubscribeRef.current?.();
     reconnectUnsubscribeRef.current = undefined;
     transportFailureUnsubscribeRef.current?.();
@@ -359,13 +360,27 @@ export function App() {
     const random = new Uint32Array(1); crypto.getRandomValues(random);
     const streamId = random[0] ?? 0;
     captureStreamIdRef.current = streamId;
-    await transport.startAudio(streamId);
+    let audioReady = false;
+    const pendingCapture: Uint8Array[] = [];
     try {
+      // Open the browser microphone first, then wait for the host's explicit
+      // audio-ready acknowledgement. Capture frames are held briefly during
+      // that handshake so no speech can race stream.open or model warmup.
       captureRef.current = await new BrowserCapture({ streamId: () => streamId, onAudio: capture => recorder.onCaptureAudio(capture) }).start({
-        send: frame => transport.sendCapture(frame),
+        send: frame => {
+          if (audioReady) transport.sendCapture(frame);
+          else if (pendingCapture.length < 128) pendingCapture.push(frame);
+          else controller.degrade('Microphone audio arrived before the audio engine was ready.');
+        },
         degraded: message => controller.degrade(message),
       });
+      await transport.startAudio(streamId);
+      audioReady = true;
+      await activate();
+      for (const frame of pendingCapture.splice(0)) transport.sendCapture(frame);
     } catch (error) {
+      try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
+      captureRef.current = undefined;
       try { await transport.stopAudio(streamId); } catch { /* teardown is best effort */ }
       captureStreamIdRef.current = undefined;
       await controller.pause();
@@ -424,12 +439,13 @@ export function App() {
             const digest = storedSettings
               ? (stored.personaDigest || current.digest)
               : current.digest;
-            const reopened = await opened.beginSession({ sessionId: target, sessionSeed: stored.sessionSeed, personaDigest: digest, settings });
-            if (!reopened.ok) throw new Error(reopened.degradedReason);
-            const reopenedSession = await opened.getSession(target);
-            configureSessionClock(reopenedSession);
-            if (fakeServices) await composeFakeSession(opened, target, restored, 'fake-recovered', settings);
-            else await composeRealSession(opened, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings);
+            const activate = async (): Promise<void> => {
+              const reopened = await opened.beginSession({ sessionId: target, sessionSeed: stored.sessionSeed, personaDigest: digest, settings });
+              if (!reopened.ok) throw new Error(reopened.degradedReason);
+              configureSessionClock(await opened.getSession(target));
+            };
+            if (fakeServices) await composeFakeSession(opened, target, restored, 'fake-recovered', settings, activate);
+            else await composeRealSession(opened, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings, activate);
             if (!cancelled) navigate(`/session/${target}`);
           } catch (error) {
             try { await controllerRef.current?.pause(); } catch { /* best-effort rollback */ }
@@ -522,8 +538,6 @@ export function App() {
     const personaDigest = preserveIdentity && storedSettings
       ? (existing!.personaDigest || settingsDigest(frozen))
       : settingsDigest(frozen);
-    const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest, settings });
-    if (!persisted.ok) throw new Error(persisted.degradedReason);
     stoppedRef.current = false;
     sessionPausedRef.current = false;
     setSessionPaused(false);
@@ -532,12 +546,16 @@ export function App() {
       // Rehydrating the transcript is part of the resume transaction. If it
       // fails after beginSession has reactivated the row, the rollback below
       // must return it to paused rather than leaving an orphaned active row.
-      configureSessionClock(await opened.getSession(id));
       const initial: SessionViewState = existingId
         ? await sessionViewStateFromTurns(opened, id, 'active')
         : { ...initialSessionState, dominant: 'listening', announcement: 'Listening' };
-      if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings);
-      else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings);
+      const activate = async (): Promise<void> => {
+        const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest, settings });
+        if (!persisted.ok) throw new Error(persisted.degradedReason);
+        configureSessionClock(await opened.getSession(id));
+      };
+      if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings, activate);
+      else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings, activate);
     } catch (error) {
       // A failed composition must release the partially-created runtime before
       // returning to the durable paused state. This is also the stale-event

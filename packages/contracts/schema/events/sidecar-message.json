@@ -77,6 +77,18 @@
       },
       "additionalProperties": false
     },
+    "warmupStatus": {
+      "enum": ["starting", "warming", "ready", "failed"]
+    },
+    "warmup": {
+      "type": "object",
+      "required": ["vad", "tts"],
+      "properties": {
+        "vad": { "$ref": "#/$defs/warmupStatus" },
+        "tts": { "$ref": "#/$defs/warmupStatus" }
+      },
+      "additionalProperties": false
+    },
     "ttsModelDescriptor": {
       "type": "object",
       "required": [
@@ -211,6 +223,9 @@
             "tts": {
               "type": "string",
               "minLength": 1
+            },
+            "warmup": {
+              "$ref": "#/$defs/warmup"
             },
             "activeTtsModel": {
               "$ref": "#/$defs/ttsModel"

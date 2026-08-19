@@ -26,8 +26,18 @@ export interface VadStartEvent { streamId: string; utteranceId: string; captureS
 export interface VadEndEvent { streamId: string; utteranceId: string; captureStartSequence: number; captureEndSequence: number }
 export interface SttPartial { streamId: string; utteranceId: string; epoch: number; sequence: number; text: string; replacedCharacters: number }
 export interface SttFinal { streamId: string; utteranceId: string; epoch: number; text: string; endpointComplete: true }
+export type AudioEngineSubstep = 'starting' | 'warming' | 'ready' | 'failed';
+export type AudioEngineStatus = 'starting' | 'warming' | 'ready' | 'failed' | 'retrying';
+export interface AudioEngineStatusSnapshot {
+  status: AudioEngineStatus;
+  capture: 'starting' | 'ready' | 'failed';
+  vad: AudioEngineSubstep;
+  tts: AudioEngineSubstep;
+  detail?: string;
+}
 export interface AudioClientVoiceSelection { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; language?: string; backendId?: string; modelId?: string }
 export interface AudioClientEvents {
+  status?(snapshot: AudioEngineStatusSnapshot): void;
   speechStart?(event: VadStartEvent): void;
   speechEnd?(event: VadEndEvent): void;
   partial?(event: SttPartial): void;
@@ -87,6 +97,7 @@ export class AudioClient implements SpeechOutputPort {
   private queued: PendingTts[] = [];
   private usedOutputStreams = new Set<number>();
   private readyStatus: 'starting' | 'ready' | 'failed' = 'starting';
+  private sidecarWarmup: { vad: AudioEngineSubstep; tts: AudioEngineSubstep } = { vad: 'starting', tts: 'starting' };
   private readinessSeen = false;
   private failed = false;
   private closing = false;
@@ -124,6 +135,7 @@ export class AudioClient implements SpeechOutputPort {
 
   connect(): Promise<void> {
     if (this.connectPromise) return this.connectPromise;
+    this.reportStatus({ status: 'starting', capture: 'starting', vad: 'starting', tts: 'starting' });
     this.connectPromise = new Promise((resolve, reject) => {
       const socket = new WebSocket(`${this.sidecar.origin.replace(/^http/, 'ws')}/stream`, {
         headers: { authorization: `Bearer ${this.sidecar.secret}` },
@@ -145,7 +157,12 @@ export class AudioClient implements SpeechOutputPort {
 
   async open(captureStreamId: number, streamMode: 'capture' | 'preview' = 'capture'): Promise<string> {
     await this.connect();
-    await this.waitUntilReady();
+    this.reportStatus({ status: this.streamId ? 'retrying' : 'warming', capture: 'starting', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts, detail: this.streamId ? 'Re-initializing the microphone stream.' : 'Opening the microphone stream.' });
+    try { await this.waitUntilReady(); }
+    catch (error) {
+      this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts, detail: error instanceof Error ? error.message : 'The local audio engine is not ready.' });
+      throw error;
+    }
     if (this.failed || this.readyStatus !== 'ready') throw new Error('audio sidecar is not ready for a stream');
     // The sidecar owns one long-lived stream per AudioClient. Browser pause
     // stops microphone capture, but must not try to open a second sidecar stream
@@ -154,6 +171,7 @@ export class AudioClient implements SpeechOutputPort {
       if (streamMode !== 'capture') throw new Error('audio sidecar stream mode cannot change');
       this.captureStreamId = captureStreamId;
       this.reset();
+      this.reportStatus({ status: 'ready', capture: 'ready', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts });
       return this.streamId;
     }
     if (this.streamId) throw new Error('audio sidecar stream is still opening');
@@ -175,6 +193,7 @@ export class AudioClient implements SpeechOutputPort {
       ...(this.explicitModelSelection && (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) ? { backendId: this.backendId, modelId: this.modelId } : {}),
     });
     await opened;
+    this.reportStatus({ status: 'ready', capture: 'ready', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts });
     return streamId;
   }
 
@@ -369,6 +388,8 @@ export class AudioClient implements SpeechOutputPort {
     await new Promise<void>(resolve => { socket.once('close', () => resolve()); socket.close(1000, 'stream closed'); setTimeout(() => { socket.terminate(); resolve(); }, 500); });
   }
 
+  private reportStatus(snapshot: AudioEngineStatusSnapshot): void { this.events.status?.(snapshot); }
+
   private handleMessage(raw: RawData, binary: boolean): void {
     if (this.failed || this.closing) return;
     if (binary) { this.handleBinary(rawBytes(raw)); return; }
@@ -381,6 +402,19 @@ export class AudioClient implements SpeechOutputPort {
       if (this.readinessSeen || this.streamId) return this.protocolFailure();
       this.readinessSeen = true;
       this.readyStatus = payload.status as typeof this.readyStatus;
+      const warmup = payload.warmup as { vad?: unknown; tts?: unknown } | undefined;
+      if (warmup && (warmup.vad === 'starting' || warmup.vad === 'warming' || warmup.vad === 'ready' || warmup.vad === 'failed') && (warmup.tts === 'starting' || warmup.tts === 'warming' || warmup.tts === 'ready' || warmup.tts === 'failed')) {
+        this.sidecarWarmup = { vad: warmup.vad, tts: warmup.tts };
+      } else if (this.readyStatus === 'ready') {
+        this.sidecarWarmup = { vad: 'ready', tts: 'ready' };
+      }
+      this.reportStatus({
+        status: this.readyStatus === 'ready' ? 'warming' : this.readyStatus,
+        capture: 'starting',
+        vad: this.sidecarWarmup.vad,
+        tts: this.sidecarWarmup.tts,
+        ...(this.readyStatus === 'starting' ? { detail: 'The local speech models are still warming up.' } : {}),
+      });
       // Fail closed when a session voice/model selection cannot be reconciled
       // against the current verified catalog before any stream opens. Older
       // sidecars expose only the default Kokoro catalog, which remains valid for
@@ -415,18 +449,21 @@ export class AudioClient implements SpeechOutputPort {
         if (!modelAvailable) {
           this.failed = true;
           this.readyStatus = 'failed';
+          this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The selected voice engine is unavailable.' });
           this.events.failure?.('tts_model_unavailable');
           this.failAll(new Error('selected TTS model is unavailable; Kokoro remains available as the fallback'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'selected TTS model unavailable');
         } else if (!catalogMatches || !voicePresent) {
           this.failed = true;
           this.readyStatus = 'failed';
+          this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The selected voice catalog changed.' });
           this.events.failure?.('catalog_mismatch');
           this.failAll(new Error('audio sidecar catalog drifted from the session voice selection'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio voice catalog mismatch');
         } else if (!speedValid) {
           this.failed = true;
           this.readyStatus = 'failed';
+          this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The selected voice speed is unsupported.' });
           this.events.failure?.('unsupported_speed');
           this.failAll(new Error('selected TTS speed is not supported by the active model'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'unsupported TTS speed');
@@ -439,6 +476,7 @@ export class AudioClient implements SpeechOutputPort {
     if (message.type === 'sidecar.failure') {
       this.failed = true;
       this.readyStatus = 'failed';
+      this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The local audio engine failed.' });
       this.events.failure?.(String(payload.code));
       this.failAll(new Error('audio sidecar runtime failed'));
       this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio sidecar runtime failed');
@@ -581,14 +619,36 @@ export class AudioClient implements SpeechOutputPort {
   private readySocket(): WebSocket { if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('audio sidecar is not connected'); return this.socket; }
   private requireOpened(): void { if (this.failed || !this.streamId || !this.streamOpened) throw new Error('audio stream is not open'); }
   private async waitUntilReady(): Promise<void> {
-    const deadline = Date.now() + 5_000;
-    while (!this.readinessSeen && !this.failed && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    // A sidecar can announce `starting` once when its background prepare thread
+    // begins. Poll health while waiting so starting never races stream admission.
+    const deadline = Date.now() + 30_000;
+    while (!this.failed && Date.now() < deadline) {
+      if (this.readinessSeen && this.readyStatus === 'ready') return;
+      if (this.readinessSeen && this.readyStatus === 'starting') {
+        try {
+          const response = await fetch(`${this.sidecar.origin}/health`, { headers: { authorization: `Bearer ${this.sidecar.secret}` }, signal: AbortSignal.timeout(500) });
+          if (response.ok) {
+            const value = await response.json() as { status?: unknown; warmup?: unknown };
+            if (value.status === 'ready' || value.status === 'failed') {
+              this.readyStatus = value.status;
+              const warmup = value.warmup as { vad?: unknown; tts?: unknown } | undefined;
+              if (warmup && (warmup.vad === 'starting' || warmup.vad === 'warming' || warmup.vad === 'ready' || warmup.vad === 'failed') && (warmup.tts === 'starting' || warmup.tts === 'warming' || warmup.tts === 'ready' || warmup.tts === 'failed')) this.sidecarWarmup = { vad: warmup.vad, tts: warmup.tts };
+              this.reportStatus({ status: value.status === 'ready' ? 'warming' : 'failed', capture: 'starting', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts, detail: value.status === 'ready' ? 'Speech models are ready; opening the microphone stream.' : 'The local speech engine failed to warm up.' });
+              if (this.readyStatus === 'failed') break;
+              continue;
+            }
+          }
+        } catch { /* keep waiting; the websocket failure path remains authoritative */ }
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     if (!this.readinessSeen || this.readyStatus !== 'ready') throw new Error('audio sidecar is not ready');
   }
   private protocolFailure(): void {
     if (this.failed) return;
     this.failed = true;
     this.readyStatus = 'failed';
+    this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The local audio engine sent an invalid status.' });
     this.events.failure?.('invalid_message');
     this.failAll(new Error('invalid sidecar protocol'));
     this.socket?.close(CLOSE_PROTOCOL_VIOLATION, 'invalid sidecar protocol');
@@ -597,6 +657,7 @@ export class AudioClient implements SpeechOutputPort {
     if (this.failed) return;
     this.failed = true;
     this.readyStatus = 'failed';
+    this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: message });
     this.events.failure?.('sidecar_unavailable');
     this.failAll(new Error(message));
   }

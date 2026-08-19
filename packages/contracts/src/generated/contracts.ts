@@ -23,15 +23,18 @@ export type ReasoningStartedEvent = { "protocolVersion": 1; "sessionId": string;
 export type ResponseFailedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "response.failed"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "reasonCode": "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"; "partIndex"?: number; "partId"?: string; }; };
 export type ResponsePartFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "response.part_final"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "partIndex": 0; "kind": "stall"; "partId"?: string; } | { "turnId": string; "responseId": string; "partIndex": number; "kind": "body"; "partId"?: string; }; };
 export type ResponsePartStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "response.part_started"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "partIndex": 0; "kind": "stall"; "partId"?: string; } | { "turnId": string; "responseId": string; "partIndex": number; "kind": "body"; "partId"?: string; }; };
-export type SessionStateEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.state"; "monotonicMs": number; "payload": { "phase": "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "stopped"; "personaDigest": string; }; };
+export type SessionStateEventAudioEngineStatus = { "status": "starting" | "warming" | "ready" | "failed" | "retrying"; "capture": "starting" | "ready" | "failed"; "vad": "starting" | "warming" | "ready" | "failed"; "tts": "starting" | "warming" | "ready" | "failed"; "detail"?: string; };
+export type SessionStateEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.state"; "monotonicMs": number; "payload": { "phase": "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "stopped"; "personaDigest": string; "audio"?: SessionStateEventAudioEngineStatus; }; };
 export type SidecarMessageStream = string;
 export type SidecarMessageUtterance = string;
 export type SidecarMessageResponse = string;
 export type SidecarMessageSpeedCapability = { "supported": boolean; "min": number; "max": number; "default": number; };
 export type SidecarMessageTtsModel = { "backendId": string; "modelId": string; };
+export type SidecarMessageWarmupStatus = "starting" | "warming" | "ready" | "failed";
+export type SidecarMessageWarmup = { "vad": SidecarMessageWarmupStatus; "tts": SidecarMessageWarmupStatus; };
 export type SidecarMessageTtsModelDescriptor = { "backendId": string; "modelId": string; "label": string; "status": "ready" | "unavailable"; "speed"?: SidecarMessageSpeedCapability; "voiceCatalog"?: SidecarMessageVoiceCatalog; "reason"?: string; "fallback"?: SidecarMessageTtsModel; };
 export type SidecarMessageVoiceCatalog = { "catalogId": string; "backendId": string; "modelId": string; "runtimeConfigId": string; "revision": string; "defaultVoiceId": string; "speed"?: SidecarMessageSpeedCapability; "voices": Array<{ "id": string; "label": string; }>; };
-export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": string; "activeTtsModel"?: SidecarMessageTtsModel; "ttsModels"?: Array<SidecarMessageTtsModelDescriptor>; "voiceCatalog"?: SidecarMessageVoiceCatalog; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; "streamMode"?: "capture" | "preview"; "catalogId"?: string; "backendId"?: string; "modelId"?: string; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; "backendId"?: string; "modelId"?: string; "voiceCatalog"?: SidecarMessageVoiceCatalog; "fallback"?: SidecarMessageTtsModel; }; } | { "type": "vad.speech_start"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; "captureEndSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; "voiceId": string; "speedModifier"?: number; "tonePrompt"?: string; "language"?: "Chinese" | "English" | "Japanese" | "Korean" | "German" | "French" | "Russian" | "Portuguese" | "Spanish" | "Italian"; }; } | { "type": "tts.open"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "voiceId": string; "speedModifier"?: number; "tonePrompt"?: string; "language"?: "Chinese" | "English" | "Japanese" | "Korean" | "German" | "French" | "Russian" | "Portuguese" | "Spanish" | "Italian"; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.append"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "sequence": number; "text": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.commit"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "nextSequence": number; "textSha256": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; "voiceId": string; "backendId"?: string; "modelId"?: string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; } | { "type": "voice.enroll"; "payload": { "enrollment": VoiceEnrollment; }; } | { "type": "voice.enrolled"; "payload": { "voiceId": string; }; } | { "type": "voice.remove"; "payload": { "voiceId": string; }; } | { "type": "voice.removed"; "payload": { "voiceId": string; }; } | { "type": "voice.error"; "payload": { "voiceId": string; "code": string; "message": string; }; };
+export type SidecarMessage = { "type": "readiness.snapshot"; "payload": { "status": "starting" | "ready" | "failed"; "stt": "nemotron-3.5-transformers-fp32-320ms-paced-v1"; "tts": string; "warmup"?: SidecarMessageWarmup; "activeTtsModel"?: SidecarMessageTtsModel; "ttsModels"?: Array<SidecarMessageTtsModelDescriptor>; "voiceCatalog"?: SidecarMessageVoiceCatalog; }; } | { "type": "stream.open"; "payload": { "streamId": SidecarMessageStream; "captureStreamId": number; "sampleRate": 16000; "frameSamples": 320; "streamMode"?: "capture" | "preview"; "catalogId"?: string; "backendId"?: string; "modelId"?: string; }; } | { "type": "stream.opened" | "stream.reset" | "stream.close" | "stream.closed"; "payload": { "streamId": SidecarMessageStream; "backendId"?: string; "modelId"?: string; "voiceCatalog"?: SidecarMessageVoiceCatalog; "fallback"?: SidecarMessageTtsModel; }; } | { "type": "vad.speech_start"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; }; } | { "type": "vad.speech_end"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "captureStartSequence": number; "captureEndSequence": number; }; } | { "type": "stt.bind_epoch"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; }; } | { "type": "stt.partial"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "sequence": number; "text": string; "replacedCharacters": number; }; } | { "type": "stt.final"; "payload": { "streamId": SidecarMessageStream; "utteranceId": SidecarMessageUtterance; "epoch": number; "text": string; "endpointComplete": true; }; } | { "type": "tts.request"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "text": string; "voiceId": string; "speedModifier"?: number; "tonePrompt"?: string; "language"?: "Chinese" | "English" | "Japanese" | "Korean" | "German" | "French" | "Russian" | "Portuguese" | "Spanish" | "Italian"; }; } | { "type": "tts.open"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "voiceId": string; "speedModifier"?: number; "tonePrompt"?: string; "language"?: "Chinese" | "English" | "Japanese" | "Korean" | "German" | "French" | "Russian" | "Portuguese" | "Spanish" | "Italian"; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.append"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "sequence": number; "text": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.commit"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "nextSequence": number; "textSha256": string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancel"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.started"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "outputStreamId": number; "sampleRate": 24000; "voiceId": string; "backendId"?: string; "modelId"?: string; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.ended"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "tts.cancelled"; "payload": { "streamId": SidecarMessageStream; "responseId": SidecarMessageResponse; "epoch": number; "partIndex"?: number; "partId"?: string; }; } | { "type": "sidecar.failure"; "payload": { "code": "invalid_message" | "invalid_audio" | "queue_overflow" | "runtime_unavailable" | "runtime_poisoned" | "cancelled"; "recoverable": boolean; }; } | { "type": "voice.enroll"; "payload": { "enrollment": VoiceEnrollment; }; } | { "type": "voice.enrolled"; "payload": { "voiceId": string; }; } | { "type": "voice.remove"; "payload": { "voiceId": string; }; } | { "type": "voice.removed"; "payload": { "voiceId": string; }; } | { "type": "voice.error"; "payload": { "voiceId": string; "code": string; "message": string; }; };
 export type TranscriptFinalEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.final"; "monotonicMs": number; "payload": { "turnId": string; "text": string; "endpointComplete": true; }; };
 export type TranscriptPartialEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.partial"; "monotonicMs": number; "payload": { "utteranceId": string; "sequence": number; "text": string; "replacedCharacters": number; }; };
 export type TtsEndedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.ended"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; };
@@ -2866,6 +2869,56 @@ export const CONTRACT_SCHEMAS = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://podcaster.local/schema/events/session-state.json",
     "title": "SessionStateEvent",
+    "$defs": {
+      "audioEngineStatus": {
+        "type": "object",
+        "required": [
+          "status",
+          "capture",
+          "vad",
+          "tts"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "starting",
+              "warming",
+              "ready",
+              "failed",
+              "retrying"
+            ]
+          },
+          "capture": {
+            "enum": [
+              "starting",
+              "ready",
+              "failed"
+            ]
+          },
+          "vad": {
+            "enum": [
+              "starting",
+              "warming",
+              "ready",
+              "failed"
+            ]
+          },
+          "tts": {
+            "enum": [
+              "starting",
+              "warming",
+              "ready",
+              "failed"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "allOf": [
       {
         "$ref": "../protocol-envelope.json"
@@ -2903,6 +2956,9 @@ export const CONTRACT_SCHEMAS = {
               "personaDigest": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
+              },
+              "audio": {
+                "$ref": "#/$defs/audioEngineStatus"
               }
             },
             "additionalProperties": false
@@ -2986,6 +3042,30 @@ export const CONTRACT_SCHEMAS = {
           "modelId": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "warmupStatus": {
+        "enum": [
+          "starting",
+          "warming",
+          "ready",
+          "failed"
+        ]
+      },
+      "warmup": {
+        "type": "object",
+        "required": [
+          "vad",
+          "tts"
+        ],
+        "properties": {
+          "vad": {
+            "$ref": "#/$defs/warmupStatus"
+          },
+          "tts": {
+            "$ref": "#/$defs/warmupStatus"
           }
         },
         "additionalProperties": false
@@ -3124,6 +3204,9 @@ export const CONTRACT_SCHEMAS = {
               "tts": {
                 "type": "string",
                 "minLength": 1
+              },
+              "warmup": {
+                "$ref": "#/$defs/warmup"
               },
               "activeTtsModel": {
                 "$ref": "#/$defs/ttsModel"

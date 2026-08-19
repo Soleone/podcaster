@@ -49,6 +49,7 @@ export class WebSocketSessionTransport implements SessionTransport {
   private readonly outputs: OutputCollection = { byStream: new Map(), single: undefined };
   private intentionalDisconnect = false;
   private failureNotified = false;
+  private pendingAudioStart: { streamId: number; resolve(): void; reject(error: Error): void } | undefined;
 
   constructor(
     private readonly sessionId: string,
@@ -198,6 +199,12 @@ export class WebSocketSessionTransport implements SessionTransport {
         const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
         if (partIndex === undefined) this.latestResponseId = undefined;
       }
+      if (hostEvent.type === 'session.state' && hostEvent.payload.audio && typeof hostEvent.payload.audio === 'object') {
+        const audio = hostEvent.payload.audio as Record<string, unknown>;
+        const pending = this.pendingAudioStart;
+        if (pending && audio.status === 'ready') { this.pendingAudioStart = undefined; pending.resolve(); }
+        else if (pending && audio.status === 'failed') { this.pendingAudioStart = undefined; pending.reject(new Error(typeof audio.detail === 'string' ? audio.detail : 'The audio engine failed to warm up.')); }
+      }
       for (const listener of this.eventListeners) void listener(hostEvent);
     };
   }
@@ -266,7 +273,14 @@ export class WebSocketSessionTransport implements SessionTransport {
     socket?.close(1000, 'session ended');
   }
   startSession(input: { sessionSeed: string; reasoningMode: 'full' | 'transcript_only'; settings: { version: 1; persona: string; voice: VoicePreference } }): void { this.sendCommand('session.start', { sessionSeed: input.sessionSeed, reasoningMode: input.reasoningMode, settings: input.settings }); }
-  startAudio(streamId: number): void { this.sendCommand('audio.start', { streamId, sampleRate: 16_000, channels: 1, frameSamples: 320 }); }
+  startAudio(streamId: number): Promise<void> {
+    if (this.pendingAudioStart) return Promise.reject(new Error('another microphone warmup is already in progress'));
+    return new Promise<void>((resolve, reject) => {
+      this.pendingAudioStart = { streamId, resolve, reject };
+      try { this.sendCommand('audio.start', { streamId, sampleRate: 16_000, channels: 1, frameSamples: 320 }); }
+      catch (error) { this.pendingAudioStart = undefined; reject(error instanceof Error ? error : new Error('microphone warmup could not start')); }
+    });
+  }
   stopAudio(streamId: number): void { this.sendCommand('audio.stop', { streamId }); }
   acknowledgePersisted(event: StableEvent): void {
     this.sendCommand('turn.persisted', { turnId: event.payload.turnId, finalEventId: event.eventId, persistedEpoch: event.epoch }, event.epoch);
@@ -369,6 +383,8 @@ export class WebSocketSessionTransport implements SessionTransport {
   }
   private protocolFailure(reason: string): void {
     this.permanentFailure = true;
+    this.pendingAudioStart?.reject(new Error(`The host sent invalid conversation data: ${reason}`));
+    this.pendingAudioStart = undefined;
     activityLog.append({ level: 'error', source: 'transport', message: 'protocol failure', detail: reason });
     this.notifyFailure(`The host sent invalid conversation data: ${reason}`);
     // close() with a server-only code would throw InvalidAccessError inside
@@ -379,6 +395,8 @@ export class WebSocketSessionTransport implements SessionTransport {
     }
   }
   private notifyFailure(message: string): void {
+    this.pendingAudioStart?.reject(new Error(message));
+    this.pendingAudioStart = undefined;
     if (this.failureNotified || this.intentionalDisconnect) return;
     this.failureNotified = true;
     for (const listener of this.failureListeners) listener(message);
@@ -423,7 +441,18 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
   const uuid = (key: string) => typeof payload[key] === 'string' && UUID_V7.test(String(payload[key]));
   const anyUuid = (key: string) => typeof payload[key] === 'string' && UUID_ANY.test(String(payload[key]));
   switch (event.type) {
-    case 'session.state': return exact(payload, ['phase', 'personaDigest']) && typeof payload.phase === 'string' && typeof payload.personaDigest === 'string' && /^[a-f0-9]{64}$/.test(payload.personaDigest);
+    case 'session.state': {
+      if (!hasOnly(payload, ['phase', 'personaDigest'], ['audio']) || typeof payload.phase !== 'string' || typeof payload.personaDigest !== 'string' || !/^[a-f0-9]{64}$/.test(payload.personaDigest)) return false;
+      if (payload.audio === undefined) return true;
+      if (typeof payload.audio !== 'object' || payload.audio === null || Array.isArray(payload.audio)) return false;
+      const audio = payload.audio as Record<string, unknown>;
+      return hasOnly(audio, ['status', 'capture', 'vad', 'tts'], ['detail'])
+        && ['starting', 'warming', 'ready', 'failed', 'retrying'].includes(String(audio.status))
+        && ['starting', 'ready', 'failed'].includes(String(audio.capture))
+        && ['starting', 'warming', 'ready', 'failed'].includes(String(audio.vad))
+        && ['starting', 'warming', 'ready', 'failed'].includes(String(audio.tts))
+        && (audio.detail === undefined || (typeof audio.detail === 'string' && audio.detail.length <= 512));
+    }
     case 'transcript.partial': return exact(payload, ['utteranceId', 'sequence', 'text', 'replacedCharacters']) && uuid('utteranceId') && integer(payload.sequence) && typeof payload.text === 'string' && payload.text.length <= 16_384 && integer(payload.replacedCharacters);
     case 'transcript.final': return exact(payload, ['turnId', 'text', 'endpointComplete']) && uuid('turnId') && typeof payload.text === 'string' && payload.text.length <= 16_384 && payload.endpointComplete === true;
     case 'vad.speech_start': return exact(payload, ['streamId', 'utteranceId', 'captureStartSequence']) && anyUuid('streamId') && uuid('utteranceId') && integer(payload.captureStartSequence);

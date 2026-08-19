@@ -47,10 +47,13 @@ export async function startSidecar(python = process.env.PYTHON ?? `${repositoryR
 }
 
 export type SidecarRuntimeStatus = 'starting' | 'ready' | 'failed';
+export type SidecarWarmupStatus = 'starting' | 'warming' | 'ready' | 'failed';
+export interface SidecarWarmupSnapshot { vad: SidecarWarmupStatus; tts: SidecarWarmupStatus }
 export interface SidecarRuntimeSnapshot {
   status: SidecarRuntimeStatus;
   stt: string;
   tts: string;
+  warmup?: SidecarWarmupSnapshot;
   voiceCatalog?: VoiceCatalog;
   ttsModels?: TtsModelDescriptor[];
   activeTtsModel?: TtsModelSelection;
@@ -66,9 +69,16 @@ export async function sidecarSnapshot(sidecar: SidecarProcess): Promise<SidecarR
   try {
     const response = await fetch(`${sidecar.origin}/health`, { headers: { authorization: `Bearer ${sidecar.secret}` }, signal: AbortSignal.timeout(1000) });
     if (!response.ok) return undefined;
-    const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown; voiceCatalog?: unknown; ttsModels?: unknown; activeTtsModel?: unknown };
+    const value = await response.json() as { status?: unknown; stt?: unknown; tts?: unknown; warmup?: unknown; voiceCatalog?: unknown; ttsModels?: unknown; activeTtsModel?: unknown };
     if (value.status !== 'starting' && value.status !== 'ready' && value.status !== 'failed') return undefined;
     const snapshot: SidecarRuntimeSnapshot = { status: value.status, stt: String(value.stt ?? ''), tts: String(value.tts ?? '') };
+    if (value.warmup !== undefined) {
+      if (!value.warmup || typeof value.warmup !== 'object' || Array.isArray(value.warmup)) return undefined;
+      const warmup = value.warmup as { vad?: unknown; tts?: unknown };
+      const valid = (item: unknown): item is SidecarWarmupStatus => item === 'starting' || item === 'warming' || item === 'ready' || item === 'failed';
+      if (!valid(warmup.vad) || !valid(warmup.tts) || Object.keys(warmup).some(key => key !== 'vad' && key !== 'tts')) return undefined;
+      snapshot.warmup = { vad: warmup.vad, tts: warmup.tts };
+    }
     if (value.status === 'ready') {
       if (!isValidVoiceCatalog(value.voiceCatalog)) return undefined;
       snapshot.voiceCatalog = value.voiceCatalog;

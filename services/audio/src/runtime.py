@@ -204,6 +204,11 @@ class SelectedAudioRuntime:
         self.qwen_config_path = qwen_config_path
         self.expected_qwen_config_sha256 = expected_qwen_config_sha256
         self.status = "starting"
+        # Readiness is deliberately broken into the gates that make a capture
+        # stream safe: VAD/STT and the selected TTS catalog must be loaded before
+        # a host session can become active. The sidecar exposes this while the
+        # background prepare thread is still running.
+        self.warmup: dict[str, str] = {"vad": "starting", "tts": "starting"}
         self._tts_catalogs: dict[str, dict[str, object]] = {}
         self._tts_errors: dict[str, str] = {}
         self._streams: dict[str, StreamState] = {}
@@ -309,9 +314,13 @@ class SelectedAudioRuntime:
         try:
             stt_config = self._verified_stt_config()
             tts_config = self._verified_tts_config()
+            self.warmup["vad"] = "warming"
             self.stt.prepare(stt_config)
+            self.warmup["vad"] = "ready"
+            self.warmup["tts"] = "warming"
             self.tts.prepare(tts_config)
             self._register_tts_catalog(self._model_key(KOKORO_BACKEND_ID, KOKORO_MODEL_ID), self.tts)
+            self.warmup["tts"] = "ready"
             # Optional candidates are deliberately best-effort. Qwen's isolated
             # runtime, CUDA device, or model snapshot may be absent; none of
             # those conditions are allowed to gate the Kokoro production path.
@@ -333,6 +342,9 @@ class SelectedAudioRuntime:
             self.status = "ready"
         except BaseException:
             self.status = "failed"
+            for key in self.warmup:
+                if self.warmup[key] not in {"ready", "failed"}:
+                    self.warmup[key] = "failed"
             for adapter in (*self._tts_adapters.values(), self.stt):
                 if bool(getattr(adapter, "prepared", False)):
                     try:
@@ -344,6 +356,7 @@ class SelectedAudioRuntime:
     def mark_ready_for_test(self) -> None:
         # Test fakes often do not need prepare(). Register every catalog they
         # expose, while retaining the old single-Kokoro test shape.
+        self.warmup = {"vad": "ready", "tts": "ready"}
         for key, adapter in tuple(self._tts_adapters.items()):
             try:
                 self._register_tts_catalog(key, adapter)
@@ -356,6 +369,7 @@ class SelectedAudioRuntime:
             "status": self.status,
             "stt": STT_CONFIG_ID,
             "tts": TTS_CONFIG_ID,
+            "warmup": dict(self.warmup),
         }
         if self.status == "ready":
             try:

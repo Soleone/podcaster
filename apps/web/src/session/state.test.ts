@@ -14,6 +14,16 @@ describe('session presentation state', () => {
     expect(partial.announcement).toBe('Listening');
   });
 
+  it('surfaces audio warmup progress and clears the degraded copy when healthy', () => {
+    let state = reduceSessionState(initialSessionState, event('failure', { detail: 'Audio engine is retrying.' }));
+    state = reduceSessionState(state, event('session.state', { phase: 'idle', audio: { status: 'warming', capture: 'starting', vad: 'warming', tts: 'ready', detail: 'Loading VAD.' } }));
+    expect(state.audioEngine).toMatchObject({ status: 'warming', capture: 'starting', vad: 'warming', tts: 'ready' });
+    expect(state.dominant).toBe('degraded');
+    state = reduceSessionState(state, event('session.state', { phase: 'idle', audio: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' } }));
+    expect(state.audioEngine.status).toBe('ready');
+    expect(state.degradedMessage).toBe('');
+  });
+
   it('shows intentional silence distinctly and ignores stale UI events', () => {
     let state = reduceSessionState(initialSessionState, event('transcript.final', { turnId: 't', text: 'hello' }, 2));
     state = reduceSessionState(state, event('policy.decision', { turnId: 't', posture: 'silence' }, 2));

@@ -2,13 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://podcaster.local/schema/events/session-state.json",
   "title": "SessionStateEvent",
+  "$defs": {
+    "audioEngineStatus": {
+      "type": "object",
+      "required": ["status", "capture", "vad", "tts"],
+      "properties": {
+        "status": { "enum": ["starting", "warming", "ready", "failed", "retrying"] },
+        "capture": { "enum": ["starting", "ready", "failed"] },
+        "vad": { "enum": ["starting", "warming", "ready", "failed"] },
+        "tts": { "enum": ["starting", "warming", "ready", "failed"] },
+        "detail": { "type": "string", "maxLength": 512 }
+      },
+      "additionalProperties": false
+    }
+  },
   "allOf": [
     { "$ref": "../protocol-envelope.json" },
     { "type": "object", "required": ["type", "payload"], "properties": {
       "type": { "const": "session.state" },
       "payload": { "type": "object", "required": ["phase", "personaDigest"], "properties": {
         "phase": { "enum": ["idle", "listening", "deciding", "reasoning", "synthesizing", "playing", "echo_provisional", "interruption_deciding", "stopped"] },
-        "personaDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "personaDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "audio": { "$ref": "#/$defs/audioEngineStatus" }
       }, "additionalProperties": false }
     } }
   ]
