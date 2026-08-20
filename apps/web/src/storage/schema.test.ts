@@ -42,6 +42,20 @@ describe('IndexedDB schema', () => {
     db.close();
   });
 
+  it('closes an old connection on versionchange so a higher-version open is not blocked', async () => {
+    name = `schema-versionchange-${Date.now()}-${Math.random()}`;
+    const db = await openPodcasterDatabase(indexedDB, name);
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name, PODCASTER_DB_VERSION + 1);
+      request.onblocked = () => reject(new Error('versionchange open was blocked'));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('versionchange open failed'));
+    });
+    expect(upgraded.version).toBe(PODCASTER_DB_VERSION + 1);
+    upgraded.close();
+    db.close();
+  });
+
   it('creates versioned stores/indexes and preserves records on reopen', async () => {
     name = `schema-${Date.now()}-${Math.random()}`;
     let db = await openPodcasterDatabase(indexedDB, name);

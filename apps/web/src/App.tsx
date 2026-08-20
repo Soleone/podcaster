@@ -15,7 +15,6 @@ import type { SessionTransport } from './session/transport';
 import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
 import { RecordingStore, type RecordingItemSummary } from './storage/recording-store';
-import { beginAppStorageBootstrap } from './storage/app-storage-bootstrap';
 import { CustomVoiceStore, type CustomVoiceRecord } from './storage/custom-voice-store';
 import { enrollCustomVoice as enrollCustomVoiceApi, enrollStoredCustomVoice, deleteCustomVoice as deleteCustomVoiceApi } from './voice-enrollment/api';
 import type { ReferenceTake } from './voice-enrollment/recorder';
@@ -26,6 +25,7 @@ import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionV
 import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import type { HostEvent } from '@app/contracts';
 import { SettingsStore } from './settings/settings-store';
+import { createResourceOwner } from './storage/resource-lifecycle';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { AppHeader } from './components/AppHeader';
@@ -76,6 +76,26 @@ function createFakeHostEvent<T extends HostEvent['type'],>(sessionId: string, ep
   return createEnvelope({ sessionId, epoch, type, payload }) as HostEvent;
 }
 
+interface AppStorageResources {
+  settings: SettingsStore;
+  customVoices: CustomVoiceStore;
+}
+
+async function openAppStorageResources(): Promise<AppStorageResources> {
+  const settings = await SettingsStore.open();
+  try {
+    return { settings, customVoices: await CustomVoiceStore.open() };
+  } catch (error) {
+    settings.close();
+    throw error;
+  }
+}
+
+function closeAppStorageResources(resources: AppStorageResources): void {
+  try { resources.settings.close(); }
+  finally { resources.customVoices.close(); }
+}
+
 export function App() {
   const location = useLocation();
   const locationRef = useRef(location);
@@ -95,7 +115,6 @@ export function App() {
   const [resuming, setResuming] = useState(false);
   const stoppedRef = useRef(false);
   const writerRef = useRef<StableTurnWriter | undefined>(undefined);
-  const writerGenerationRef = useRef(0);
   const controllerRef = useRef<SessionController | undefined>(undefined);
   const transportRef = useRef<SessionTransport | undefined>(undefined);
   const fakeTransportRef = useRef<FakeSessionTransport | undefined>(undefined);
@@ -120,7 +139,8 @@ export function App() {
   const lastCheapRef = useRef<{ enabled: boolean; signature: string } | null>(null);
   const settingsStoreRef = useRef<SettingsStore | undefined>(undefined);
   const customVoiceStoreRef = useRef<CustomVoiceStore | undefined>(undefined);
-  const appStorageGenerationRef = useRef(0);
+  const appStorageOwnerRef = useRef<ReturnType<typeof createResourceOwner<AppStorageResources>> | undefined>(undefined);
+  if (!appStorageOwnerRef.current) appStorageOwnerRef.current = createResourceOwner(openAppStorageResources, closeAppStorageResources);
   const [customVoices, setCustomVoices] = useState<CustomVoiceRecord[]>([]);
   const customVoicesRef = useRef(customVoices);
   customVoicesRef.current = customVoices;
@@ -422,31 +442,28 @@ export function App() {
   // without a fresh session): the transcript is rebuilt from stable storage and
   // the host is reconnected under the same session identity.
   useEffect(() => {
-    const generation = ++writerGenerationRef.current;
     let cancelled = false;
     let opened: StableTurnWriter | undefined;
     let closed = false;
-    const isCurrent = (): boolean => !cancelled && writerGenerationRef.current === generation;
     const closeOpened = (): void => {
-      if (!opened || closed) return;
+      if (closed || !opened) return;
       closed = true;
-      if (writerRef.current === opened) writerRef.current = undefined;
       opened.close();
     };
     void (async () => {
       const candidate = await StableTurnWriter.open();
       opened = candidate;
-      if (!isCurrent()) { closeOpened(); return; }
+      if (cancelled) { closeOpened(); return; }
       writerRef.current = candidate;
       const target = sessionIdFromPath(locationRef.current.pathname);
       if (target) {
-        // SettingsStore opens independently from the session store. Do not let
-        // an active-session recovery race that load and silently reopen a Qwen
-        // session with the Kokoro defaults.
+        // SettingsStore and CustomVoiceStore share one bootstrap effect. Do
+        // not let active-session recovery race that load and silently reopen a
+        // Qwen session with the Kokoro defaults.
         await settingsReadyPromiseRef.current!;
-        if (!isCurrent()) return;
+        if (cancelled) { closeOpened(); return; }
         const stored = await candidate.getSession(target);
-        if (isCurrent() && stored?.state === 'active') {
+        if (!cancelled && stored?.state === 'active') {
           setResuming(true);
           setWriter(candidate);
           sessionPausedRef.current = false;
@@ -465,9 +482,8 @@ export function App() {
             };
             if (fakeServices) await composeFakeSession(candidate, target, restored, 'fake-recovered', settings, activate);
             else await composeRealSession(candidate, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings, activate);
-            if (isCurrent()) navigate(`/session/${target}`);
+            if (!cancelled) navigate(`/session/${target}`);
           } catch (error) {
-            if (!isCurrent()) return;
             try { await controllerRef.current?.pause(); } catch { /* best-effort rollback */ }
             try { await releaseRecorder(target); } catch { /* best-effort rollback */ }
             transportRef.current?.disconnect();
@@ -478,15 +494,16 @@ export function App() {
             configureSessionClock(await candidate.getSession(target));
             activityLog.append({ level: 'error', source: 'app', message: 'active session could not be resumed; it is paused locally', ...(error instanceof Error ? { detail: error.message } : {}) });
           } finally {
-            if (isCurrent()) setResuming(false);
+            if (!cancelled) setResuming(false);
           }
           return;
         }
       }
-      if (isCurrent()) setWriter(candidate);
+      if (!cancelled) setWriter(candidate);
     })();
     return () => {
       cancelled = true;
+      if (writerRef.current === opened) writerRef.current = undefined;
       closeOpened();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -917,8 +934,9 @@ export function App() {
   }, [capability, ensureCustomVoiceEnrolled]);
 
   const enrollVoice = useCallback(async (name: string, take: ReferenceTake) => {
-    const store = customVoiceStoreRef.current ?? await CustomVoiceStore.open();
-    customVoiceStoreRef.current = store;
+    await settingsReadyPromiseRef.current!;
+    const store = customVoiceStoreRef.current;
+    if (!store) throw new Error('Custom voice storage is unavailable.');
     const now = new Date().toISOString();
     const record: CustomVoiceRecord = {
       voiceId: customVoiceId(take.refSha256),
@@ -966,8 +984,9 @@ export function App() {
     setSettingsSaving(true);
     setSettingsSaveError(undefined);
     try {
-      const store = settingsStoreRef.current ?? await SettingsStore.open();
-      settingsStoreRef.current = store;
+      await settingsReadyPromiseRef.current!;
+      const store = settingsStoreRef.current;
+      if (!store) throw new Error('Settings storage is unavailable.');
       const activeVoice = { ...voice, backendId: selectedModel.backendId, modelId: selectedModel.modelId };
       const profiles = { ...voiceProfiles, [ttsModelKey(selectedModel)]: activeVoice };
       const ok = await store.save({ version: 1, agentName, persona, pi, selectedModel, voice: activeVoice, voiceProfiles: profiles });
@@ -984,33 +1003,20 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const generation = ++appStorageGenerationRef.current;
-    let ownedSettings: SettingsStore | undefined;
-    let ownedCustomVoices: CustomVoiceStore | undefined;
-    const bootstrap = beginAppStorageBootstrap(
-      generation,
-      () => appStorageGenerationRef.current,
-      () => SettingsStore.open(),
-      () => CustomVoiceStore.open(),
-      store => {
-        ownedSettings = store;
-        if (settingsStoreRef.current && settingsStoreRef.current !== store) settingsStoreRef.current.close();
-        settingsStoreRef.current = store;
-      },
-      store => {
-        ownedCustomVoices = store;
-        if (customVoiceStoreRef.current && customVoiceStoreRef.current !== store) customVoiceStoreRef.current.close();
-        customVoiceStoreRef.current = store;
-      },
-    );
+    const lease = appStorageOwnerRef.current!.acquire();
+    const opening = lease.promise;
+    let owned: AppStorageResources | undefined;
     void (async () => {
       try {
-        const opened = await bootstrap.promise;
-        if (!bootstrap.isCurrent()) return;
-        const stored = await opened.settings?.load();
-        if (!bootstrap.isCurrent()) return;
-        const storedCustomVoices = opened.customVoices ? await opened.customVoices.list() : [];
-        if (!bootstrap.isCurrent()) return;
+        const resources = await opening;
+        if (!lease.isActive()) return;
+        owned = resources;
+        settingsStoreRef.current = resources.settings;
+        customVoiceStoreRef.current = resources.customVoices;
+        const stored = await resources.settings.load();
+        if (!lease.isActive()) return;
+        const storedCustomVoices = await resources.customVoices.list();
+        if (!lease.isActive()) return;
         customVoicesRef.current = storedCustomVoices;
         setCustomVoices(storedCustomVoices);
         const pi = stored?.pi ?? DEFAULT_PI_SETTINGS;
@@ -1027,27 +1033,19 @@ export function App() {
       } catch {
         // Keep the in-memory defaults when local settings storage is unavailable.
       } finally {
-        if (bootstrap.isCurrent()) {
+        if (lease.isActive()) {
           resolveSettingsReadyRef.current?.();
           resolveSettingsReadyRef.current = undefined;
         }
       }
     })();
     return () => {
-      const currentSettings = settingsStoreRef.current;
-      const currentCustomVoices = customVoiceStoreRef.current;
-      if (currentSettings === ownedSettings) settingsStoreRef.current = undefined;
-      if (currentCustomVoices === ownedCustomVoices) customVoiceStoreRef.current = undefined;
-      const isCurrentGeneration = appStorageGenerationRef.current === generation;
-      bootstrap.close();
-      if (isCurrentGeneration && currentSettings && currentSettings !== ownedSettings) {
-        currentSettings.close();
-        if (settingsStoreRef.current === currentSettings) settingsStoreRef.current = undefined;
-      }
-      if (isCurrentGeneration && currentCustomVoices && currentCustomVoices !== ownedCustomVoices) {
-        currentCustomVoices.close();
-        if (customVoiceStoreRef.current === currentCustomVoices) customVoiceStoreRef.current = undefined;
-      }
+      const last = lease.release();
+      if (!last) return;
+      // A newer effect generation still owns shared handles when release()
+      // returns false. Only the last generation may clear these references.
+      if (!owned || settingsStoreRef.current === owned.settings) settingsStoreRef.current = undefined;
+      if (!owned || customVoiceStoreRef.current === owned.customVoices) customVoiceStoreRef.current = undefined;
     };
   }, [mergeCustomModels]);
 

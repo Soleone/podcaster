@@ -14,6 +14,13 @@ afterEach(async () => {
 const settings = () => ({ version: 1 as const, agentName: 'Ada', persona: 'You are a sharp skeptic.', voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 } });
 
 describe('SettingsStore', () => {
+  it('closes safely and idempotently', async () => {
+    dbName = 'settings-test-close';
+    const store = await SettingsStore.open(indexedDB, dbName);
+    expect(() => store.close()).not.toThrow();
+    expect(() => store.close()).not.toThrow();
+  });
+
   it('persists and reloads settings across store opens on the same database', async () => {
     dbName = 'settings-test-a';
     const store = await SettingsStore.open(indexedDB, dbName);
