@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, Clock, History, Mic2, Play, Radio } from 'lucide-react';
+import { ArrowRight, Clock, History, LoaderCircle, Mic2, Play, Plus, Radio } from 'lucide-react';
 import { Link } from 'react-router';
-import type { PiSettings, SessionPlanningRequest, TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
 import { Badge } from '../components/ui/badge';
 import { Button, buttonVariants } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -9,10 +8,8 @@ import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
 import { ExportPopover } from '../components/ExportPopover';
 import type { ExportOnProgress } from '../recording/splice';
-import { Readiness, type Snapshot } from '../readiness/Readiness';
 import { RecordingStore } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
-import type { PlanningViewState } from '../session/state';
 import { exportSessionRecording, loadSessionArchive, sessionDurationSeconds, type SessionSummary } from './session-archive';
 
 function formatWhen(iso: string): string {
@@ -33,19 +30,11 @@ function formatDuration(seconds: number): string {
 
 export interface SessionIndexProps {
   writer: StableTurnWriter;
-  sessionAvailable: boolean;
   liveSessionId: string | undefined;
   liveSessionPaused: boolean;
-  planningStatus?: PlanningViewState;
   elapsedSeconds: number;
-  onStart: (capability: string, reasoningMode: 'full' | 'transcript_only', planning?: SessionPlanningRequest) => void | Promise<void>;
-  onCancelPlanning?: () => void;
-  selectedModel: TtsModelSelection;
-  piSettings: PiSettings;
-  onCatalog: (catalog: VoiceCatalog) => void;
-  onModels: (models: TtsModelDescriptor[]) => void;
-  onCapability: (capability: string | undefined) => void;
-  onSnapshot: (snapshot: Snapshot) => void;
+  creatingDraft?: boolean;
+  onCreateDraft: () => void | Promise<void>;
   onContinueSession: (sessionId: string) => void;
 }
 
@@ -73,8 +62,12 @@ export function SessionIndex(props: SessionIndexProps) {
 
   const rows = summaries ?? [];
   return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
-    <header className="mb-5">
-      <h1 className="text-2xl font-semibold leading-tight tracking-tight">Your sessions</h1>
+    <header className="mb-5 flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 className="text-2xl font-semibold leading-tight tracking-tight">Your sessions</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Start with a draft. Services only matter when you go live.</p>
+      </div>
+      <Button className="min-h-11" onClick={() => void props.onCreateDraft()} disabled={props.creatingDraft}>{props.creatingDraft ? <><LoaderCircle className="animate-spin" aria-hidden="true" />Creating…</> : <><Plus aria-hidden="true" />New session</>}</Button>
     </header>
 
     {props.liveSessionId ? <Card aria-label={props.liveSessionPaused ? 'Paused session' : 'Active session'} className="mb-8">
@@ -89,15 +82,11 @@ export function SessionIndex(props: SessionIndexProps) {
       </CardContent>
     </Card> : null}
 
-    <section aria-label="Start a new session" className="mb-10">
-      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} selectedModel={props.selectedModel} piSettings={props.piSettings} {...(props.planningStatus ? { planningStatus: props.planningStatus } : {})} onStart={props.onStart} {...(props.onCancelPlanning ? { onCancelPlanning: props.onCancelPlanning } : {})} onCatalog={props.onCatalog} onModels={props.onModels} onCapability={props.onCapability} onSnapshot={props.onSnapshot} />
-    </section>
-
     <section aria-labelledby="session-list-title">
       <h2 id="session-list-title" className="mb-3 flex items-center gap-2 text-base font-medium leading-snug"><History className="size-4 text-muted-foreground" aria-hidden="true" />Past sessions</h2>
       {rows.length === 0 ? <Card>
         <CardContent className="flex items-center gap-2 text-sm text-muted-foreground">
-          {summaries === undefined ? <><Spinner />Loading sessions…</> : 'No sessions yet. Start one above and it will appear here.'}
+          {summaries === undefined ? <><Spinner />Loading sessions…</> : 'No sessions yet. Create one above and it will appear here.'}
         </CardContent>
       </Card> : null}
       {rows.length > 0 ? <ul className="flex list-none flex-col gap-3 p-0">
@@ -109,6 +98,7 @@ export function SessionIndex(props: SessionIndexProps) {
 
 function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (sessionId: string) => (onProgress?: ExportOnProgress) => Promise<Blob>; onContinue: () => void }) {
   const { session, preview, turnCount, recordingItemCount, recordingEnabled } = props.row;
+  const draft = session.state === 'draft';
   const stopped = session.state === 'stopped';
   const paused = session.state === 'paused';
   const recordingLabel = !recordingEnabled ? 'Recording off' : recordingItemCount === 0 ? 'No recording' : `${recordingItemCount} message${recordingItemCount === 1 ? '' : 's'} recorded`;
@@ -118,11 +108,11 @@ function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (s
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-2">
             <span className="font-medium tabular-nums">{shortSessionId(session.sessionId)}</span>
-            <Badge variant={props.live || (!stopped && !paused) ? 'default' : 'secondary'}>{props.live ? (paused ? 'Paused' : 'Active') : stopped ? 'Stopped' : paused ? 'Paused' : 'Active'}</Badge>
+            <Badge variant={props.live || (!stopped && !paused && !draft) ? 'default' : 'secondary'}>{props.live ? (paused ? 'Paused' : 'Active') : draft ? 'Not started' : stopped ? 'Ended' : paused ? 'Paused' : 'Active'}</Badge>
           </p>
           {preview ? <p className="mt-1 truncate text-sm">{preview}</p> : null}
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            <span>Started {formatWhen(session.startedAt)}</span>
+            <span>{draft ? 'Created' : 'Started'} {formatWhen(session.startedAt)}</span>
             <span aria-hidden="true">·</span>
             <span>{formatDuration(sessionDurationSeconds(session))}</span>
             <span aria-hidden="true">·</span>
@@ -133,6 +123,7 @@ function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (s
         </div>
         <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
           {props.live ? <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'secondary', size: 'sm' })}><Play data-icon="inline-start" aria-hidden="true" />Open</Link>
+            : draft ? <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'secondary', size: 'sm' })}><ArrowRight data-icon="inline-start" aria-hidden="true" />Open draft</Link>
             : stopped ? <>
               <Button variant="secondary" size="sm" onClick={props.onContinue}><Mic2 data-icon="inline-start" aria-hidden="true" />Continue</Button>
               <Link to={`/session/${session.sessionId}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><ArrowRight data-icon="inline-start" aria-hidden="true" />Open</Link>

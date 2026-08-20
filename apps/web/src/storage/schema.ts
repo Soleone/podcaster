@@ -1,4 +1,4 @@
-import type { CustomVoiceMetadata, SessionPlanningSnapshot, SessionSettingsSnapshot } from '@app/contracts/settings';
+import type { CustomVoiceMetadata, PlanningDepth, SessionPlanningSnapshot, SessionSettingsSnapshot } from '@app/contracts/settings';
 
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
 export const PODCASTER_DB_VERSION = 5;
@@ -13,18 +13,27 @@ export const STORES = {
   customVoices: 'customVoices',
 } as const;
 
+export interface SessionPreparationDraft {
+  enabled: boolean;
+  topic: string;
+  depth: PlanningDepth;
+}
+
 export interface StoredSession {
   sessionId: string;
   sessionSeed: string;
   personaDigest: string;
   /** Frozen TTS/persona settings used by the active session, when recorded. */
   settings?: SessionSettingsSnapshot;
+  /** Editable preparation choices while a session is still a draft. */
+  preparation?: SessionPreparationDraft;
   /** Frozen pre-live planning input and bounded notes, when preparation was requested. */
   planning?: SessionPlanningSnapshot;
+  /** Creation time for drafts and the historical start time for older rows. */
   startedAt: string;
   updatedAt: string;
   endedAt: string | null;
-  state: 'active' | 'paused' | 'stopped';
+  state: 'draft' | 'active' | 'paused' | 'stopped';
   /** Total foreground time accumulated before the current run, when available. */
   activeDurationMs?: number;
   /** Start of the current foreground run. Null while paused or ended. */

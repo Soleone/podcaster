@@ -23,6 +23,8 @@ export interface ServiceStatuses {
   pi: ServiceStatus;
 }
 
+export type SessionStartMode = 'full' | 'transcript_only';
+
 export interface ReadinessSnapshot {
   capabilities: Array<{ id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string }>;
   sidecar: string;
@@ -37,12 +39,35 @@ const initialStatus = (label: string): ServiceStatus => ({
   state: 'starting',
   label,
   detail: `${label} status has not been checked yet.`,
-  correctiveAction: 'Continue and check readiness to connect.',
+  correctiveAction: 'Review privacy terms to connect services.',
 });
 
 export const initialServiceStatuses: ServiceStatuses = {
   audio: initialStatus('Audio server'),
   pi: initialStatus('Pi service'),
+};
+
+export const fakeServiceStatuses: ServiceStatuses = {
+  audio: {
+    state: 'ready',
+    label: 'Audio server',
+    detail: 'Fake local audio services are ready.',
+    correctiveAction: 'No action needed.',
+    progress: 100,
+    checks: [
+      { label: 'Microphone', state: 'ready' },
+      { label: 'Speech detection', state: 'ready' },
+      { label: 'Voice engine', state: 'ready' },
+    ],
+  },
+  pi: {
+    state: 'ready',
+    label: 'Pi service',
+    detail: 'Fake Pi services are ready.',
+    correctiveAction: 'No action needed.',
+    progress: 100,
+    checks: [{ label: 'Reasoning backend', state: 'ready' }],
+  },
 };
 
 /** Converts the host's live session audio event into the global service shape. */
@@ -125,4 +150,12 @@ export function aggregateServiceState(statuses: ServiceStatuses): ServiceState {
   if (states.includes('rate_limited') || states.includes('degraded') || checks.some(check => check.state === 'needs_action')) return 'degraded';
   if (states.includes('starting') || checks.some(check => check.state === 'starting' || check.state === 'warming')) return 'starting';
   return 'ready';
+}
+
+export function sessionStartBlocker(statuses: ServiceStatuses, microphoneGranted: boolean, capability: string | undefined, mode: SessionStartMode = 'full'): string | undefined {
+  if (!capability) return 'Connect services from the app bar before starting.';
+  if (!microphoneGranted) return 'Enable the microphone from Services before starting.';
+  if (statuses.audio.state !== 'ready') return statuses.audio.detail || 'The local audio service is not ready yet.';
+  if (mode === 'full' && statuses.pi.state !== 'ready') return statuses.pi.detail || 'The reasoning service is not ready yet.';
+  return undefined;
 }

@@ -11,8 +11,6 @@ async function openSettings(page: import('@playwright/test').Page, origin: strin
     await route.fulfill({ json: snapshot });
   });
   await page.goto(origin);
-  await page.getByRole('button', { name: 'Continue and check readiness' }).click();
-  await page.getByRole('button', { name: 'Enable microphone' }).click();
   await page.getByRole('button', { name: /Open settings/ }).first().click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 }

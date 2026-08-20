@@ -90,7 +90,7 @@ export async function installFakeMicrophone(page: Page, options: FakeBrowserOpti
 export async function enterFakeSession(page: Page, origin: string, options: FakeBrowserOptions = {}): Promise<void> {
   await installFakeMicrophone(page, options);
   await page.goto(origin);
-  await page.getByRole('button', { name: 'Continue and check readiness' }).click();
+  await page.getByRole('button', { name: 'New session' }).click();
   await page.getByRole('button', { name: 'Enable microphone' }).click();
   await page.getByRole('button', { name: 'Start session' }).click();
   await page.waitForFunction(() => Boolean(window.__podcasterTest));

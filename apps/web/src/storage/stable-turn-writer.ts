@@ -1,6 +1,6 @@
 import type { HostEvent, PlaybackPausedEvent, PlaybackProgressEvent, PlaybackStoppedEvent } from '@app/contracts';
 import { MAX_PLANNING_NOTES_BYTES, MAX_PLANNING_TOPIC_BYTES, type PlanningDepth, type PlanningStatus } from '@app/contracts/settings';
-import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory, type StoredSession, type StoredTurn } from './schema';
+import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory, type SessionPreparationDraft, type StoredSession, type StoredTurn } from './schema';
 
 export type PersistedSessionEvent = HostEvent | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent;
 export type StableEvent = PersistedSessionEvent;
@@ -76,6 +76,13 @@ function planningSnapshot(value: unknown): StoredSession['planning'] | undefined
   };
 }
 
+function preparationDraft(value: SessionPreparationDraft): SessionPreparationDraft {
+  const topic = value.topic.trim();
+  if (new TextEncoder().encode(topic).length > MAX_PLANNING_TOPIC_BYTES) throw new DraftRejected('The preparation topic is too long.');
+  if (!['light', 'standard', 'deep'].includes(value.depth)) throw new DraftRejected('The preparation depth is invalid.');
+  return { enabled: Boolean(value.enabled), topic, depth: value.depth };
+}
+
 export class StableTurnWriter {
   constructor(private readonly db: IDBDatabase) {}
 
@@ -85,6 +92,42 @@ export class StableTurnWriter {
 
   close(): void { this.db.close(); }
 
+  async createDraftSession(input: { sessionId: string; sessionSeed: string; startedAt?: string; preparation?: SessionPreparationDraft }): Promise<StorageResult> {
+    return this.guard(async () => {
+      const transaction = this.db.transaction(STORES.sessions, 'readwrite');
+      const sessions = transaction.objectStore(STORES.sessions);
+      const existing = await requestResult(sessions.get(input.sessionId)) as StoredSession | undefined;
+      if (existing) { transaction.abort(); throw new DraftRejected('The session already exists.'); }
+      const now = input.startedAt ?? isoNow();
+      sessions.put({
+        sessionId: input.sessionId,
+        sessionSeed: input.sessionSeed,
+        personaDigest: '',
+        startedAt: now,
+        updatedAt: now,
+        endedAt: null,
+        state: 'draft',
+        activeDurationMs: 0,
+        runningSince: null,
+        pausedAt: null,
+        ...(input.preparation ? { preparation: preparationDraft(input.preparation) } : {}),
+        failures: [],
+      } satisfies StoredSession);
+      await transactionDone(transaction);
+    });
+  }
+
+  async updateDraftSession(sessionId: string, preparation: SessionPreparationDraft): Promise<StorageResult> {
+    return this.guard(async () => {
+      const transaction = this.db.transaction(STORES.sessions, 'readwrite');
+      const sessions = transaction.objectStore(STORES.sessions);
+      const session = await requestResult(sessions.get(sessionId)) as StoredSession | undefined;
+      if (!session || session.state !== 'draft') { transaction.abort(); throw new DraftRejected('Only a not-started session can be edited.'); }
+      sessions.put({ ...session, preparation: preparationDraft(preparation), updatedAt: isoNow() });
+      await transactionDone(transaction);
+    });
+  }
+
   async beginSession(input: { sessionId: string; sessionSeed: string; personaDigest: string; settings?: StoredSession['settings']; planning?: StoredSession['planning']; startedAt?: string }): Promise<StorageResult> {
     return this.guard(async () => {
       const transaction = this.db.transaction([STORES.sessions, STORES.meta], 'readwrite');
@@ -93,17 +136,25 @@ export class StableTurnWriter {
       const now = input.startedAt ?? isoNow();
       const nowMs = timestampMs(now) ?? Date.now();
       const activeDurationMs = existing ? sessionActiveDurationMs(existing, nowMs) : 0;
+      const draftPlanning = existing?.state === 'draft'
+        && existing.planning
+        && input.planning
+        && existing.planning.topic === input.planning.topic
+        && existing.planning.depth === input.planning.depth
+        ? existing.planning
+        : input.planning;
       if (!existing) {
         sessions.put({ sessionId: input.sessionId, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, startedAt: now, updatedAt: now, endedAt: null, state: 'active', activeDurationMs, runningSince: now, pausedAt: null, ...(input.settings ? { settings: input.settings } : {}), ...(input.planning ? { planning: input.planning } : {}), failures: [] } satisfies StoredSession);
       } else {
-        const preserveIdentity = existing.state !== 'stopped';
+        const preserveRuntimeIdentity = existing.state === 'active' || existing.state === 'paused';
+        const preserveSeed = existing.state !== 'stopped';
         sessions.put({
           ...existing,
-          sessionSeed: preserveIdentity ? existing.sessionSeed : input.sessionSeed,
-          personaDigest: preserveIdentity ? existing.personaDigest : input.personaDigest,
+          sessionSeed: preserveSeed ? existing.sessionSeed : input.sessionSeed,
+          personaDigest: preserveRuntimeIdentity ? existing.personaDigest : input.personaDigest,
           state: 'active', endedAt: null, updatedAt: now, activeDurationMs, runningSince: now, pausedAt: null,
-          ...(preserveIdentity ? ((existing.settings ?? input.settings) ? { settings: existing.settings ?? input.settings } : {}) : (input.settings ? { settings: input.settings } : {})),
-          ...(preserveIdentity ? ((existing.planning ?? input.planning) ? { planning: existing.planning ?? input.planning } : {}) : (input.planning ? { planning: input.planning } : {})),
+          ...(preserveRuntimeIdentity ? ((existing.settings ?? input.settings) ? { settings: existing.settings ?? input.settings } : {}) : (input.settings ? { settings: input.settings } : {})),
+          ...(preserveRuntimeIdentity ? ((existing.planning ?? input.planning) ? { planning: existing.planning ?? input.planning } : {}) : { planning: draftPlanning }),
         });
       }
       transaction.objectStore(STORES.meta).put({ key: 'activeSession', sessionId: input.sessionId });
@@ -142,6 +193,7 @@ export class StableTurnWriter {
       const store = transaction.objectStore(STORES.sessions);
       const session = await requestResult(store.get(sessionId)) as StoredSession | undefined;
       if (!session) { transaction.abort(); throw new PauseRejected('The session could not be found.'); }
+      if (session.state === 'draft') { transaction.abort(); throw new PauseRejected('The session has not started yet.'); }
       if (session.state === 'stopped') { transaction.abort(); throw new PauseRejected('The session has already ended.'); }
       const atMs = timestampMs(pausedAt) ?? Date.now();
         const turns = await requestResult(transaction.objectStore(STORES.turns).index('sessionId').getAll(sessionId)) as StoredTurn[];
@@ -372,7 +424,7 @@ export class StableTurnWriter {
   private async guard(operation: () => Promise<void>): Promise<StorageResult> {
     try { await operation(); return { ok: true }; }
     catch (error) {
-      if (error instanceof PauseRejected) return { ok: false, degradedReason: error.message };
+      if (error instanceof PauseRejected || error instanceof DraftRejected) return { ok: false, degradedReason: error.message };
       if (error instanceof DuplicateEvent) return { ok: true, duplicate: true };
       const name = error instanceof DOMException ? error.name : 'StorageError';
       return { ok: false, degradedReason: name === 'QuotaExceededError' ? 'Local storage is full. Earlier stable turns are preserved.' : 'Stable local storage is unavailable. Earlier saved work was not changed.' };
@@ -381,3 +433,4 @@ export class StableTurnWriter {
 }
 class DuplicateEvent extends Error {}
 class PauseRejected extends Error {}
+class DraftRejected extends Error {}

@@ -17,6 +17,18 @@ describe('StableTurnWriter', () => {
     reopened.close();
   });
 
+  it('creates an editable draft without claiming an active session', async () => {
+    const { writer } = await open();
+    await writer.createDraftSession({ sessionId: 'draft', sessionSeed: 'seed-draft' });
+    expect(await writer.recoverActiveSession()).toBeUndefined();
+    expect(await writer.getSession('draft')).toMatchObject({ state: 'draft', activeDurationMs: 0, runningSince: null });
+    await writer.updateDraftSession('draft', { enabled: true, topic: 'Local radio', depth: 'deep' });
+    expect(await writer.getSession('draft')).toMatchObject({ state: 'draft', preparation: { enabled: true, topic: 'Local radio', depth: 'deep' } });
+    await writer.beginSession({ sessionId: 'draft', sessionSeed: 'ignored', personaDigest: 'live-digest' });
+    expect(await writer.getSession('draft')).toMatchObject({ state: 'active', sessionSeed: 'seed-draft', personaDigest: 'live-digest' });
+    writer.close();
+  });
+
   it('persists the frozen session voice/backend snapshot for active-session recovery', async () => {
     const { name, writer } = await open();
     const settings = { version: 1 as const, persona: 'persona', voice: { backendId: 'qwen3', modelId: 'qwen-model', catalogId: 'qwen-catalog', voiceId: 'Ryan', speedModifier: 1 } };

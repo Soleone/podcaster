@@ -13,6 +13,11 @@ export interface ServiceStatusPopoverProps {
   onRefresh?: (() => void) | undefined;
   refreshing?: boolean | undefined;
   piSettings?: PiSettings | undefined;
+  privacyAcknowledged?: boolean | undefined;
+  connected?: boolean | undefined;
+  onConnect?: (() => void) | undefined;
+  microphoneGranted?: boolean | undefined;
+  onEnableMicrophone?: (() => void | Promise<void>) | undefined;
 }
 
 const stateTone: Record<ServiceState, { dot: string; icon: typeof Check; badge: 'default' | 'secondary' | 'destructive'; animate?: boolean }> = {
@@ -51,7 +56,7 @@ function ServiceChecks({ checks }: { checks: readonly ServiceCheck[] }) {
   </ul>;
 }
 
-function ServiceCard({ status, icon: Icon, piSettings }: { status: ServiceStatus; icon: typeof Server; piSettings?: PiSettings | undefined }) {
+function ServiceCard({ status, icon: Icon, piSettings, microphoneGranted, onEnableMicrophone }: { status: ServiceStatus; icon: typeof Server; piSettings?: PiSettings | undefined; microphoneGranted?: boolean | undefined; onEnableMicrophone?: (() => void | Promise<void>) | undefined }) {
   const tone = stateTone[status.state];
   const StateIcon = tone.icon;
   const detail = status.label === 'Pi service' && status.state === 'ready' && piSettings
@@ -70,14 +75,16 @@ function ServiceCard({ status, icon: Icon, piSettings }: { status: ServiceStatus
       {status.progress !== undefined && status.state !== 'ready' ? <Progress value={status.progress} aria-label={`${status.label} readiness progress`} className="gap-0 [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-indicator]]:bg-primary" /> : null}
       {status.checks?.length ? <ServiceChecks checks={status.checks} /> : null}
     </CardHeader>
-    {status.state !== 'ready' ? <CardFooter className="border-t px-3.5 pt-2.5 pb-3.5 text-xs leading-relaxed">
-      <span><span className="font-medium text-foreground">Next:</span> {status.correctiveAction}</span>
+    {status.state !== 'ready' || (status.label === 'Audio server' && microphoneGranted === false) ? <CardFooter className="flex flex-col items-start gap-2 border-t px-3.5 pt-2.5 pb-3.5 text-xs leading-relaxed">
+      <span><span className="font-medium text-foreground">Next:</span> {status.label === 'Audio server' && microphoneGranted === false ? 'Enable microphone permission before starting a voice session.' : status.correctiveAction}</span>
+      {status.label === 'Audio server' && microphoneGranted === false && onEnableMicrophone ? <Button variant="outline" size="sm" onClick={() => void onEnableMicrophone()}>Enable microphone</Button> : null}
     </CardFooter> : null}
   </Card>;
 }
 
-export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false, piSettings }: ServiceStatusPopoverProps) {
+export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false, piSettings, privacyAcknowledged = true, connected = true, onConnect, microphoneGranted, onEnableMicrophone }: ServiceStatusPopoverProps) {
   const aggregate = aggregateServiceState(statuses);
+  const needsConnection = !privacyAcknowledged || !connected;
   const label = `Service status: audio ${serviceStateLabel(statuses.audio.state)}, Pi ${serviceStateLabel(statuses.pi.state)}`;
   return <Popover>
     <PopoverTrigger render={
@@ -107,10 +114,14 @@ export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false, 
         </div>
       </PopoverHeader>
       <div className="flex flex-col gap-2">
-        <ServiceCard status={statuses.audio} icon={Server} />
+        {needsConnection ? <div className="rounded-lg border bg-muted/20 p-3 text-sm leading-relaxed">
+          <p>{privacyAcknowledged ? 'Services need to reconnect before a live session can start.' : 'Connect services to check local audio and Pi. You can create and edit a session before connecting.'}</p>
+          {onConnect ? <Button className="mt-3 w-full" size="sm" onClick={onConnect}>{privacyAcknowledged ? 'Reconnect services' : 'Review privacy & connect'}</Button> : null}
+        </div> : null}
+        <ServiceCard status={statuses.audio} icon={Server} microphoneGranted={microphoneGranted} onEnableMicrophone={onEnableMicrophone} />
         <ServiceCard status={statuses.pi} icon={Sparkles} piSettings={piSettings} />
       </div>
-      <p className="border-t pt-3 text-xs text-muted-foreground">Session start stays disabled until required services are ready.</p>
+      <p className="border-t pt-3 text-xs text-muted-foreground">A session stays Not started until its required services are ready and live capture begins.</p>
     </PopoverContent>
   </Popover>;
 }

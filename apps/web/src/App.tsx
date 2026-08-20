@@ -29,16 +29,24 @@ import { createResourceOwner } from './storage/resource-lifecycle';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { AppHeader } from './components/AppHeader';
+import { PrivacyDialog, DISCLOSURE_KEY, DISCLOSURE_VERSION } from './components/PrivacyDialog';
 import { bootstrapCapability } from './sessions/session-archive';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
 import { Spinner } from './components/ui/spinner';
 import { persistTheme, readTheme } from './theme';
-import { initialServiceStatuses, serviceStatusFromAudioEngine, serviceStatusesFromSnapshot, type ReadinessSnapshot, type ServiceStatuses } from './services/service-status';
+import { fakeServiceStatuses, initialServiceStatuses, serviceStatusFromAudioEngine, serviceStatusesFromSnapshot, type ReadinessSnapshot, type ServiceStatuses } from './services/service-status';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 
+function disclosureWasAcknowledged(): boolean {
+  if (fakeServices) return true;
+  try { return localStorage.getItem(DISCLOSURE_KEY) === DISCLOSURE_VERSION; }
+  catch { return false; }
+}
+
 const SessionIndex = lazy(() => import('./sessions/SessionIndex').then(({ SessionIndex: component }) => ({ default: component })));
 const SessionScreen = lazy(() => import('./session/SessionScreen').then(({ SessionScreen: component }) => ({ default: component })));
+const DraftSession = lazy(() => import('./sessions/DraftSession').then(({ DraftSession: component }) => ({ default: component })));
 const StoppedSession = lazy(() => import('./sessions/StoppedSession').then(({ StoppedSession: component }) => ({ default: component })));
 const SettingsDialog = lazy(() => import('./settings/SettingsDialog').then(({ SettingsDialog: component }) => ({ default: component })));
 type SessionStartSettings = SessionSettingsSnapshot;
@@ -116,7 +124,9 @@ export function App() {
   const navigate = useNavigate();
   const [view, setView] = useState<SessionViewState>();
   const [sessionId, setSessionId] = useState<string>();
-  const [capability, setCapability] = useState<string>();
+  const [capability, setCapability] = useState<string | undefined>(() => fakeServices ? 'fake' : undefined);
+  const capabilityRef = useRef<string | undefined>(undefined);
+  capabilityRef.current = capability;
   const [elapsed, setElapsed] = useState(0);
   const [sessionPaused, setSessionPaused] = useState(false);
   const sessionPausedRef = useRef(false);
@@ -170,7 +180,13 @@ export function App() {
   const settingsModelRef = useRef(settingsModel);
   settingsModelRef.current = settingsModel;
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [serviceStatuses, setServiceStatuses] = useState<ServiceStatuses>(initialServiceStatuses);
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(disclosureWasAcknowledged);
+  const [privacyDialogOpen, setPrivacyDialogOpen] = useState(false);
+  const [microphoneGranted, setMicrophoneGranted] = useState(false);
+  const [servicesConnecting, setServicesConnecting] = useState(false);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [serviceStatuses, setServiceStatuses] = useState<ServiceStatuses>(() => fakeServices ? fakeServiceStatuses : initialServiceStatuses);
+  const [latestReadinessSnapshot, setLatestReadinessSnapshot] = useState<ReadinessSnapshot>();
   const [refreshingServiceStatus, setRefreshingServiceStatus] = useState(false);
   const [darkMode, setDarkMode] = useState(() => readTheme() === 'dark');
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -179,29 +195,71 @@ export function App() {
 
   const applyReadinessSnapshot = useCallback((snapshot: ReadinessSnapshot) => {
     setServiceStatuses(serviceStatusesFromSnapshot(snapshot));
+    setLatestReadinessSnapshot(snapshot);
   }, []);
 
-  const refreshServiceStatus = useCallback(async () => {
-    if (!capability) return;
+  const refreshServiceStatus = useCallback(async (requestedCapability?: string, microphoneOverride?: boolean) => {
+    const activeCapability = requestedCapability ?? capabilityRef.current;
+    if (!activeCapability) return;
     setRefreshingServiceStatus(true);
     try {
-      const microphoneGranted = await navigator.permissions?.query({ name: 'microphone' as PermissionName }).then(permission => permission.state === 'granted').catch(() => false) ?? false;
+      const granted = microphoneOverride ?? await navigator.permissions?.query({ name: 'microphone' as PermissionName }).then(permission => permission.state === 'granted').catch(() => false) ?? false;
+      setMicrophoneGranted(granted);
       const response = await fetch('/api/readiness', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'content-type': 'application/json', 'x-podcaster-capability': capability },
-        body: JSON.stringify({ microphoneGranted, ttsModel: settingsModelRef.current.selectedModel, pi: settingsModelRef.current.pi }),
+        headers: { 'content-type': 'application/json', 'x-podcaster-capability': activeCapability },
+        body: JSON.stringify({ microphoneGranted: granted, ttsModel: settingsModelRef.current.selectedModel, pi: settingsModelRef.current.pi }),
       });
       if (!response.ok) throw new Error('service status request failed');
-      const snapshot = await response.json() as ReadinessSnapshot;
-      applyReadinessSnapshot(snapshot);
+      applyReadinessSnapshot(await response.json() as ReadinessSnapshot);
     } catch {
       // Keep the last known state visible. A single dropped poll should not
       // make healthy services flash unavailable.
     } finally {
       setRefreshingServiceStatus(false);
     }
-  }, [applyReadinessSnapshot, capability]);
+  }, [applyReadinessSnapshot]);
+
+  const serviceConnectionRef = useRef<Promise<void> | undefined>(undefined);
+  const connectServices = useCallback(async () => {
+    if (fakeServices) return;
+    if (serviceConnectionRef.current) return serviceConnectionRef.current;
+    let work!: Promise<void>;
+    work = (async () => {
+      setServicesConnecting(true);
+      try {
+        const nextCapability = await bootstrapCapability();
+        capabilityRef.current = nextCapability;
+        setCapability(nextCapability);
+        setPrivacyAcknowledged(true);
+        try { localStorage.setItem(DISCLOSURE_KEY, DISCLOSURE_VERSION); } catch { /* service connection still works for this session */ }
+        await refreshServiceStatus(nextCapability);
+      } catch (cause) {
+        capabilityRef.current = undefined;
+        setCapability(undefined);
+        throw cause instanceof Error ? cause : new Error('Services could not be connected.');
+      } finally {
+        setServicesConnecting(false);
+        if (serviceConnectionRef.current === work) serviceConnectionRef.current = undefined;
+      }
+    })();
+    serviceConnectionRef.current = work;
+    return work;
+  }, [refreshServiceStatus]);
+
+  const enableMicrophone = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser cannot request microphone access.');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
+    for (const track of stream.getTracks()) track.stop();
+    setMicrophoneGranted(true);
+    await refreshServiceStatus(undefined, true);
+  }, [refreshServiceStatus]);
+
+  useEffect(() => {
+    if (fakeServices || !privacyAcknowledged || capability) return;
+    void connectServices().catch(() => undefined);
+  }, [capability, connectServices, privacyAcknowledged]);
 
   useEffect(() => {
     if (!capability) return;
@@ -293,9 +351,8 @@ export function App() {
       setView(next);
       setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(next.audioEngine) }));
     });
-    let activated = false;
-    if (planning) { await activate(); activated = true; }
     if (planning) await transport.emit(createFakeHostEvent(id, controller.snapshot().epoch, 'session.state', { phase: 'ready', personaDigest: '0'.repeat(64), planning: { status: 'ready', topic: planning.topic, depth: planning.depth, progress: 100, detail: 'Fake services are ready to go live.' } }));
+    await activate();
     statsRef.current.captureStarts++;
     const capture = await new BrowserCapture({ onAudio: capture => recorder.onCaptureAudio(capture) }).start({
       send: frame => transport.sendCapture(frame),
@@ -310,8 +367,8 @@ export function App() {
         statsRef.current.captureRunning = false;
       },
     };
-    if (!activated) await activate();
     if (planning) await transport.emit(createFakeHostEvent(id, controller.snapshot().epoch, 'session.state', { phase: 'listening', personaDigest: '0'.repeat(64) }));
+    capabilityRef.current = cap;
     setCapability(cap);
     setSessionId(id);
     stoppedRef.current = false;
@@ -407,12 +464,11 @@ export function App() {
       captureRecoveryRef.current = recovery;
       return recovery;
     });
-    // Planning must be durable before its first lifecycle event arrives. The
-    // no-planning branch keeps the previous activation point and transport
-    // sequence unchanged.
-    let activated = false;
-    if (planning) { await activate(); activated = true; }
+    // The draft remains Not started while optional preparation runs. The
+    // durable active state is committed only after the host has finished its
+    // preparation handshake and is ready to open live capture.
     await transport.startSession({ sessionSeed: seed, reasoningMode, ...(planning ? { planning } : {}), settings });
+    await activate();
     const random = new Uint32Array(1); crypto.getRandomValues(random);
     const streamId = random[0] ?? 0;
     captureStreamIdRef.current = streamId;
@@ -432,7 +488,6 @@ export function App() {
       });
       await transport.startAudio(streamId);
       audioReady = true;
-      if (!activated) await activate();
       for (const frame of pendingCapture.splice(0)) transport.sendCapture(frame);
     } catch (error) {
       try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
@@ -442,6 +497,7 @@ export function App() {
       await controller.pause();
       throw error;
     }
+    capabilityRef.current = cap;
     setCapability(cap);
     setSessionId(id);
     stoppedRef.current = false;
@@ -587,7 +643,7 @@ export function App() {
       voiceProfiles: { ...activeSettings.voiceProfiles },
     };
     const storedSettings = existing?.settings && isValidSessionSettingsSnapshot(existing.settings) ? existing.settings : undefined;
-    const planning = preserveIdentity ? planningForResume(existing?.planning) : requestedPlanning;
+    const planning = existing?.state === 'draft' ? requestedPlanning : preserveIdentity ? planningForResume(existing?.planning) : requestedPlanning;
     const settings: SessionStartSettings = preserveIdentity && storedSettings
       ? storedSettings
       : { version: 1, persona: current.persona, voice: { ...current.voice }, pi: { ...current.pi } };
@@ -650,20 +706,40 @@ export function App() {
       fakeTransportRef.current = undefined;
       unsubscribeRef.current?.();
       unsubscribeRef.current = undefined;
-      const rolledBack = await opened.pauseSession(id);
+      const afterFailure = await opened.getSession(id);
+      const rolledBack = afterFailure?.state === 'active' ? await opened.pauseSession(id) : { ok: true };
       if (!rolledBack.ok) {
-        activityLog.append({ level: 'error', source: 'app', message: 'resume failed and could not checkpoint the session', ...(rolledBack.degradedReason ? { detail: rolledBack.degradedReason } : {}) });
-        setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'Resume failed and the session could not be safely paused. Retry resume or return to your sessions.', announcement: 'Session needs attention' } : previous);
+        activityLog.append({ level: 'error', source: 'app', message: 'session start failed and could not checkpoint the session', ...(rolledBack.degradedReason ? { detail: rolledBack.degradedReason } : {}) });
+        setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'The session could not be safely returned to its previous state. Retry or return to your sessions.', announcement: 'Session needs attention' } : previous);
       }
-      if (cap !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': cap } }).catch(() => undefined);
+      if (cap !== 'fake-recovered' && cap !== 'fake') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': cap } }).catch(() => undefined);
+      capabilityRef.current = undefined;
       setCapability(undefined);
-      sessionPausedRef.current = true;
-      setSessionPaused(true);
-      try { configureSessionClock(await opened.getSession(id)); } catch { /* retain the last known timer if storage is still unavailable */ }
+      const rolledBackSession = await opened.getSession(id);
+      const pausedAfterFailure = rolledBackSession?.state === 'paused';
+      sessionPausedRef.current = pausedAfterFailure;
+      setSessionPaused(pausedAfterFailure);
+      try { configureSessionClock(rolledBackSession); } catch { /* retain the last known timer if storage is still unavailable */ }
       throw error;
     }
-    navigate(`/session/${id}`);
+    const sessionPath = `/session/${id}`;
+    navigate(sessionPath, { replace: locationRef.current.pathname === sessionPath });
   }
+
+  const createDraft = useCallback(async () => {
+    if (creatingDraft) return;
+    const opened = writerRef.current;
+    if (!opened) throw new Error('Local session storage is not ready yet.');
+    setCreatingDraft(true);
+    try {
+      const id = uuidV7();
+      const created = await opened.createDraftSession({ sessionId: id, sessionSeed: uuidV7() });
+      if (!created.ok) throw new Error(created.degradedReason ?? 'The new session could not be saved.');
+      navigate(`/session/${id}`);
+    } finally {
+      setCreatingDraft(false);
+    }
+  }, [creatingDraft, navigate]);
 
   const releaseRecorder = useCallback(async (targetSession?: string) => {
     recordingUnsubscribeRef.current?.();
@@ -714,7 +790,7 @@ export function App() {
       ended = ended && persisted.ok;
       if (!persisted.ok) activityLog.append({ level: 'error', source: 'app', message: 'session end could not be saved', ...(persisted.degradedReason ? { detail: persisted.degradedReason } : {}) });
     }
-    if (ended && capability && capability !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
+    if (ended && capability && capability !== 'fake-recovered' && capability !== 'fake') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
     controllerRef.current = undefined;
     transportRef.current = undefined;
     fakeTransportRef.current = undefined;
@@ -722,6 +798,7 @@ export function App() {
     unsubscribeRef.current = undefined;
     if (ended) {
       configureSessionClock(await opened?.getSession(targetSession));
+      capabilityRef.current = undefined;
       setCapability(undefined);
       setSessionId(undefined);
       setView(undefined);
@@ -810,10 +887,11 @@ export function App() {
         try { await transportRef.current?.stopAudio(streamId); } catch { /* controller already disconnected the transport */ }
       }
       await releaseRecorder(targetSession);
-      if (capability && capability !== 'fake-recovered') {
+      if (capability && capability !== 'fake-recovered' && capability !== 'fake') {
         const released = await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).then(response => response.ok).catch(() => false);
         if (!released) activityLog.append({ level: 'warn', source: 'app', message: 'session paused locally; host cleanup is pending' });
       }
+      capabilityRef.current = undefined;
       setCapability(undefined);
       unsubscribeRef.current?.();
       unsubscribeRef.current = undefined;
@@ -942,6 +1020,13 @@ export function App() {
     reconcileCurrentSettings(merged, voiceCatalogRef.current);
     void syncStoredCustomVoices(rawTtsModelsRef.current);
   }, [mergeCustomModels, reconcileCurrentSettings, syncStoredCustomVoices]);
+
+  useEffect(() => {
+    const snapshot = latestReadinessSnapshot;
+    if (!snapshot) return;
+    if (snapshot.ttsModels) onModels(snapshot.ttsModels);
+    if (snapshot.voiceCatalog) onCatalog(snapshot.voiceCatalog);
+  }, [latestReadinessSnapshot, onCatalog, onModels]);
 
   const ensureCustomVoiceEnrolled = useCallback(async (voiceId: string) => {
     if (fakeServices || !capability || !voiceId.startsWith(CUSTOM_VOICE_PREFIX)) return;
@@ -1104,10 +1189,15 @@ export function App() {
     return true;
   }, [fetchRecordingSummaries]);
 
+  const openServicesConnection = useCallback(() => {
+    if (privacyAcknowledged) { void connectServices().catch(() => undefined); return; }
+    setPrivacyDialogOpen(true);
+  }, [connectServices, privacyAcknowledged]);
   const settingsDialog = settingsOpen ? <Suspense fallback={null}>
     <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} model={settingsModel} catalog={voiceCatalogRef.current} models={ttsModels} saving={settingsSaving} saveError={settingsSaveError} onSave={saveSettings} onPreviewVoice={previewVoice} customVoices={customVoices} onEnrollCustomVoice={enrollVoice} onDeleteCustomVoice={deleteVoice} onRenameCustomVoice={renameVoice} />
   </Suspense> : null;
-  const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} serviceStatuses={serviceStatuses} piSettings={settingsModel.pi} onRefreshServiceStatus={() => void refreshServiceStatus()} refreshingServiceStatus={refreshingServiceStatus} />;
+  const privacyDialog = <PrivacyDialog open={privacyDialogOpen} onOpenChange={setPrivacyDialogOpen} onConfirm={connectServices} />;
+  const appHeader = <AppHeader darkMode={darkMode} onToggleDarkMode={toggleDarkMode} onOpenSettings={() => setSettingsOpen(true)} serviceStatuses={serviceStatuses} piSettings={settingsModel.pi} onRefreshServiceStatus={() => void refreshServiceStatus()} refreshingServiceStatus={refreshingServiceStatus || servicesConnecting} privacyAcknowledged={privacyAcknowledged} capability={capability} onConnectServices={openServicesConnection} microphoneGranted={microphoneGranted} onEnableMicrophone={enableMicrophone} />;
 
   if (!writer) return <main className="mx-auto my-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading…</main>;
 
@@ -1118,19 +1208,11 @@ export function App() {
         <Suspense fallback={<RouteLoading />}>
           <SessionIndex
             writer={writer}
-            sessionAvailable={fakeServices}
-            selectedModel={settingsModel.selectedModel}
-            piSettings={settingsModel.pi}
             liveSessionId={sessionId}
             liveSessionPaused={sessionPaused}
-            {...(view?.planning ? { planningStatus: view.planning } : {})}
             elapsedSeconds={elapsed}
-            onStart={(capability, mode, planning) => start(capability, mode, undefined, planning)}
-            onCancelPlanning={() => { try { transportRef.current?.cancelPlanning(); } catch { /* planning may already have reached its terminal state */ } }}
-            onCatalog={onCatalog}
-            onModels={onModels}
-            onCapability={setCapability}
-            onSnapshot={applyReadinessSnapshot}
+            creatingDraft={creatingDraft}
+            onCreateDraft={() => void createDraft()}
             onContinueSession={id => void continueSession(id)}
           />
         </Suspense>
@@ -1155,11 +1237,23 @@ export function App() {
           buildExport={buildExport}
           onContinueSession={(id: string) => void continueSession(id)}
           onBack={() => navigate('/')}
+          serviceStatuses={serviceStatuses}
+          capability={capability}
+          microphoneGranted={microphoneGranted}
+          privacyAcknowledged={privacyAcknowledged}
+          onConnectServices={openServicesConnection}
+          onEnableMicrophone={enableMicrophone}
+          onStartDraft={(id, planning) => {
+            const activeCapability = capabilityRef.current;
+            if (!activeCapability) return Promise.reject(new Error('Connect services before starting this session.'));
+            return start(activeCapability, 'full', id, planning);
+          }}
         />
       } />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     {settingsDialog}
+    {privacyDialog}
   </>;
 }
 
@@ -1203,6 +1297,13 @@ interface SessionRouteProps {
   buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>;
   onContinueSession: (sessionId: string) => void;
   onBack: () => void;
+  serviceStatuses: ServiceStatuses;
+  capability: string | undefined;
+  microphoneGranted: boolean;
+  privacyAcknowledged: boolean;
+  onConnectServices: () => void;
+  onEnableMicrophone: () => void | Promise<void>;
+  onStartDraft: (sessionId: string, planning?: SessionPlanningRequest) => Promise<void>;
 }
 
 function SessionRoute(props: SessionRouteProps) {
@@ -1246,12 +1347,19 @@ function SessionRoute(props: SessionRouteProps) {
   if (props.resuming) return <main className="mx-auto mt-5 mb-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Resuming session…</main>;
   if (!routeSessionId) return null;
   return <Suspense fallback={<RouteLoading label="Loading session…" />}>
-    <StoppedSession
+    <DraftSession
       writer={props.writer}
       sessionId={routeSessionId}
       agentName={props.agentName}
-      onContinue={() => props.onContinueSession(routeSessionId)}
+      serviceStatuses={props.serviceStatuses}
+      capability={props.capability}
+      microphoneGranted={props.microphoneGranted}
+      privacyAcknowledged={props.privacyAcknowledged}
+      onConnectServices={props.onConnectServices}
+      onEnableMicrophone={props.onEnableMicrophone}
+      onStart={planning => props.onStartDraft(routeSessionId, planning)}
       onBack={props.onBack}
+      onContinue={() => props.onContinueSession(routeSessionId)}
     />
   </Suspense>;
 }

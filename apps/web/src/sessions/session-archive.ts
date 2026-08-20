@@ -72,7 +72,7 @@ export async function exportSessionRecording(sessionId: string, writer: StableTu
  * their stored playback disposition (completed, interrupted, paused) so the
  * transcript survives both read-only inspection and a later resume.
  */
-export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string, mode: 'stopped' | 'paused' | 'active' = 'stopped'): Promise<SessionViewState> {
+export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string, mode: 'draft' | 'stopped' | 'paused' | 'active' = 'stopped'): Promise<SessionViewState> {
   const [turns, session] = await Promise.all([writer.getTurns(sessionId), writer.getSession(sessionId)]);
   const paused = mode === 'paused';
   const planning = session?.planning;
@@ -80,7 +80,7 @@ export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessio
     ...initialSessionState,
     planning: planning ? { status: planning.status, progress: planning.progress ?? (planning.status === 'ready' ? 100 : 0), ...(planning.topic ? { topic: planning.topic } : {}), ...(planning.depth ? { depth: planning.depth } : {}), ...(planning.detail ? { detail: planning.detail } : {}), ...(planning.notes ? { notes: planning.notes } : {}) } : initialSessionState.planning,
     dominant: mode === 'active' ? 'listening' : paused ? 'paused' : 'idle',
-    announcement: mode === 'active' ? 'Listening' : paused ? 'Session paused' : 'Session stopped',
+    announcement: mode === 'active' ? 'Listening' : paused ? 'Session paused' : mode === 'draft' ? 'Not started' : 'Session stopped',
     playbackNotice: paused ? 'Any assistant response in progress was stopped and will not resume automatically.' : '',
     stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
     conversationItems: conversationFromStoredTurns(turns),

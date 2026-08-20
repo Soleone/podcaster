@@ -77,8 +77,6 @@ function silentWav(): Buffer {
 
 async function openSettings(page: Page, origin: string): Promise<void> {
   await page.goto(origin);
-  await page.getByRole('button', { name: 'Continue and check readiness' }).click();
-  await page.getByRole('button', { name: 'Enable microphone' }).click();
   await page.getByRole('button', { name: /Open settings/ }).first().click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
   await page.getByRole('tab', { name: 'Voice' }).click();
@@ -136,8 +134,6 @@ test('a stored custom voice is appended only to Qwen and survives backend switch
   await installFakeMicrophone(page);
   await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
   await page.goto(origin);
-  await page.getByRole('button', { name: 'Continue and check readiness' }).click();
-  await page.getByRole('button', { name: 'Enable microphone' }).click();
   await page.evaluate(async () => {
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.open('podcaster-local-v1', 5);
