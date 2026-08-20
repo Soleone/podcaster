@@ -12,7 +12,7 @@ import type { ReadinessSnapshot } from '../services/service-status';
 type Capability = ReadinessSnapshot['capabilities'][number];
 export type Snapshot = ReadinessSnapshot;
 
-type ReadinessProps = { sessionAvailable: boolean; selectedModel?: TtsModelSelection; piSettings: PiSettings; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string) => void; onSnapshot?: (snapshot: Snapshot) => void; className?: string };
+type ReadinessProps = { sessionAvailable: boolean; selectedModel?: TtsModelSelection; piSettings: PiSettings; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => Promise<void>; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string | undefined) => void; onSnapshot?: (snapshot: Snapshot) => void; className?: string };
 
 const DISCLOSURE_KEY = 'podcaster.disclosure';
 const DISCLOSURE_VERSION = 'voice-cloud-boundary-v1';
@@ -154,7 +154,16 @@ export function Readiness(props: ReadinessProps) {
     try {
       await props.onStart(capability, reasoningMode);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Session could not be started.');
+      const detail = cause instanceof Error ? cause.message : 'Session could not be started.';
+      // App.start tears down the failed host session, which also invalidates
+      // the capability used for this attempt. Do not leave that dead token in
+      // this component: the next click would otherwise fail at WebSocket auth
+      // instead of retrying the actual session startup.
+      setCapability(undefined);
+      props.onCapability?.(undefined);
+      setError(detail);
+      await checkReadiness(false);
+      setError(detail);
     } finally {
       setStarting(false);
     }

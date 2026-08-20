@@ -36,12 +36,12 @@ export interface SessionIndexProps {
   liveSessionId: string | undefined;
   liveSessionPaused: boolean;
   elapsedSeconds: number;
-  onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void;
+  onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => Promise<void>;
   selectedModel: TtsModelSelection;
   piSettings: PiSettings;
   onCatalog: (catalog: VoiceCatalog) => void;
   onModels: (models: TtsModelDescriptor[]) => void;
-  onCapability: (capability: string) => void;
+  onCapability: (capability: string | undefined) => void;
   onSnapshot: (snapshot: Snapshot) => void;
   onContinueSession: (sessionId: string) => void;
 }
