@@ -194,7 +194,7 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
 describe('browser conversation routing', () => {
   it('reattaches a live conversation after a transient browser disconnect', async () => {
     const sidecar = await fakeAudio();
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -221,7 +221,7 @@ describe('browser conversation routing', () => {
 
   it('completes fake Pi through streaming TTS and authoritative browser terminal accounting', async () => {
     const sidecar = await fakeAudio({ tts: true });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -264,7 +264,7 @@ describe('browser conversation routing', () => {
       },
       async shutdown() {},
     };
-    const app = await buildApp({ sidecar, pi, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -306,7 +306,7 @@ describe('browser conversation routing', () => {
     const persona = '---\nversion: 1\nname: Invite-only companion\ninvitation_only: true\n---\nWait for a direct invitation.';
     const app = await buildApp({
       sidecar,
-      pi: responsePi,
+      createProbeClient: () => responsePi,
       createResponseClient: append => { personaAppends.push(append); return responsePi; },
       createResearchClient: () => responsePi,
       createClassifierClient: () => responsePi,
@@ -334,7 +334,7 @@ describe('browser conversation routing', () => {
 
   it('degrades on persistence failure, permits bounded retry, and rejects acknowledgement after Stop', async () => {
     const sidecar = await fakeAudio();
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -361,7 +361,7 @@ describe('browser conversation routing', () => {
 
   it('rejects a persistence acknowledgement made stale by an interrupting utterance', async () => {
     const sidecar = await fakeAudio({ multiUtterance: true });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -399,7 +399,7 @@ describe('browser conversation routing', () => {
     let resolveClosed!: () => void;
     const sidecarClosed = new Promise<void>(resolve => { resolveClosed = resolve; });
     const sidecar = await fakeAudio({ onStreamClose: resolveClosed });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, sessionDisconnectGraceMs: 0, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, sessionDisconnectGraceMs: 0, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -427,7 +427,7 @@ describe('browser conversation routing', () => {
       async shutdown() {},
     };
     const sidecar = await fakeAudio({ progressiveTts: true, multiUtterance: true });
-    const app = await buildApp({ sidecar, pi: controlledPi, multiPartEnabled: false, createResponseClient: () => controlledPi, createResearchClient: () => controlledPi, createClassifierClient: () => controlledPi });
+    const app = await buildApp({ sidecar, createProbeClient: () => controlledPi, multiPartEnabled: false, createResponseClient: () => controlledPi, createResearchClient: () => controlledPi, createClassifierClient: () => controlledPi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -482,7 +482,7 @@ describe('browser conversation routing', () => {
 
   it('holds a stable final until the exact durable acknowledgement', async () => {
     const sidecar = await fakeAudio();
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -521,7 +521,7 @@ describe('browser conversation routing', () => {
 
   it('keeps the browser socket open when the sidecar fails mid-turn (capture frames dropped after failure)', async () => {
     const sidecar = await fakeAudio({ failMidTurn: true });
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -552,7 +552,7 @@ describe('browser conversation routing', () => {
       },
       async shutdown() {},
     };
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -602,7 +602,7 @@ describe('browser conversation routing', () => {
       },
       async shutdown() {},
     };
-    const app = await buildApp({ sidecar, pi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);

@@ -9,6 +9,12 @@ import type { SidecarProcess } from '../../src/sidecar/process.js';
 
 const voiceCatalog = Object.freeze({ catalogId: 'catalog-1', backendId: 'kokoro', modelId: 'kokoro-82m-onnx', runtimeConfigId: 'rc', revision: 'rev-1', defaultVoiceId: 'af_heart', voices: [{ id: 'af_heart', label: 'af_heart' }, { id: 'af_bella', label: 'Bella' }] });
 const qwenCatalog = Object.freeze({ catalogId: 'qwen-catalog', backendId: 'qwen3', modelId: 'qwen-model', runtimeConfigId: 'qwen-runtime', revision: 'qwen-rev', defaultVoiceId: 'Ryan', speed: { supported: false, min: 1, max: 1, default: 1 }, voices: [{ id: 'Ryan', label: 'Ryan' }, { id: 'Serena', label: 'Serena' }] });
+const PI_SETTINGS = { model: 'openai-codex/gpt-5.6-sol', thinkingLevel: 'medium' as const };
+const defaultProbeClient: PiClient = {
+  async probe() { return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' }; },
+  async *request() {},
+  async shutdown() {},
+};
 
 interface CapturedPreview { catalogId: string; voiceId: string; phrases: string[] }
 
@@ -55,11 +61,11 @@ const apps: FastifyInstance[] = [];
 const closed: Array<Promise<void>> = [];
 afterEach(async () => { for (const app of apps.splice(0)) await app.close(); for (const close of closed.splice(0)) await close; });
 
-async function makeApp(voicePreview: PreviewStub, ready: boolean = true, qwen: boolean = false, options: { pi?: PiClient; now?: () => number; sidecarFailHealthRequests?: number[]; sidecarDelayHealthRequests?: Record<number, number> } = {}): Promise<{ app: FastifyInstance; origin: string; sidecarHealthRequests: () => number }> {
-  const { sidecarFailHealthRequests, sidecarDelayHealthRequests, ...buildOptions } = options;
+async function makeApp(voicePreview: PreviewStub, ready: boolean = true, qwen: boolean = false, options: { probeClient?: PiClient; now?: () => number; sidecarFailHealthRequests?: number[]; sidecarDelayHealthRequests?: Record<number, number> } = {}): Promise<{ app: FastifyInstance; origin: string; sidecarHealthRequests: () => number }> {
+  const { probeClient, sidecarFailHealthRequests, sidecarDelayHealthRequests, ...buildOptions } = options;
   const { sidecar, healthRequests, close } = await fakeSidecarHealth({ ready, qwen, failHealthRequests: sidecarFailHealthRequests, delayHealthRequests: sidecarDelayHealthRequests });
   closed.push(close);
-  const app = await buildApp({ sidecar, voicePreview, ...buildOptions });
+  const app = await buildApp({ sidecar, voicePreview, createProbeClient: () => probeClient ?? defaultProbeClient, ...buildOptions });
   apps.push(app);
   const origin = await app.listen({ host: '127.0.0.1', port: 0 });
   app.setCanonicalOrigin(origin);
@@ -78,6 +84,25 @@ async function preview(origin: string, auth: { capability: string; cookie: strin
 }
 
 describe('POST /api/readiness', () => {
+  it('rejects invalid Pi settings without falling back to another probe', async () => {
+    let factoryCalls = 0;
+    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, false, {
+      probeClient: {
+        ...defaultProbeClient,
+        async probe() { factoryCalls++; return defaultProbeClient.probe(); },
+      },
+    });
+    const auth = await bootstrap(origin);
+    const response = await fetch(`${origin}/api/readiness`, {
+      method: 'POST',
+      headers: { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' },
+      body: JSON.stringify({ microphoneGranted: true, pi: { model: '', thinkingLevel: 'medium' } }),
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: 'invalid_pi_settings' });
+    expect(factoryCalls).toBe(0);
+  });
+
   it('keeps the last audio snapshot across one transient health failure but expires it when failures continue', async () => {
     let clock = 1_000;
     const { origin } = await makeApp(
@@ -89,7 +114,7 @@ describe('POST /api/readiness', () => {
     const auth = await bootstrap(origin);
     const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
     const read = async () => {
-      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS }) });
       return response.json() as Promise<{ services: { audio: { state: string } } }>;
     };
 
@@ -109,7 +134,7 @@ describe('POST /api/readiness', () => {
     const auth = await bootstrap(origin);
     const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
     const read = async () => {
-      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS }) });
       return response.json() as Promise<{ services: { audio: { state: string } } }>;
     };
 
@@ -132,10 +157,10 @@ describe('POST /api/readiness', () => {
       async *request() {},
       async shutdown() {},
     };
-    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, false, { pi, now: () => clock });
+    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, false, { probeClient: pi, now: () => clock });
     const auth = await bootstrap(origin);
     const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
-    const read = () => fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+    const read = () => fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS }) });
 
     await read();
     const ready = await read();
@@ -160,11 +185,11 @@ describe('POST /api/readiness', () => {
       async *request() {},
       async shutdown() {},
     };
-    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, false, { pi, now: () => clock });
+    const { origin } = await makeApp(async input => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }), true, false, { probeClient: pi, now: () => clock });
     const auth = await bootstrap(origin);
     const headers = { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' };
     const read = async () => {
-      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true }) });
+      const response = await fetch(`${origin}/api/readiness`, { method: 'POST', headers, body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS }) });
       return response.json() as Promise<{ services: { pi: { state: string } } }>;
     };
 
@@ -186,7 +211,7 @@ describe('POST /api/readiness', () => {
     const response = await fetch(`${origin}/api/readiness`, {
       method: 'POST',
       headers: { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' },
-      body: JSON.stringify({ microphoneGranted: true, ttsModel: { backendId: 'qwen3', modelId: 'qwen-model' } }),
+      body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS, ttsModel: { backendId: 'qwen3', modelId: 'qwen-model' } }),
     });
     expect(response.status).toBe(200);
     const body = await response.json() as { capabilities: Array<{ id: string; state: string; reason: string }>; sidecar: string; activeTtsModel?: { backendId: string; modelId: string } };
@@ -203,7 +228,7 @@ describe('POST /api/readiness', () => {
     const response = await fetch(`${origin}/api/readiness`, {
       method: 'POST',
       headers: { ...auth.headers, cookie: auth.cookie, 'x-podcaster-capability': auth.capability, 'content-type': 'application/json' },
-      body: JSON.stringify({ microphoneGranted: true, ttsModel: { backendId: 'qwen3', modelId: 'qwen-model' } }),
+      body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS, ttsModel: { backendId: 'qwen3', modelId: 'qwen-model' } }),
     });
     const body = await response.json() as { capabilities: Array<{ id: string; state: string }>; voiceCatalog?: { backendId: string } };
     expect(body.voiceCatalog?.backendId).toBe('kokoro');

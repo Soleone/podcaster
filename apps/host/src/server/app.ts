@@ -6,26 +6,22 @@ import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
 import type { SidecarProcess, SidecarRuntimeSnapshot } from '../sidecar/process.js';
 import { sidecarSnapshot } from '../sidecar/process.js';
-import { createPiClient, type PiClient, type PiReadiness } from '../pi/PiClient.js';
+import { createPiClient, type PiClient } from '../pi/PiClient.js';
 import { createPiResearchClient, type PiResearchClient } from '../pi/PiResearchClient.js';
+import { PI_CHECKING, PiReadinessProbe } from '../pi/readiness-probe.js';
 import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifier.js';
 import { BrowserSession } from './BrowserSession.js';
 import { encodeWav } from '../sidecar/wav.js';
 import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
 import { enrollCustomVoiceInSidecar, removeCustomVoiceFromSidecar } from '../sidecar/voice-enrollment.js';
-import { CUSTOM_VOICE_SAMPLE_RATE, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_CUSTOM_VOICE_ENROLLMENT_BODY, MAX_CUSTOM_VOICE_MS, MAX_VOICE_TONE_PROMPT_BYTES, MIN_CUSTOM_VOICE_MS, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, QWEN_VOICE_LANGUAGES, customVoiceId, isValidCustomVoiceId, normalizeCustomVoiceName, randomVoicePreviewPhrases, type PiSettings, type QwenVoiceLanguage, type TtsModelSelection } from '@app/contracts';
+import { CUSTOM_VOICE_SAMPLE_RATE, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, isValidPiSettings, MAX_CUSTOM_VOICE_ENROLLMENT_BODY, MAX_CUSTOM_VOICE_MS, MAX_VOICE_TONE_PROMPT_BYTES, MIN_CUSTOM_VOICE_MS, MAX_VOICE_SPEED_MODIFIER, MIN_VOICE_SPEED_MODIFIER, QWEN_VOICE_LANGUAGES, customVoiceId, isValidCustomVoiceId, normalizeCustomVoiceName, randomVoicePreviewPhrases, type PiSettings, type QwenVoiceLanguage, type TtsModelSelection } from '@app/contracts';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_DISCONNECT_GRACE_MS = 30_000;
 const SOCKET_HEARTBEAT_MS = 15_000;
 const COOKIE = 'podcaster_session';
 interface Session { capability: string; expiresAt: number; wsAuthenticated: boolean; sockets: Set<WebSocket>; activeSocket: WebSocket | undefined; lastPongAt: number; messageChain: Promise<void>; conversation: BrowserSession | undefined; stopPromise: Promise<void> | undefined; disconnectTimer: NodeJS.Timeout | undefined; }
-const unavailablePi: PiClient = {
-  async probe() { return { status: 'unavailable', detail: 'Pi is unavailable.', correctiveAction: 'Retry, or use transcript-only mode.' }; },
-  async *request() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'Pi is unavailable.', correctiveAction: 'Continue transcript-only.' }; },
-  async shutdown() {},
-};
-export interface BuildOptions { sidecar: SidecarProcess; pi?: PiClient; createResponseClient?: (personaAppend: string, piSettings?: PiSettings) => PiClient; createResearchClient?: (personaAppend: string, piSettings?: PiSettings) => PiResearchClient; createClassifierClient?: (piSettings?: PiSettings) => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; sessionDisconnectGraceMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; language?: QwenVoiceLanguage; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
+export interface BuildOptions { sidecar: SidecarProcess; createProbeClient?: (piSettings: PiSettings) => PiClient; createResponseClient?: (personaAppend: string, piSettings?: PiSettings) => PiClient; createResearchClient?: (personaAppend: string, piSettings?: PiSettings) => PiResearchClient; createClassifierClient?: (piSettings?: PiSettings) => PiClient; multiPartEnabled?: boolean; webRoot?: string; now?: () => number; sessionTtlMs?: number; sessionDisconnectGraceMs?: number; voicePreview?: (input: { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; language?: QwenVoiceLanguage; backendId?: string; modelId?: string; phrases: string[] }, signal: AbortSignal) => Promise<{ pcm16: Int16Array; sampleRate: number }>; }
 function sameSecret(a: string, b: string): boolean { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 function cookieValue(header: string | undefined): string | undefined { return header?.split(';').map(x => x.trim()).find(x => x.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1); }
 function parseTtsModel(value: unknown): TtsModelSelection | undefined {
@@ -42,11 +38,13 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   const app = Fastify({ bodyLimit: 16 * 1024, logger: false, forceCloseConnections: true });
   // Per-session client factories: session-owned Pi children are created lazily at
   // validated session.start, each frozen with the session's persona append.
+  const createProbeClient = options.createProbeClient ?? ((piSettings: PiSettings) => createPiClient({ model: piSettings.model, thinkingLevel: piSettings.thinkingLevel }));
   const createResponseClient = options.createResponseClient ?? ((personaAppend: string, piSettings?: PiSettings) => createPiClient({ personaAppend, ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}) }));
   const createResearchClient = options.createResearchClient ?? ((personaAppend: string, piSettings?: PiSettings) => createPiResearchClient({ personaAppend, ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}) }));
   const createClassifierClient = options.createClassifierClient ?? ((piSettings?: PiSettings) => createPiClient({ systemPrompt: CLASSIFIER_SYSTEM_PROMPT, ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}) }));
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
+  const piProbe = new PiReadinessProbe({ createClient: createProbeClient, now });
   const sessionTtlMs = options.sessionTtlMs ?? SESSION_TTL_MS;
   const sessionDisconnectGraceMs = options.sessionDisconnectGraceMs ?? SESSION_DISCONNECT_GRACE_MS;
   // Keep previews bounded per host process. The sidecar accepts a dedicated
@@ -102,38 +100,10 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     return value ?? (sidecarValue && now() - sidecarAt < SIDECAR_SNAPSHOT_GRACE_MS ? sidecarValue : undefined);
   };
 
-  // A Pi probe is a full provider round trip. Never make the browser wait for
-  // it: share one in-flight probe, return a checking snapshot immediately, and
-  // reuse fresh results. Once ready, require the same downgrade twice so one
-  // malformed provider reply or transient network failure cannot flap the UI.
-  const PROBE_TTL_MS = 10_000;
-  const PI_DOWNGRADE_CONFIRMATIONS = 2;
-  const piChecking: PiReadiness = { status: 'unavailable', detail: 'Pi is still starting.', correctiveAction: 'You can start now; the first response may take a little longer.' };
-  let probeValue: PiReadiness | undefined;
-  let probeAt = 0;
-  let probePromise: Promise<PiReadiness> | undefined;
-  let downgradeCount = 0;
-  const acceptProbeValue = (value: PiReadiness): PiReadiness => {
-    probeAt = now();
-    if (probeValue?.status === 'ready' && value.status !== 'ready') {
-      downgradeCount++;
-      if (downgradeCount < PI_DOWNGRADE_CONFIRMATIONS) return probeValue;
-    }
-    probeValue = value;
-    downgradeCount = 0;
-    return value;
-  };
-  const probePi = (): Promise<PiReadiness> => {
-    if (probeValue && now() - probeAt < PROBE_TTL_MS) return Promise.resolve(probeValue);
-    if (!probePromise) {
-      probePromise = (options.pi ?? unavailablePi).probe()
-        .catch(() => unavailablePi.probe())
-        .then(acceptProbeValue)
-        .finally(() => { probePromise = undefined; });
-    }
-    // Keep the last confirmed state visible while the next probe is in flight.
-    return Promise.resolve(probeValue ?? piChecking);
-  };
+  // A Pi probe is a full provider round trip. The settings-keyed owner keeps
+  // it asynchronous to browser polling while isolating cache and lifecycle
+  // state for the selected model/thinking tuple.
+  const probePi = (piSettings: PiSettings) => piProbe.probe(piSettings);
   let origin = '';
   app.decorate('setCanonicalOrigin', (value: string) => { origin = value; });
   app.addHook('onRequest', async (request, reply) => {
@@ -162,7 +132,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       });
     },
   });
-  app.addHook('onClose', async () => { await Promise.allSettled([...shutdowns]); });
+  app.addHook('onClose', async () => { await Promise.allSettled([...shutdowns, piProbe.shutdown()]); });
   const authenticate = (request: FastifyRequest): Session | undefined => {
     const id = cookieValue(request.headers.cookie); const capability = request.headers['x-podcaster-capability'];
     if (!id || typeof capability !== 'string') return;
@@ -175,9 +145,11 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     // The browser owns microphone permission; the server cannot observe it, so the
     // readiness screen reports the client's granted state instead of always showing
     // a perpetual needs-action warning for voice input.
-    const body = (request.body ?? {}) as { microphoneGranted?: unknown; ttsModel?: unknown; selectedModel?: unknown };
+    const body = (request.body && typeof request.body === 'object' && !Array.isArray(request.body) ? request.body : {}) as { microphoneGranted?: unknown; ttsModel?: unknown; selectedModel?: unknown; pi?: unknown };
+    if (!isValidPiSettings(body.pi)) return reply.code(422).send({ error: 'invalid_pi_settings' });
+    const piSettings: PiSettings = { model: body.pi.model, thinkingLevel: body.pi.thinkingLevel };
     const microphoneGranted = body.microphoneGranted === true;
-    const [snapshot, pi] = await Promise.all([snapshotSidecar(), probePi()]);
+    const [snapshot, pi] = await Promise.all([snapshotSidecar(), probePi(piSettings)]);
     const requestedModel = parseTtsModel(body.ttsModel ?? body.selectedModel) ?? snapshot?.activeTtsModel ?? DEFAULT_TTS_MODEL;
     const descriptor = snapshot?.ttsModels?.find(model => sameTtsModel(model, requestedModel));
     const selectedCatalog = descriptor?.status === 'ready'
@@ -205,7 +177,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
           : activeReady
             ? { state: 'ready' as const, label: 'Audio server', detail: `${activeLabel} and local speech recognition are ready.`, correctiveAction: 'No action needed.' }
             : { state: 'degraded' as const, label: 'Audio server', detail: voiceOutputReason, correctiveAction: 'Choose an available voice backend in settings, then retry.' };
-    const piService = pi === piChecking
+    const piService = pi === PI_CHECKING
       ? { state: 'starting' as const, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction }
       : { state: pi.status, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction };
     return {
@@ -220,7 +192,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
       ],
       sidecar: activeReady ? 'ready' : snapshot?.status === 'starting' ? 'starting' : 'unavailable',
-      reasoning: pi === piChecking ? 'checking' : pi.status,
+      reasoning: pi === PI_CHECKING ? 'checking' : pi.status,
       services: { audio: audioService, pi: piService },
       ...(responseCatalog ? { voiceCatalog: responseCatalog } : {}),
       ...(snapshot?.ttsModels ? { ttsModels: snapshot.ttsModels } : {}),

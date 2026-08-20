@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, Clock, History, Mic2, Play, Radio } from 'lucide-react';
 import { Link } from 'react-router';
-import type { TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
+import type { PiSettings, TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
 import { Badge } from '../components/ui/badge';
 import { Button, buttonVariants } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -38,6 +38,7 @@ export interface SessionIndexProps {
   elapsedSeconds: number;
   onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void;
   selectedModel: TtsModelSelection;
+  piSettings: PiSettings;
   onCatalog: (catalog: VoiceCatalog) => void;
   onModels: (models: TtsModelDescriptor[]) => void;
   onCapability: (capability: string) => void;
@@ -86,7 +87,7 @@ export function SessionIndex(props: SessionIndexProps) {
     </Card> : null}
 
     <section aria-label="Start a new session" className="mb-10">
-      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} selectedModel={props.selectedModel} onStart={props.onStart} onCatalog={props.onCatalog} onModels={props.onModels} onCapability={props.onCapability} onSnapshot={props.onSnapshot} />
+      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} selectedModel={props.selectedModel} piSettings={props.piSettings} onStart={props.onStart} onCatalog={props.onCatalog} onModels={props.onModels} onCapability={props.onCapability} onSnapshot={props.onSnapshot} />
     </section>
 
     <section aria-labelledby="session-list-title">

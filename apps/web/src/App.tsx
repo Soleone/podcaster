@@ -152,7 +152,7 @@ export function App() {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json', 'x-podcaster-capability': capability },
-        body: JSON.stringify({ microphoneGranted, ttsModel: settingsModelRef.current.selectedModel }),
+        body: JSON.stringify({ microphoneGranted, ttsModel: settingsModelRef.current.selectedModel, pi: settingsModelRef.current.pi }),
       });
       if (!response.ok) throw new Error('service status request failed');
       const snapshot = await response.json() as ReadinessSnapshot;
@@ -1088,6 +1088,7 @@ export function App() {
             writer={writer}
             sessionAvailable={fakeServices}
             selectedModel={settingsModel.selectedModel}
+            piSettings={settingsModel.pi}
             liveSessionId={sessionId}
             liveSessionPaused={sessionPaused}
             elapsedSeconds={elapsed}

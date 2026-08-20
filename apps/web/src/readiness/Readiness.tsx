@@ -6,13 +6,13 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
-import type { TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
+import type { PiSettings, TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
 import type { ReadinessSnapshot } from '../services/service-status';
 
 type Capability = ReadinessSnapshot['capabilities'][number];
 export type Snapshot = ReadinessSnapshot;
 
-type ReadinessProps = { sessionAvailable: boolean; selectedModel?: TtsModelSelection; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string) => void; onSnapshot?: (snapshot: Snapshot) => void; className?: string };
+type ReadinessProps = { sessionAvailable: boolean; selectedModel?: TtsModelSelection; piSettings: PiSettings; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => void; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string) => void; onSnapshot?: (snapshot: Snapshot) => void; className?: string };
 
 const DISCLOSURE_KEY = 'podcaster.disclosure';
 const DISCLOSURE_VERSION = 'voice-cloud-boundary-v1';
@@ -52,18 +52,20 @@ export function Readiness(props: ReadinessProps) {
     // re-report microphone-state or active-backend changes so the status copy
     // and start gate track the model selected in Voice settings.
     const modelKey = props.selectedModel ? `${props.selectedModel.backendId}:${props.selectedModel.modelId}` : '';
-    if (snapshot?.sidecar === 'ready' && lastReportedMic.current === microphoneReady && lastReportedModel.current === modelKey) return;
+    const piKey = `${props.piSettings.model}:${props.piSettings.thinkingLevel}`;
+    const readinessKey = `${modelKey}|${piKey}`;
+    if (snapshot?.sidecar === 'ready' && lastReportedMic.current === microphoneReady && lastReportedModel.current === readinessKey) return;
     let cancelled = false;
     const refresh = async () => {
       try {
         const response = await fetch('/api/readiness', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'content-type': 'application/json', 'x-podcaster-capability': capability },
-          body: JSON.stringify({ microphoneGranted: microphoneReady, ...(props.selectedModel ? { ttsModel: props.selectedModel } : {}) }),
+          body: JSON.stringify({ microphoneGranted: microphoneReady, ...(props.selectedModel ? { ttsModel: props.selectedModel } : {}), pi: props.piSettings }),
         });
         if (response.ok && !cancelled) {
           lastReportedMic.current = microphoneReady;
-          lastReportedModel.current = modelKey;
+          lastReportedModel.current = readinessKey;
           const next = await response.json() as Snapshot;
           setSnapshot(next);
           props.onSnapshot?.(next);
@@ -78,7 +80,7 @@ export function Readiness(props: ReadinessProps) {
     const timer = setInterval(() => void refresh(), 2_000);
     void refresh();
     return () => { cancelled = true; clearInterval(timer); };
-  }, [acknowledged, capability, snapshot?.sidecar, microphoneReady, props.selectedModel?.backendId, props.selectedModel?.modelId]);
+  }, [acknowledged, capability, snapshot?.sidecar, microphoneReady, props.selectedModel?.backendId, props.selectedModel?.modelId, props.piSettings.model, props.piSettings.thinkingLevel]);
 
   async function microphoneGrantedStatus(): Promise<boolean> {
     try {
@@ -96,7 +98,7 @@ export function Readiness(props: ReadinessProps) {
       if (!bootstrap.ok) throw new Error('Secure bootstrap failed. Retry from this page.');
       const boot = await bootstrap.json() as { capability: string };
       const granted = await microphoneGrantedStatus();
-      const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-podcaster-capability': boot.capability }, body: JSON.stringify({ microphoneGranted: granted, ...(props.selectedModel ? { ttsModel: props.selectedModel } : {}) }) });
+      const response = await fetch('/api/readiness', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-podcaster-capability': boot.capability }, body: JSON.stringify({ microphoneGranted: granted, ...(props.selectedModel ? { ttsModel: props.selectedModel } : {}), pi: props.piSettings }) });
       if (!response.ok) throw new Error('Readiness check failed. Retry from this page.');
       setCapability(boot.capability);
       props.onCapability?.(boot.capability);
@@ -114,7 +116,7 @@ export function Readiness(props: ReadinessProps) {
       }
       if (granted) setMicrophoneReady(true);
       lastReportedMic.current = granted;
-      lastReportedModel.current = props.selectedModel ? `${props.selectedModel.backendId}:${props.selectedModel.modelId}` : '';
+      lastReportedModel.current = `${props.selectedModel ? `${props.selectedModel.backendId}:${props.selectedModel.modelId}` : ''}|${props.piSettings.model}:${props.piSettings.thinkingLevel}`;
     } catch (cause) {
       // If a returning user's silent refresh fails, restore the explicit retry
       // surface instead of leaving them on an unusable status card.

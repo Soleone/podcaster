@@ -63,7 +63,7 @@ async function build(pi: PiClient): Promise<SessionHarness> {
   const research: TrackingResearch[] = [];
   const classifier: TrackingPi[] = [];
   const app = await buildApp({
-    sidecar, pi,
+    sidecar, createProbeClient: () => pi,
     createResponseClient: (append, piSettings) => { const client = new TrackingPi(append, piSettings); response.push(client); return client; },
     createResearchClient: (append, piSettings) => { const client = new TrackingResearch(append, piSettings); research.push(client); return client; },
     createClassifierClient: piSettings => { const client = new TrackingPi('', piSettings); classifier.push(client); return client; },
