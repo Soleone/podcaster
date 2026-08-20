@@ -19,8 +19,8 @@ const TURN = '018f1f32-7ac0-7def-8abc-0123456789ab';
 const RESPONSE = '018f1f32-7ac1-7def-8abc-0123456789ab';
 const PLAYBACK = '018f1f32-7ac2-7def-8abc-0123456789ab';
 
-function event(type: string, payload: Record<string, unknown>): StableEvent {
-  return { eventId: '018f1f32-7abd-7def-8abc-0123456789ab', sessionId: SESSION, epoch: 0, monotonicMs: 1, type, payload };
+function event<T extends StableEvent['type']>(type: T, payload: Record<string, unknown>): StableEvent {
+  return { protocolVersion: 1, eventId: '018f1f32-7abd-7def-8abc-0123456789ab', sessionId: SESSION, epoch: 0, monotonicMs: 1, type, payload } as StableEvent;
 }
 function captureFrame(sequence: number) {
   return { streamId: 7, sequence, sampleOffset: sequence * 320, pcm16: new Int16Array(320).fill(1000) };

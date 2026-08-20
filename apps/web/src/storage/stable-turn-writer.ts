@@ -1,13 +1,8 @@
+import type { HostEvent, PlaybackPausedEvent, PlaybackProgressEvent, PlaybackStoppedEvent } from '@app/contracts';
 import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory, type StoredSession, type StoredTurn } from './schema';
 
-export interface StableEvent {
-  eventId: string;
-  sessionId: string;
-  epoch: number;
-  monotonicMs: number;
-  type: string;
-  payload: Record<string, unknown>;
-}
+export type PersistedSessionEvent = HostEvent | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent;
+export type StableEvent = PersistedSessionEvent;
 export interface StorageResult { ok: boolean; duplicate?: boolean; degradedReason?: string }
 export interface PlaybackPauseCheckpoint {
   responseId: string;
@@ -187,14 +182,14 @@ export class StableTurnWriter {
       const turns = transaction.objectStore(STORES.turns);
       const at = isoNow();
       let turn: StoredTurn | undefined;
-      const turnId = stringValue(event.payload.turnId);
+      const turnId = 'turnId' in event.payload ? stringValue(event.payload.turnId) : undefined;
       if (turnId) turn = (await requestResult(turns.get(turnKey(event.sessionId, turnId))) as StoredTurn | undefined) ?? blankTurn(event.sessionId, turnId, at, event.monotonicMs);
-      const responseId = stringValue(event.payload.responseId);
+      const responseId = 'responseId' in event.payload ? stringValue(event.payload.responseId) : undefined;
       if (!turn && responseId) {
         const matches = await requestResult(turns.index('responseId').getAll(responseId)) as StoredTurn[];
         turn = matches.find(candidate => candidate.sessionId === event.sessionId);
       }
-      const playbackId = stringValue(event.payload.playbackId);
+      const playbackId = 'playbackId' in event.payload ? stringValue(event.payload.playbackId) : undefined;
       const playbackEpoch = event.type === 'playback.progress'
         ? numberValue(event.payload.outputEpoch) ?? event.epoch
         : event.type === 'playback.stopped'
@@ -290,7 +285,7 @@ export class StableTurnWriter {
         turn.interrupted = true;
         turn.continuationState = 'discarded';
       } else if (event.type === 'failure') {
-        const code = stringValue(event.payload.code) ?? 'unknown_failure';
+        const code = event.payload.code;
         if (turn) { if (!turn.failures.includes(code)) turn.failures.push(code); }
         else {
           const sessions = transaction.objectStore(STORES.sessions);

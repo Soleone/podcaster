@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { composePersonaAppend, CONTRACT_VALIDATORS, decodeBinaryAudioFrame, isValidSessionSettingsSnapshot, normalizePiSettings, normalizeVoicePreference, type PiSettings, type SessionSettingsSnapshot } from '@app/contracts';
+import { composePersonaAppend, CONTRACT_VALIDATORS, decodeBinaryAudioFrame, isValidSessionSettingsSnapshot, normalizePiSettings, normalizeVoicePreference, type BrowserCommand, type HostEvent, type PiSettings } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
 import type { PiResearchClient } from '../pi/PiResearchClient.js';
-import { SessionOrchestrator, type SessionEvent } from '../session/SessionOrchestrator.js';
+import { SessionOrchestrator } from '../session/SessionOrchestrator.js';
 import { PiInterruptionIntentClassifier } from '../session/InterruptionIntentClassifier.js';
 import { AudioClient, type AudioEngineStatusSnapshot, type SttFinal, type SttPartial, type VadEndEvent, type VadStartEvent } from '../sidecar/AudioClient.js';
 import type { SidecarProcess } from '../sidecar/process.js';
@@ -28,8 +28,19 @@ function rawBytes(raw: RawData): Uint8Array {
   return new Uint8Array(raw);
 }
 const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
-interface PendingFinal { event: SessionEvent; turnId: string; text: string; epoch: number; failed: boolean }
+interface PendingFinal { event: HostEvent; turnId: string; text: string; epoch: number; failed: boolean }
 interface CompletedPersistenceAck { turnId: string; epoch: number }
+type BrowserCommandType = BrowserCommand["type"];
+type BrowserCommandFor<T extends BrowserCommandType> = BrowserCommand extends infer Command
+  ? Command extends { type: infer Type }
+    ? T extends Type ? Command : never
+    : never
+  : never;
+type BrowserCommandPayload<T extends BrowserCommandType> = BrowserCommand extends infer Command
+  ? Command extends { type: infer Type; payload: infer Payload }
+    ? T extends Type ? Payload : never
+    : never
+  : never;
 
 function uuidV7(): string {
   const bytes = randomBytes(16);
@@ -40,8 +51,12 @@ function uuidV7(): string {
   const hex = bytes.toString('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-function event(sessionId: string, epoch: number, type: string, payload: Record<string, unknown>): SessionEvent {
-  return { protocolVersion: 1, sessionId, epoch, eventId: uuidV7(), type, monotonicMs: Math.max(0, performance.now()), payload };
+function event<T extends HostEvent["type"]>(sessionId: string, epoch: number, type: T, payload: HostEvent extends infer Host
+  ? Host extends { type: infer EventType; payload: infer Payload }
+    ? T extends EventType ? Payload : never
+    : never
+  : never): HostEvent {
+  return { protocolVersion: 1, sessionId, epoch, eventId: uuidV7(), type, monotonicMs: Math.max(0, performance.now()), payload } as HostEvent;
 }
 
 export class BrowserSession {
@@ -113,7 +128,7 @@ export class BrowserSession {
     let value: unknown;
     try { value = JSON.parse(raw.toString()); } catch { return this.protocolError('invalid_json'); }
     if (!CONTRACT_VALIDATORS.BrowserCommand(value)) return this.protocolError('invalid_command');
-    const command = value as { sessionId: string; epoch: number; type: string; payload: Record<string, unknown> };
+    const command = value as BrowserCommand;
     if (this.sessionId && command.sessionId !== this.sessionId) return this.protocolError('session_mismatch');
     if (command.type === 'session.start') return this.start(command);
     if (!this.orchestrator || !this.sessionId) return this.protocolError('command_before_start');
@@ -123,9 +138,9 @@ export class BrowserSession {
       case 'audio.stop': this.stopAudio(command.payload); break;
       case 'turn.persisted': await this.persisted(command.payload); break;
       case 'turn.persistence_failed': this.persistenceFailed(command.payload); break;
-      case 'playback.progress': this.orchestrator.playbackProgress(command.payload as never); break;
-      case 'playback.paused': this.orchestrator.playbackPaused(command.payload as never); break;
-      case 'playback.stopped': this.orchestrator.playbackStopped(command.payload as never); break;
+      case 'playback.progress': this.orchestrator.playbackProgress(command.payload); break;
+      case 'playback.paused': this.orchestrator.playbackPaused(command.payload); break;
+      case 'playback.stopped': this.orchestrator.playbackStopped(command.payload); break;
       case 'barge_in.confirm': this.resolveBarge(command.payload, true); break;
       case 'barge_in.reject': this.resolveBarge(command.payload, false); break;
       case 'turn.cancel': this.orchestrator.cancelCurrentTurn(); break;
@@ -134,9 +149,9 @@ export class BrowserSession {
     }
   }
 
-  private async start(command: { sessionId: string; epoch: number; payload: Record<string, unknown> }): Promise<void> {
+  private async start(command: BrowserCommandFor<'session.start'>): Promise<void> {
     if (this.orchestrator || command.epoch !== 0) return this.protocolError('second_start');
-    const settings = command.payload.settings as SessionSettingsSnapshot | undefined;
+    const settings = command.payload.settings;
     if (!isValidSessionSettingsSnapshot(settings)) return this.protocolError('invalid_settings');
     const voice = normalizeVoicePreference(settings.voice);
     if (!voice) return this.protocolError('invalid_settings');
@@ -178,7 +193,7 @@ export class BrowserSession {
     // race a sidecar that only announced `starting`.
   }
 
-  private async startAudio(payload: Record<string, unknown>): Promise<void> {
+  private async startAudio(payload: BrowserCommandPayload<'audio.start'>): Promise<void> {
     const streamId = Number(payload.streamId);
     if (this.captureStreamId === streamId) return;
     // A reconnect can race with the last audio.stop command from the old
@@ -194,7 +209,7 @@ export class BrowserSession {
       throw error;
     }
   }
-  private stopAudio(payload: Record<string, unknown>): void {
+  private stopAudio(payload: BrowserCommandPayload<'audio.stop'>): void {
     // Duplicate or late stops are expected when a reconnect races the last
     // command from the old socket. Treat them as idempotent instead of killing
     // the newly attached conversation.
@@ -206,6 +221,7 @@ export class BrowserSession {
   private audioStatus(value: AudioEngineStatusSnapshot): void {
     if (!this.sessionId || !this.orchestrator || this.stopped) return;
     const snapshot = this.orchestrator.snapshot();
+    if (snapshot.phase === 'acceptance_pending_terminal') return;
     this.send(event(this.sessionId, snapshot.epoch, 'session.state', {
       phase: snapshot.phase,
       personaDigest: snapshot.personaDigest,
@@ -236,7 +252,7 @@ export class BrowserSession {
     this.pending.set(finalEvent.eventId, { event: finalEvent, turnId: value.utteranceId, text: value.text, epoch: value.epoch, failed: false });
     this.send(finalEvent);
   }
-  private async persisted(payload: Record<string, unknown>): Promise<void> {
+  private async persisted(payload: BrowserCommandPayload<'turn.persisted'>): Promise<void> {
     const finalEventId = String(payload.finalEventId);
     const completed = this.completedPersistenceAcks.get(finalEventId);
     if (completed) {
@@ -255,7 +271,7 @@ export class BrowserSession {
     }
     void this.orchestrator!.handleStableFinal({ epoch: pending.epoch, turnId: pending.turnId, text: pending.text, endpointComplete: true }).catch(() => this.failure('stable_turn_processing_failed'));
   }
-  private persistenceFailed(payload: Record<string, unknown>): void {
+  private persistenceFailed(payload: BrowserCommandPayload<'turn.persistence_failed'>): void {
     const pending = this.pending.get(String(payload.finalEventId));
     if (!pending || payload.turnId !== pending.turnId || payload.persistedEpoch !== pending.epoch) return this.protocolError('persistence_failure_mismatch');
     if (pending.epoch !== this.orchestrator!.snapshot().epoch) return this.protocolError('stale_persistence_failure');
@@ -263,7 +279,7 @@ export class BrowserSession {
     pending.failed = true;
     this.failure('stable_turn_not_persisted');
   }
-  private resolveBarge(payload: Record<string, unknown>, confirm: boolean): void {
+  private resolveBarge(payload: BrowserCommandPayload<'barge_in.confirm' | 'barge_in.reject'>, confirm: boolean): void {
     const snapshot = this.orchestrator!.snapshot();
     if (payload.responseId !== snapshot.activeResponseId || payload.outputEpoch !== snapshot.epoch) return this.protocolError('barge_identity_mismatch');
     if (confirm) this.orchestrator!.confirmBargeIn();
@@ -277,7 +293,7 @@ export class BrowserSession {
     this.send(event(this.sessionId, this.orchestrator.snapshot().epoch, 'failure', { code, detail: 'The local audio conversation could not continue this turn.', correctiveAction: 'Continue listening, retry, or stop the session.', recoverable: true }));
   }
   private protocolError(code: string): void { this.failure(code); this.socket?.close(1008, 'invalid conversation protocol'); }
-  private send(value: SessionEvent): void { if (!this.stopped) this.sendFrame(JSON.stringify(value), false); }
+  private send(value: HostEvent): void { if (!this.stopped) this.sendFrame(JSON.stringify(value), false); }
   private sendFrame(value: string | Buffer, binary: boolean): void {
     const bytes = typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength;
     const socket = this.socket;

@@ -91,13 +91,12 @@ export class RecordingRecorder {
   }
 
   onSessionEvent(event: StableEvent): void {
-    const payload = event.payload;
     switch (event.type) {
       case 'vad.speech_start': {
         if (!this.enabled) return;
-        const streamId = String(payload.streamId ?? '');
-        const utteranceId = String(payload.utteranceId ?? '');
-        const startSeq = Number(payload.captureStartSequence);
+        const streamId = String(event.payload.streamId ?? '');
+        const utteranceId = String(event.payload.utteranceId ?? '');
+        const startSeq = Number(event.payload.captureStartSequence);
         if (!streamId || !utteranceId || !Number.isSafeInteger(startSeq) || startSeq < 0 || this.userSlices.has(utteranceId)) return;
         const slice: OpenUserSlice = { utteranceId, streamId, startSeq, frames: [], itemId: uuidV7() };
         for (const frame of this.recentFrames) {
@@ -108,15 +107,15 @@ export class RecordingRecorder {
       }
       case 'vad.speech_end': {
         if (!this.enabled) return;
-        const utteranceId = String(payload.utteranceId ?? '');
+        const utteranceId = String(event.payload.utteranceId ?? '');
         const slice = this.userSlices.get(utteranceId);
         if (!slice) return;
-        const captureEndSequence = Number(payload.captureEndSequence);
+        const captureEndSequence = Number(event.payload.captureEndSequence);
         this.commitUserSlice(slice, Number.isSafeInteger(captureEndSequence) && captureEndSequence >= 0 ? captureEndSequence : null, false);
         break;
       }
       case 'transcript.final': {
-        const turnId = String(payload.turnId ?? '');
+        const turnId = String(event.payload.turnId ?? '');
         if (!turnId) return;
         const entry = this.pendingUserItems.get(turnId);
         if (entry) {
@@ -135,22 +134,22 @@ export class RecordingRecorder {
         break;
       }
       case 'reasoning.started': {
-        const turnId = String(payload.turnId ?? '');
-        const responseId = String(payload.responseId ?? '');
+        const turnId = String(event.payload.turnId ?? '');
+        const responseId = String(event.payload.responseId ?? '');
         if (turnId && responseId) this.responseTurns.set(responseId, turnId);
         break;
       }
       case 'tts.started': {
         if (!this.enabled) return;
-        const playbackId = String(payload.playbackId ?? '');
-        const responseId = String(payload.responseId ?? '');
-        const sampleRate = Number(payload.sampleRate);
+        const playbackId = String(event.payload.playbackId ?? '');
+        const responseId = String(event.payload.responseId ?? '');
+        const sampleRate = Number(event.payload.sampleRate);
         if (!playbackId || !responseId || (sampleRate !== 16000 && sampleRate !== 24000) || this.agentBuffers.has(playbackId)) return;
         this.agentBuffers.set(playbackId, {
           playbackId,
           responseId,
           turnId: this.responseTurns.get(responseId) ?? null,
-          partIndex: typeof payload.partIndex === 'number' ? payload.partIndex : null,
+          partIndex: typeof event.payload.partIndex === 'number' ? event.payload.partIndex : null,
           sampleRate,
           outputEpoch: event.epoch,
           frames: [],
@@ -159,7 +158,7 @@ export class RecordingRecorder {
         break;
       }
       case 'response.failed': {
-        const responseId = String(payload.responseId ?? '');
+        const responseId = String(event.payload.responseId ?? '');
         if (!responseId) return;
         for (const [playbackId, buffer] of [...this.agentBuffers]) {
           if (buffer.responseId === responseId) this.agentBuffers.delete(playbackId);
@@ -168,12 +167,12 @@ export class RecordingRecorder {
       }
       case 'playback.stopped': {
         if (!this.enabled) return;
-        const playbackId = String(payload.playbackId ?? '');
+        const playbackId = String(event.payload.playbackId ?? '');
         const buffer = this.agentBuffers.get(playbackId);
         if (!buffer) return;
-        const cancelledEpoch = Number(payload.cancelledEpoch);
-        const finalPlayedSampleOffset = Number(payload.finalPlayedSampleOffset);
-        const reason = String(payload.reason ?? '');
+        const cancelledEpoch = Number(event.payload.cancelledEpoch);
+        const finalPlayedSampleOffset = Number(event.payload.finalPlayedSampleOffset);
+        const reason = String(event.payload.reason ?? '');
         if (!Number.isSafeInteger(cancelledEpoch) || !Number.isSafeInteger(finalPlayedSampleOffset) || finalPlayedSampleOffset < 0) return;
         this.commitAgentBuffer(buffer, { cancelledEpoch, finalPlayedSampleOffset, reason });
         break;

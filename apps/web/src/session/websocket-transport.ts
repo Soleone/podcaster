@@ -1,9 +1,8 @@
 import { decodeBinaryAudioFrame } from '@app/contracts/binary';
-import type { VoicePreference } from '@app/contracts/settings';
+import type { BrowserCommand, HostEvent, PlaybackPausedEvent, PlaybackStoppedEvent, TranscriptFinalEvent, VoicePreference } from '@app/contracts';
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
-import type { StableEvent } from '../storage/stable-turn-writer';
 import { activityLog } from './activity-log';
-import { createEnvelope, type Envelope } from './envelope';
+import { createEnvelope, type BrowserCommandPayload } from './envelope';
 import type { OutputAudioChunk, SessionTransport } from './transport';
 
 const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
@@ -40,11 +39,11 @@ export class WebSocketSessionTransport implements SessionTransport {
   private reconnectAttempt = 0;
   private permanentFailure = false;
   private readonly queuedCommands: QueuedCommand[] = [];
-  private readonly eventListeners = new Set<(event: StableEvent) => void | Promise<void>>();
+  private readonly eventListeners = new Set<(event: HostEvent) => void | Promise<void>>();
   private readonly audioListeners = new Set<(chunk: OutputAudioChunk) => void>();
   private readonly failureListeners = new Set<(message: string) => void>();
   private readonly reconnectListeners = new Set<() => void | Promise<void>>();
-  private readonly terminalEnvelopes = new Map<string, Envelope>();
+  private readonly terminalEnvelopes = new Map<string, PlaybackStoppedEvent>();
   private readonly usedOutputStreams = new Set<number>();
   private readonly outputs: OutputCollection = { byStream: new Map(), single: undefined };
   private intentionalDisconnect = false;
@@ -132,7 +131,7 @@ export class WebSocketSessionTransport implements SessionTransport {
         this.protocolFailure(`the "${type}" event failed validation.`);
         return;
       }
-      const hostEvent = value as StableEvent;
+      const hostEvent = value;
       if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure('the event sessionId did not match this session.'); return; }
       if (hostEvent.type === 'reasoning.started') {
         const responseId = String(hostEvent.payload.responseId);
@@ -282,10 +281,10 @@ export class WebSocketSessionTransport implements SessionTransport {
     });
   }
   stopAudio(streamId: number): void { this.sendCommand('audio.stop', { streamId }); }
-  acknowledgePersisted(event: StableEvent): void {
+  acknowledgePersisted(event: TranscriptFinalEvent): void {
     this.sendCommand('turn.persisted', { turnId: event.payload.turnId, finalEventId: event.eventId, persistedEpoch: event.epoch }, event.epoch);
   }
-  acknowledgePersistenceFailed(event: StableEvent, reasonCode: 'quota' | 'unavailable' | 'aborted'): void {
+  acknowledgePersistenceFailed(event: TranscriptFinalEvent, reasonCode: 'quota' | 'unavailable' | 'aborted'): void {
     this.sendCommand('turn.persistence_failed', { turnId: event.payload.turnId, finalEventId: event.eventId, persistedEpoch: event.epoch, reasonCode }, event.epoch);
   }
   stopSession(reason: 'user' | 'expired' | 'disconnect'): void { this.sendCommand('session.stop', { reason }); }
@@ -298,15 +297,15 @@ export class WebSocketSessionTransport implements SessionTransport {
     try { socket.send(frame); } catch { this.handleSocketFailure(socket, 'capture send failed'); }
   }
   sendProgress(progress: PlaybackProgress): void { this.sendCommand('playback.progress', { ...progress }); }
-  sendPaused(checkpoint: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void { this.sendCommand('playback.paused', checkpoint, checkpoint.outputEpoch); }
-  sendTerminal(receipt: PlaybackTerminal, persistedEvent?: StableEvent): void {
+  sendPaused(checkpoint: PlaybackPausedEvent['payload']): void { this.sendCommand('playback.paused', checkpoint, checkpoint.outputEpoch); }
+  sendTerminal(receipt: PlaybackTerminal, persistedEvent?: PlaybackStoppedEvent): void {
     const binding = this.findOutput(receipt.playbackId);
     if (binding && binding.outputEpoch === receipt.cancelledEpoch) binding.terminal = true;
     const terminalKey = `${receipt.cancelledEpoch}:${receipt.playbackId}`;
     let envelope = this.terminalEnvelopes.get(terminalKey);
     if (!envelope) {
-      envelope = persistedEvent?.type === 'playback.stopped'
-        ? { protocolVersion: 1, sessionId: persistedEvent.sessionId, epoch: persistedEvent.epoch, eventId: persistedEvent.eventId, type: 'playback.stopped', monotonicMs: persistedEvent.monotonicMs, payload: { ...receipt } }
+      envelope = persistedEvent
+        ? { ...persistedEvent, payload: { ...receipt } }
         : createEnvelope({ sessionId: this.sessionId, epoch: this.epoch(), type: 'playback.stopped', payload: { ...receipt } });
       this.terminalEnvelopes.set(terminalKey, envelope);
     }
@@ -314,7 +313,7 @@ export class WebSocketSessionTransport implements SessionTransport {
   }
   cancelAssistant(): void { this.sendCommand('turn.cancel', { reason: 'user' }); }
   private latestResponseId: string | undefined;
-  onEvent(listener: (event: StableEvent) => void | Promise<void>): () => void {
+  onEvent(listener: (event: HostEvent) => void | Promise<void>): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
   }
@@ -347,8 +346,9 @@ export class WebSocketSessionTransport implements SessionTransport {
     for (const binding of this.outputs.byStream.values()) if (binding.playbackId === playbackId) return binding;
     return this.outputs.single?.playbackId === playbackId ? this.outputs.single : undefined;
   }
-  private sendCommand(type: string, payload: Record<string, unknown>, epoch = this.epoch()): void {
-    const key = type === 'playback.progress' ? `playback.progress:${String(payload.playbackId)}:${String(payload.outputEpoch)}` : undefined;
+  private sendCommand<T extends BrowserCommand['type']>(type: T, payload: BrowserCommandPayload<T>, epoch = this.epoch()): void {
+    const progress = type === 'playback.progress' ? payload as BrowserCommandPayload<'playback.progress'> : undefined;
+    const key = progress ? `playback.progress:${String(progress.playbackId)}:${String(progress.outputEpoch)}` : undefined;
     this.sendWire(JSON.stringify(createEnvelope({ sessionId: this.sessionId, epoch, type, payload })), type, key);
   }
   private sendWire(message: string, type = 'control', key?: string): void {
@@ -403,7 +403,7 @@ export class WebSocketSessionTransport implements SessionTransport {
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 // The sidecar stream id is generated host-side with node:crypto randomUUID() (UUIDv4),
 // so VAD streamIds accept any RFC 4122 UUID version (v1-v8), not just v7.
-const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function exact(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).sort().join(',') === [...keys].sort().join(','); }
 function hasOnly(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): boolean {
   const allowed = new Set([...required, ...optional]);
@@ -415,7 +415,7 @@ function partOk(value: Record<string, unknown>): boolean {
   const partId = value.partId;
   if (index === undefined && partId === undefined) return true;
   if (index === undefined || !integer(index) || Number(index) > 7) return false;
-  if (partId !== undefined && (typeof partId !== 'string' || !UUID_V7.test(partId))) return false;
+  if (partId !== undefined && (typeof partId !== 'string' || !UUID_ANY.test(partId))) return false;
   return true;
 }
 function modelIdentityOk(value: Record<string, unknown>): boolean {
@@ -425,20 +425,22 @@ function modelIdentityOk(value: Record<string, unknown>): boolean {
   return typeof backendId === 'string' && backendId.length > 0
     && typeof modelId === 'string' && modelId.length > 0;
 }
-function isStrictHostEvent(value: unknown): value is StableEvent {
-  if (typeof value !== 'object' || value === null) return false;
+
+/** Validates only the canonical HostEvent schema shape. */
+function isHostEventShape(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const event = value as Record<string, unknown>;
   if (!exact(event, ['protocolVersion', 'sessionId', 'epoch', 'eventId', 'type', 'monotonicMs', 'payload'])
     || event.protocolVersion !== 1 || typeof event.sessionId !== 'string' || !UUID_V7.test(event.sessionId)
     || !integer(event.epoch) || typeof event.eventId !== 'string' || !UUID_V7.test(event.eventId)
-    || typeof event.type !== 'string' || typeof event.monotonicMs !== 'number' || event.monotonicMs < 0
-    || typeof event.payload !== 'object' || event.payload === null) return false;
+    || typeof event.type !== 'string' || event.type.length === 0 || typeof event.monotonicMs !== 'number' || event.monotonicMs < 0
+    || typeof event.payload !== 'object' || event.payload === null || Array.isArray(event.payload)) return false;
   const payload = event.payload as Record<string, unknown>;
-  const uuid = (key: string) => typeof payload[key] === 'string' && UUID_V7.test(String(payload[key]));
-  const anyUuid = (key: string) => typeof payload[key] === 'string' && UUID_ANY.test(String(payload[key]));
+  const uuid = (key: string) => typeof payload[key] === 'string' && UUID_ANY.test(payload[key]);
+  const anyUuid = uuid;
   switch (event.type) {
     case 'session.state': {
-      if (!hasOnly(payload, ['phase', 'personaDigest'], ['audio']) || typeof payload.phase !== 'string' || typeof payload.personaDigest !== 'string' || !/^[a-f0-9]{64}$/.test(payload.personaDigest)) return false;
+      if (!hasOnly(payload, ['phase', 'personaDigest'], ['audio']) || !['idle', 'listening', 'deciding', 'reasoning', 'synthesizing', 'playing', 'echo_provisional', 'interruption_deciding', 'stopped'].includes(String(payload.phase)) || typeof payload.personaDigest !== 'string' || !/^[a-f0-9]{64}$/.test(payload.personaDigest)) return false;
       if (payload.audio === undefined) return true;
       if (typeof payload.audio !== 'object' || payload.audio === null || Array.isArray(payload.audio)) return false;
       const audio = payload.audio as Record<string, unknown>;
@@ -458,12 +460,20 @@ function isStrictHostEvent(value: unknown): value is StableEvent {
     case 'reasoning.delta': return hasOnly(payload, ['turnId', 'responseId', 'text'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096 && partOk(payload);
     case 'response.failed': return hasOnly(payload, ['turnId', 'responseId', 'reasonCode'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && ['reasoning_unavailable', 'reasoning_invalid', 'tts_failed'].includes(String(payload.reasonCode)) && partOk(payload);
     case 'reasoning.final': return hasOnly(payload, ['turnId', 'responseId', 'posture', 'text'], ['partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && ['riff', 'question', 'challenge'].includes(String(payload.posture)) && typeof payload.text === 'string' && payload.text.length > 0 && payload.text.length <= 4_096 && partOk(payload);
-    case 'tts.started': return hasOnly(payload, ['responseId', 'playbackId', 'sampleRate'], ['backendId', 'modelId', 'outputStreamId', 'partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0 && (payload.outputStreamId === undefined || (integer(payload.outputStreamId) && Number(payload.outputStreamId) <= 4_294_967_295)) && modelIdentityOk(payload) && partOk(payload);
+    case 'tts.started': return hasOnly(payload, ['responseId', 'playbackId', 'sampleRate'], ['backendId', 'modelId', 'outputStreamId', 'partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.sampleRate) && Number(payload.sampleRate) > 0 && (payload.outputStreamId === undefined || (integer(payload.outputStreamId) && Number(payload.outputStreamId) <= 4_294_967_295)) && (payload.partIndex === undefined || payload.outputStreamId !== undefined) && modelIdentityOk(payload) && partOk(payload);
     case 'tts.ended': return hasOnly(payload, ['responseId', 'playbackId', 'generatedSamples'], ['partIndex', 'partId']) && uuid('responseId') && uuid('playbackId') && integer(payload.generatedSamples) && partOk(payload);
-    case 'response.part_started': case 'response.part_final': return hasOnly(payload, ['turnId', 'responseId', 'partIndex', 'kind'], ['partId']) && uuid('turnId') && uuid('responseId') && integer(payload.partIndex) && Number(payload.partIndex) <= 7 && ['stall', 'body'].includes(String(payload.kind)) && (payload.partId === undefined || (typeof payload.partId === 'string' && UUID_V7.test(payload.partId))) && ((payload.kind === 'stall' && payload.partIndex === 0) || (payload.kind === 'body' && Number(payload.partIndex) >= 1));
+    case 'response.part_started': case 'response.part_final': return hasOnly(payload, ['turnId', 'responseId', 'partIndex', 'kind'], ['partId']) && uuid('turnId') && uuid('responseId') && integer(payload.partIndex) && Number(payload.partIndex) <= 7 && ['stall', 'body'].includes(String(payload.kind)) && (payload.partId === undefined || (typeof payload.partId === 'string' && UUID_ANY.test(payload.partId))) && ((payload.kind === 'stall' && payload.partIndex === 0) || (payload.kind === 'body' && Number(payload.partIndex) >= 1));
     case 'barge_in.provisional': case 'barge_in.confirmed': case 'barge_in.rejected': case 'barge_in.timed_out': return hasOnly(payload, ['responseId', 'outputEpoch', 'resumable'], ['rewindMs', 'partIndex', 'partId', 'playbackId']) && uuid('responseId') && integer(payload.outputEpoch) && typeof payload.resumable === 'boolean' && (payload.rewindMs === undefined || (integer(payload.rewindMs) && Number(payload.rewindMs) <= 1_000)) && partOk(payload) && (payload.playbackId === undefined || uuid('playbackId'));
     case 'interruption.decision': return hasOnly(payload, ['turnId', 'responseId', 'playbackId', 'outputEpoch', 'action', 'intent', 'confidence', 'disposition', 'pausedSampleOffset'], ['rewindMs', 'partIndex', 'partId']) && uuid('turnId') && uuid('responseId') && uuid('playbackId') && integer(payload.outputEpoch) && ['resume', 'accept'].includes(String(payload.action)) && ['non_substantive', 'continue_previous', 'new_request', 'correction', 'topic_change', 'stop_previous'].includes(String(payload.intent)) && ['low', 'medium', 'high'].includes(String(payload.confidence)) && ['resume_noise', 'resume_fragment', 'resume_requested', 'accept_takeover'].includes(String(payload.disposition)) && integer(payload.pausedSampleOffset) && (payload.rewindMs === undefined || (integer(payload.rewindMs) && Number(payload.rewindMs) <= 1_000)) && partOk(payload);
     case 'failure': return exact(payload, ['code', 'detail', 'correctiveAction', 'recoverable']) && typeof payload.code === 'string' && payload.code.length > 0 && typeof payload.detail === 'string' && payload.detail.length > 0 && typeof payload.correctiveAction === 'string' && payload.correctiveAction.length > 0 && typeof payload.recoverable === 'boolean';
     default: return false;
   }
+}
+
+/**
+ * The schema check is deliberately separate from the stateful identity and
+ * sequence checks performed by the transport message handler above.
+ */
+export function isStrictHostEvent(value: unknown): value is HostEvent {
+  return isHostEventShape(value);
 }

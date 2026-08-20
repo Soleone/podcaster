@@ -1,10 +1,54 @@
+import { CONTRACT_VALIDATORS, type HostEvent, type PlaybackStoppedEvent } from '@app/contracts';
 import { encodeBinaryAudioFrame } from '@app/contracts/binary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocketSessionTransport } from './websocket-transport';
+import { isStrictHostEvent, WebSocketSessionTransport } from './websocket-transport';
 import { activityLog } from './activity-log';
-import type { StableEvent } from '../storage/stable-turn-writer';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const originalWebSocket = globalThis.WebSocket;
+const contractsRoot = resolve(import.meta.dirname, '../../../../packages/contracts');
+const hostFixtureCases = [
+  ['barge-in', 'barge-in'],
+  ['failure', 'failure'],
+  ['interruption-decision', 'interruption-decision'],
+  ['policy-decision', 'policy-decision'],
+  ['reasoning-delta', 'reasoning-delta'],
+  ['reasoning-final', 'reasoning-final'],
+  ['reasoning-started', 'reasoning-started'],
+  ['response-failed', 'response-failed'],
+  ['response.part_final', 'response.part_final'],
+  ['response.part_started', 'response.part_started'],
+  ['session-state', 'session-state'],
+  ['transcript-final', 'transcript-final'],
+  ['transcript-partial', 'transcript-partial'],
+  ['tts-ended', 'tts-ended'],
+  ['tts-started', 'tts-started'],
+  ['vad-speech-end', 'vad-speech-end'],
+  ['vad-speech-start', 'vad-speech-start'],
+] as const;
+function hostFixture(directory: 'valid' | 'invalid', name: string): unknown {
+  const filename = directory === 'invalid' ? name.replace(/[._]/g, '-') : name;
+  return JSON.parse(readFileSync(resolve(contractsRoot, 'fixtures', directory, `${filename}.json`), 'utf8'));
+}
+
+describe('browser HostEvent validator parity', () => {
+  it.each(hostFixtureCases)('accepts the canonical valid %s fixture', (_label, filename) => {
+    const value = hostFixture('valid', filename);
+    expect(CONTRACT_VALIDATORS.HostEvent(value)).toBe(true);
+    expect(isStrictHostEvent(value)).toBe(true);
+  });
+  it.each(hostFixtureCases)('rejects the canonical invalid %s fixture', (_label, filename) => {
+    const value = hostFixture('invalid', filename);
+    expect(CONTRACT_VALIDATORS.HostEvent(value)).toBe(false);
+    expect(isStrictHostEvent(value)).toBe(false);
+  });
+  it('rejects the invalid HostEvent regression fixture in both validators', () => {
+    const value = hostFixture('invalid', 'host-event');
+    expect(CONTRACT_VALIDATORS.HostEvent(value)).toBe(false);
+    expect(isStrictHostEvent(value)).toBe(false);
+  });
+});
 afterEach(() => { globalThis.WebSocket = originalWebSocket; });
 
 describe('WebSocketSessionTransport terminal retries', () => {
@@ -15,7 +59,7 @@ describe('WebSocketSessionTransport terminal retries', () => {
     const transport = new WebSocketSessionTransport('session', () => 9);
     (transport as unknown as { socket: FakeWebSocket; connected: boolean }).socket = socket;
     (transport as unknown as { connected: boolean }).connected = true;
-    const event: StableEvent = { protocolVersion: 1, sessionId: 'session', epoch: 3, eventId: 'terminal-event', monotonicMs: 42, type: 'playback.stopped', payload: {} } as StableEvent & { protocolVersion: 1 };
+    const event: PlaybackStoppedEvent = { protocolVersion: 1, sessionId: 'session', epoch: 3, eventId: 'terminal-event', monotonicMs: 42, type: 'playback.stopped', payload: { playbackId: 'playback', cancelledEpoch: 3, finalPlayedSampleOffset: 120, reason: 'cancelled' } };
     const first = { playbackId: 'playback', cancelledEpoch: 3, finalPlayedSampleOffset: 120, reason: 'cancelled' as const };
     transport.sendTerminal(first, event);
     transport.sendTerminal({ ...first, reason: 'failed' }, { ...event, eventId: 'different' });
@@ -116,8 +160,8 @@ describe('WebSocketSessionTransport output binding', () => {
 
 const SESSION = '018f1f32-7abc-7def-8abc-0123456789ab';
 let eventSequence = 0;
-function hostEvent(type: string, payload: Record<string, unknown>, epoch = 0): StableEvent & { protocolVersion: 1 } {
-  return { protocolVersion: 1, sessionId: SESSION, epoch, eventId: `018f1f32-7abd-7def-8abc-0123456789${(++eventSequence + 0xa0).toString(16).padStart(2, '0')}`, monotonicMs: Date.now(), type, payload };
+function hostEvent<T extends HostEvent['type']>(type: T, payload: Record<string, unknown>, epoch = 0): HostEvent {
+  return { protocolVersion: 1, sessionId: SESSION, epoch, eventId: `018f1f32-7abd-7def-8abc-0123456789${(++eventSequence + 0xa0).toString(16).padStart(2, '0')}`, monotonicMs: Date.now(), type, payload } as HostEvent;
 }
 
 class EventSocket {
@@ -144,7 +188,7 @@ async function wiredTransport(socket: EventSocket, epoch = () => 0) {
   transport.onFailure(message => socket.failureMessages.push(message));
   return transport;
 }
-function emitText(socket: EventSocket, event: StableEvent): void { socket.onmessage?.({ data: JSON.stringify(event) }); }
+function emitText(socket: EventSocket, event: HostEvent): void { socket.onmessage?.({ data: JSON.stringify(event) }); }
 function emitBinary(socket: EventSocket, streamId: number, sequence: number, samples: number): void {
   const frame = encodeBinaryAudioFrame({ channel: 2, streamId, sequence, monotonicUs: 1n, pcm16: new Int16Array(samples) }, 64 * 1024);
   socket.onmessage?.({ data: frame.buffer });
@@ -284,7 +328,7 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     const socket = new EventSocket();
     const transport = await wiredTransport(socket);
     const seen: Array<{ type: string; text?: unknown }> = [];
-    transport.onEvent(event => { seen.push({ type: event.type, text: event.payload.text }); });
+    transport.onEvent(event => { seen.push({ type: event.type, text: 'text' in event.payload ? event.payload.text : undefined }); });
     emitText(socket, REASONING(responseA));
     emitText(socket, DELTA(responseA, 'A first preview'));
     emitText(socket, DELTA(responseA, 'A first preview that grows'));

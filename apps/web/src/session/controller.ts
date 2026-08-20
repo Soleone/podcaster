@@ -1,5 +1,6 @@
+import type { HostEvent } from '@app/contracts';
 import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
-import type { PlaybackPauseCheckpoint, StableTurnWriter, StableEvent } from '../storage/stable-turn-writer';
+import type { PlaybackPauseCheckpoint, StableTurnWriter } from '../storage/stable-turn-writer';
 import { activityLog } from './activity-log';
 import { createEnvelope } from './envelope';
 import { canSafelyResume, initialSessionState, reduceSessionState, type SessionViewState } from './state';
@@ -22,9 +23,9 @@ export interface SessionControllerOptions {
 }
 interface ActivePlayback { playbackId: string; responseId: string; outputEpoch: number; player: ControlledPlayback; terminal: boolean; partIndex?: number; pendingAudio?: Array<{ sampleOffset: number; pcm16: Int16Array }>; speechPauseGeneration?: number; speechPause?: Promise<PlaybackProgress> | undefined }
 interface ResponsePlaybackGroup { responseId: string; parts: ActivePlayback[]; activeIndex: number; terminal: boolean }
-function resumeRewindMs(payload: Record<string, unknown>): number {
+function resumeRewindMs(payload: { rewindMs?: number }): number {
   const rewindMs = payload.rewindMs;
-  return Number.isSafeInteger(rewindMs) && (rewindMs as number) > 0 ? rewindMs as number : 0;
+  return typeof rewindMs === 'number' && Number.isSafeInteger(rewindMs) && rewindMs > 0 ? rewindMs : 0;
 }
 
 interface Provisional {
@@ -48,7 +49,7 @@ export class SessionController {
   private provisional: Provisional | undefined;
   private userSpeaking = false;
   private speechGeneration = 0;
-  private deferredResume: StableEvent | undefined;
+  private deferredResume: HostEvent | undefined;
   private eventQueue: Promise<void> = Promise.resolve();
   private stopped = false;
   private pausing = false;
@@ -66,7 +67,7 @@ export class SessionController {
   snapshot(): SessionViewState { return this.state; }
   subscribe(listener: (state: SessionViewState) => void): () => void { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
 
-  handleEvent(event: StableEvent): Promise<void> {
+  handleEvent(event: HostEvent): Promise<void> {
     // VAD and playback events arrive on separate asynchronous paths. Observe a
     // speech start before queueing any older host resolution so local playback
     // is silenced immediately and a stale resume cannot win the race.
@@ -84,10 +85,9 @@ export class SessionController {
     return run;
   }
 
-  private async processEvent(event: StableEvent): Promise<void> {
+  private async processEvent(event: HostEvent): Promise<void> {
     if (this.pausing || this.stopped || event.sessionId !== this.options.sessionId || this.seenEvents.has(event.eventId)) return;
-    const accountingOnly = event.type === 'playback.progress' || event.type === 'playback.stopped';
-    if (event.epoch < this.state.epoch && !accountingOnly) return;
+    if (event.epoch < this.state.epoch) return;
     const isInterruptionResolution = event.type === 'barge_in.confirmed' || event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out' || event.type === 'interruption.decision';
     const resumesPlayback = (event.type === 'interruption.decision' && event.payload.action === 'resume')
       || ((event.type === 'barge_in.rejected' || event.type === 'barge_in.timed_out') && event.payload.resumable === true);
@@ -385,19 +385,31 @@ export class SessionController {
 
   degrade(message: string): void {
     activityLog.append({ level: 'error', source: 'controller', message: 'session degraded', detail: message });
-    this.setState(reduceSessionState(this.state, createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'failure', payload: { detail: message } })));
+    const event = createEnvelope({
+      sessionId: this.options.sessionId,
+      epoch: this.state.epoch,
+      type: 'failure',
+      payload: {
+        code: 'client_degraded',
+        detail: message,
+        correctiveAction: 'Continue listening, retry, or stop the session.',
+        recoverable: true,
+      },
+    });
+    void this.options.writer.apply(event);
+    this.setState(reduceSessionState(this.state, event));
   }
 
-  private matchesProvisionalResolution(event: StableEvent): boolean {
+  private matchesProvisionalResolution(event: HostEvent): boolean {
     const provisional = this.provisional;
     const active = this.active;
-    return Boolean(provisional && active
-      && event.payload.responseId === provisional.responseId
+    if (!provisional || !active || !('responseId' in event.payload) || !('outputEpoch' in event.payload)) return false;
+    return event.payload.responseId === provisional.responseId
       && event.payload.outputEpoch === provisional.outputEpoch
       && (event.type !== 'interruption.decision' || event.payload.playbackId === provisional.playbackId)
       && active.responseId === provisional.responseId
       && active.playbackId === provisional.playbackId
-      && active.outputEpoch === provisional.outputEpoch);
+      && active.outputEpoch === provisional.outputEpoch;
   }
 
   private handleAudio(chunk: OutputAudioChunk): void {

@@ -3,7 +3,7 @@ import { canSafelyResume, initialSessionState, reduceSessionState } from './stat
 import type { StableEvent } from '../storage/stable-turn-writer';
 
 let sequence = 0;
-const event = (type: string, payload: Record<string, unknown> = {}, epoch = 0): StableEvent => ({ eventId: `e-${++sequence}`, sessionId: 's', epoch, monotonicMs: sequence, type, payload });
+const event = <T extends StableEvent['type']>(type: T, payload: Record<string, unknown> = {}, epoch = 0): StableEvent => ({ protocolVersion: 1, eventId: `e-${++sequence}`, sessionId: 's', epoch, monotonicMs: sequence, type, payload } as StableEvent);
 
 describe('session presentation state', () => {
   it('keeps partials tentative and out of announcements', () => {

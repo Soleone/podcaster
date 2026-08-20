@@ -1,6 +1,21 @@
-export interface Envelope<T extends string = string, P extends Record<string, unknown> = Record<string, unknown>> {
-  protocolVersion: 1; sessionId: string; epoch: number; eventId: string; type: T; monotonicMs: number; payload: P;
-}
+import type { BrowserCommand, HostEvent } from '@app/contracts';
+
+type EventForType<Event, T extends string> = Event extends infer Candidate
+  ? Candidate extends { type: infer Type }
+    ? T extends Type ? Candidate : never
+    : never
+  : never;
+type EventPayloadForType<Event, T extends string> = EventForType<Event, T> extends infer Candidate
+  ? Candidate extends { payload: infer Payload } ? Payload : never
+  : never;
+
+export type ProtocolEvent = HostEvent | BrowserCommand;
+export type ProtocolEventFor<T extends ProtocolEvent['type']> = EventForType<ProtocolEvent, T>;
+export type HostEventFor<T extends HostEvent['type']> = EventForType<HostEvent, T>;
+export type HostEventPayload<T extends HostEvent['type']> = EventPayloadForType<HostEvent, T>;
+export type BrowserCommandFor<T extends BrowserCommand['type']> = EventForType<BrowserCommand, T>;
+export type BrowserCommandPayload<T extends BrowserCommand['type']> = EventPayloadForType<BrowserCommand, T>;
+export type Envelope<T extends ProtocolEvent['type'] = ProtocolEvent['type']> = ProtocolEventFor<T>;
 
 export function uuidV7(now = Date.now(), randomValues: (bytes: Uint8Array) => Uint8Array = bytes => crypto.getRandomValues(bytes)): string {
   const bytes = randomValues(new Uint8Array(16));
@@ -12,7 +27,7 @@ export function uuidV7(now = Date.now(), randomValues: (bytes: Uint8Array) => Ui
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export function createEnvelope<T extends string, P extends Record<string, unknown>>(input: { sessionId: string; epoch: number; type: T; payload: P; now?: () => number; idFactory?: () => string }): Envelope<T, P> {
+export function createEnvelope<T extends ProtocolEvent['type']>(input: { sessionId: string; epoch: number; type: T; payload: EventPayloadForType<ProtocolEvent, T>; now?: () => number; idFactory?: () => string }): ProtocolEventFor<T> {
   const monotonicMs = Math.max(0, input.now?.() ?? performance.now());
-  return { protocolVersion: 1, sessionId: input.sessionId, epoch: input.epoch, eventId: input.idFactory?.() ?? uuidV7(), type: input.type, monotonicMs, payload: input.payload };
+  return { protocolVersion: 1, sessionId: input.sessionId, epoch: input.epoch, eventId: input.idFactory?.() ?? uuidV7(), type: input.type, monotonicMs, payload: input.payload } as unknown as ProtocolEventFor<T>;
 }

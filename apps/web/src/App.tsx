@@ -9,7 +9,7 @@ import { buildRecording, createBrowserDecoder, type ExportOnProgress } from './r
 import { activityLog } from './session/activity-log';
 import { SessionController, type ControlledPlayback } from './session/controller';
 import { sessionViewStateFromTurns } from './sessions/session-archive';
-import { createEnvelope, uuidV7 } from './session/envelope';
+import { createEnvelope, type HostEventPayload, uuidV7 } from './session/envelope';
 import { FakeSessionTransport } from './session/fake-transport';
 import type { SessionTransport } from './session/transport';
 import { WebSocketSessionTransport } from './session/websocket-transport';
@@ -24,6 +24,7 @@ import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
 import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import type { HostEvent } from '@app/contracts';
 import { SettingsStore } from './settings/settings-store';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
@@ -61,7 +62,7 @@ class InstrumentedPlayback implements ControlledPlayback {
 }
 
 interface TestApi {
-  emit(type: string, payload: Record<string, unknown>, epoch?: number): Promise<void>;
+  emit<T extends HostEvent['type']>(type: T, payload: HostEventPayload<T>, epoch?: number): Promise<void>;
   partial(text: string): Promise<void>;
   audio(playbackId: string, sampleOffset: number, samples: number): Promise<void>;
   capture(): void;
@@ -70,6 +71,10 @@ interface TestApi {
 }
 
 declare global { interface Window { __podcasterTest?: TestApi } }
+
+function createFakeHostEvent<T extends HostEvent['type'],>(sessionId: string, epoch: number, type: T, payload: HostEventPayload<T>): HostEvent {
+  return createEnvelope({ sessionId, epoch, type, payload }) as HostEvent;
+}
 
 export function App() {
   const location = useLocation();
@@ -503,8 +508,8 @@ export function App() {
     const transport = fakeTransportRef.current;
     const controller = controllerRef.current;
     window.__podcasterTest = {
-      emit: (type, payload, epoch = controller.snapshot().epoch) => transport.emit(createEnvelope({ sessionId, epoch, type, payload })),
-      partial: text => transport.emit(createEnvelope({ sessionId, epoch: controller.snapshot().epoch, type: 'transcript.partial', payload: { text } })),
+      emit: (type, payload, epoch = controller.snapshot().epoch) => transport.emit(createFakeHostEvent(sessionId, epoch, type, payload)),
+      partial: text => transport.emit(createEnvelope({ sessionId, epoch: controller.snapshot().epoch, type: 'transcript.partial', payload: { utteranceId: uuidV7(), sequence: 0, text, replacedCharacters: 0 } })),
       audio: async (playbackId, sampleOffset, samples) => {
         transport.emitAudio({ playbackId, sequence: 0, sampleOffset, pcm16: new Int16Array(samples) });
         await new Promise(resolve => setTimeout(resolve, 0));

@@ -23,9 +23,9 @@ describe('session archive', () => {
     const { name, writer } = await openWriter();
     await writer.beginSession({ sessionId: 'older', sessionSeed: 's1', personaDigest: 'd', startedAt: '2026-01-01T00:00:00.000Z' });
     await writer.beginSession({ sessionId: 'newer', sessionSeed: 's2', personaDigest: 'd', startedAt: '2026-01-02T00:00:00.000Z' });
-    await writer.apply({ eventId: 'e1', sessionId: 'older', epoch: 0, monotonicMs: 1, type: 'transcript.final', payload: { turnId: 't1', text: 'first', endpointComplete: true } });
-    await writer.apply({ eventId: 'e2', sessionId: 'older', epoch: 0, monotonicMs: 2, type: 'transcript.final', payload: { turnId: 't2', text: 'second', endpointComplete: true } });
-    await writer.apply({ eventId: 'e3', sessionId: 'newer', epoch: 0, monotonicMs: 3, type: 'transcript.final', payload: { turnId: 't3', text: 'third', endpointComplete: true } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e1', sessionId: 'older', epoch: 0, monotonicMs: 1, type: 'transcript.final', payload: { turnId: 't1', text: 'first', endpointComplete: true } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e2', sessionId: 'older', epoch: 0, monotonicMs: 2, type: 'transcript.final', payload: { turnId: 't2', text: 'second', endpointComplete: true } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e3', sessionId: 'newer', epoch: 0, monotonicMs: 3, type: 'transcript.final', payload: { turnId: 't3', text: 'third', endpointComplete: true } });
     const recordingStore = await RecordingStore.open(indexedDB, name);
     try {
       const summaries = await loadSessionArchive(writer, recordingStore);
@@ -43,10 +43,10 @@ describe('session archive', () => {
   it('rebuilds a stopped conversation with stored playback dispositions', async () => {
     const { writer } = await openWriter();
     await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'd' });
-    await writer.apply({ eventId: 'e1', sessionId: 's', epoch: 0, monotonicMs: 1, type: 'transcript.final', payload: { turnId: 't1', text: 'a question', endpointComplete: true } });
-    await writer.apply({ eventId: 'e2', sessionId: 's', epoch: 0, monotonicMs: 2, type: 'reasoning.final', payload: { turnId: 't1', responseId: 'r1', posture: 'question', text: 'an answer' } });
-    await writer.apply({ eventId: 'e3', sessionId: 's', epoch: 0, monotonicMs: 3, type: 'tts.started', payload: { responseId: 'r1', playbackId: 'p1', sampleRate: 24000 } });
-    await writer.apply({ eventId: 'e4', sessionId: 's', epoch: 0, monotonicMs: 4, type: 'playback.stopped', payload: { playbackId: 'p1', cancelledEpoch: 0, finalPlayedSampleOffset: 100, reason: 'completed' } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e1', sessionId: 's', epoch: 0, monotonicMs: 1, type: 'transcript.final', payload: { turnId: 't1', text: 'a question', endpointComplete: true } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e2', sessionId: 's', epoch: 0, monotonicMs: 2, type: 'reasoning.final', payload: { turnId: 't1', responseId: 'r1', posture: 'question', text: 'an answer' } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e3', sessionId: 's', epoch: 0, monotonicMs: 3, type: 'tts.started', payload: { responseId: 'r1', playbackId: 'p1', sampleRate: 24000 } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e4', sessionId: 's', epoch: 0, monotonicMs: 4, type: 'playback.stopped', payload: { playbackId: 'p1', cancelledEpoch: 0, finalPlayedSampleOffset: 100, reason: 'completed' } });
     await writer.endSession('s');
     const view = await sessionViewStateFromTurns(writer, 's');
     expect(view.dominant).toBe('idle');
@@ -60,8 +60,8 @@ describe('session archive', () => {
   it('rebuilds a paused conversation without making an unfinished response resumable', async () => {
     const { writer } = await openWriter();
     await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'd' });
-    await writer.apply({ eventId: 'e1', sessionId: 's', epoch: 0, monotonicMs: 1, type: 'transcript.final', payload: { turnId: 't1', text: 'a question', endpointComplete: true } });
-    await writer.apply({ eventId: 'e2', sessionId: 's', epoch: 0, monotonicMs: 2, type: 'reasoning.final', payload: { turnId: 't1', responseId: 'r1', posture: 'question', text: 'an answer' } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e1', sessionId: 's', epoch: 0, monotonicMs: 1, type: 'transcript.final', payload: { turnId: 't1', text: 'a question', endpointComplete: true } });
+    await writer.apply({ protocolVersion: 1, eventId: 'e2', sessionId: 's', epoch: 0, monotonicMs: 2, type: 'reasoning.final', payload: { turnId: 't1', responseId: 'r1', posture: 'question', text: 'an answer' } });
     await writer.pauseSession('s');
     const view = await sessionViewStateFromTurns(writer, 's', 'paused');
     expect(view.dominant).toBe('paused');

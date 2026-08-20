@@ -5,7 +5,7 @@ import { StableTurnWriter, type StableEvent } from './stable-turn-writer';
 const databases: string[] = [];
 let sequence = 0;
 const open = async () => { const name = `podcaster-test-${++sequence}`; databases.push(name); return { name, writer: await StableTurnWriter.open(indexedDB, name) }; };
-const event = (sessionId: string, type: string, payload: Record<string, unknown>, epoch = 0): StableEvent => ({ eventId: `event-${++sequence}`, sessionId, epoch, monotonicMs: Date.now(), type, payload });
+const event = <T extends StableEvent['type']>(sessionId: string, type: T, payload: Record<string, unknown>, epoch = 0): StableEvent => ({ protocolVersion: 1, eventId: `event-${++sequence}`, sessionId, epoch, monotonicMs: Date.now(), type, payload } as StableEvent);
 afterEach(async () => { vi.restoreAllMocks(); for (const name of databases.splice(0)) await new Promise<void>(resolve => { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = () => resolve(); }); });
 
 describe('StableTurnWriter', () => {

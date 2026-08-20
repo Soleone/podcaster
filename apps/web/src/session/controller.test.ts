@@ -1,14 +1,15 @@
 import { indexedDB } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { HostEvent } from '@app/contracts';
 import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
-import { StableTurnWriter, type StableEvent } from '../storage/stable-turn-writer';
+import { StableTurnWriter } from '../storage/stable-turn-writer';
 import { SessionController, type ControlledPlayback } from './controller';
 import { FakeSessionTransport } from './fake-transport';
 import { initialSessionState } from './state';
 
 let sequence = 0;
 const databases: string[] = [];
-const event = (sessionId: string, epoch: number, type: string, payload: Record<string, unknown>): StableEvent => ({ eventId: `event-${++sequence}`, sessionId, epoch, monotonicMs: sequence, type, payload });
+const event = <T extends HostEvent['type']>(sessionId: string, epoch: number, type: T, payload: Record<string, unknown>): HostEvent => ({ protocolVersion: 1, eventId: `event-${++sequence}`, sessionId, epoch, monotonicMs: sequence, type, payload } as HostEvent);
 afterEach(async () => { for (const name of databases.splice(0)) await new Promise<void>(resolve => { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = () => resolve(); }); });
 
 class FakePlayback implements ControlledPlayback {
@@ -272,6 +273,7 @@ describe('SessionController', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(players[0]!.stops).toEqual(['failed']);
     expect(controller.snapshot()).toMatchObject({ dominant: 'degraded', degradedMessage: 'Conversation protocol failed.' });
+    expect((await writer.getSession('session'))?.failures).toContain('client_degraded');
     writer.close();
   });
 

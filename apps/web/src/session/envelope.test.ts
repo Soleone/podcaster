@@ -11,6 +11,6 @@ describe('browser event envelopes', () => {
     expect(second).not.toBe(first);
   });
   it('clamps monotonic time and freezes the expected protocol shape', () => {
-    expect(createEnvelope({ sessionId: 's', epoch: 3, type: 'x', payload: { ok: true }, now: () => -5, idFactory: () => 'id' })).toEqual({ protocolVersion: 1, sessionId: 's', epoch: 3, eventId: 'id', type: 'x', monotonicMs: 0, payload: { ok: true } });
+    expect(createEnvelope({ sessionId: 's', epoch: 3, type: 'playback.progress', payload: { playbackId: 'playback', outputEpoch: 0, playedSampleOffset: 0, generatedSamples: 0 }, now: () => -5, idFactory: () => 'id' })).toEqual({ protocolVersion: 1, sessionId: 's', epoch: 3, eventId: 'id', type: 'playback.progress', monotonicMs: 0, payload: { playbackId: 'playback', outputEpoch: 0, playedSampleOffset: 0, generatedSamples: 0 } });
   });
 });

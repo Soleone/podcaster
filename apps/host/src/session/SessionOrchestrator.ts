@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { DEFAULT_PERSONA_MARKDOWN, parsePersona, type PersonaInterpretation } from "@app/contracts";
+import { DEFAULT_PERSONA_MARKDOWN, parsePersona, type HostEvent, type PersonaInterpretation, type PlaybackPausedEvent, type PlaybackProgressEvent, type PlaybackStoppedEvent, type SessionStateEvent } from "@app/contracts";
 import { decide, POLICY_VERSION, type PolicyDecision, type PolicyInput, type Posture } from "@app/policy";
 import type { PiClient, PiPosture } from "../pi/PiClient.js";
 import type { PiResearchClient } from "../pi/PiResearchClient.js";
@@ -9,7 +9,15 @@ import { ResearchPartAssembler } from "./ResearchPartAssembler.js";
 import { log } from "../logger.js";
 
 export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
-export interface SessionEvent { protocolVersion: 1; sessionId: string; epoch: number; eventId: string; type: string; monotonicMs: number; payload: Record<string, unknown> }
+export type SessionEvent = HostEvent;
+type HostEventType = HostEvent["type"];
+type HostEventFor<T extends HostEventType> = HostEvent extends infer Event
+  ? Event extends { type: infer Type }
+    ? T extends Type ? Event : never
+    : never
+  : never;
+type HostEventPayload<T extends HostEventType> = HostEventFor<T>["payload"];
+type EmittedSessionPhase = SessionStateEvent["payload"]["phase"];
 export interface SpeechSynthesisStart {
   playbackId: string;
   sampleRate: number;
@@ -43,7 +51,7 @@ export interface SessionOrchestratorOptions {
   pi: PiClient;
   speech: SpeechOutputPort;
   personaSource?: string | Uint8Array;
-  emit?: (event: SessionEvent) => void;
+  emit?: (event: HostEvent) => void;
   now?: () => number;
   idFactory?: () => string;
   scheduler?: Scheduler;
@@ -168,7 +176,7 @@ export class SessionOrchestrator {
   private userSpeaking = false;
   private stableUserTurnCount = 0;
   private eligibleTurnsSinceChallenge = 3;
-  private readonly emitFn: (event: SessionEvent) => void;
+  private readonly emitFn: (event: HostEvent) => void;
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly scheduler: Scheduler;
@@ -260,7 +268,7 @@ export class SessionOrchestrator {
     if (!keepActiveResponse && this.active) this.advanceEpochAndCancel();
     const operationEpoch = this.epoch;
     if (!keepActiveResponse) this.phase = "deciding";
-    this.emit("policy.decision", { turnId: turn.turnId, ...policy });
+    this.emit("policy.decision", { turnId: turn.turnId, ...policy, reasonCodes: [...policy.reasonCodes] });
     this.recentDecisions.push({ turnId: turn.turnId, eligible: policy.eligible, posture: policy.posture });
     if (this.recentDecisions.length > 10) this.recentDecisions.splice(0, this.recentDecisions.length - 10);
     this.stableUserTurnCount++;
@@ -694,7 +702,7 @@ export class SessionOrchestrator {
     return true;
   }
 
-  playbackPaused(input: { responseId: string; playbackId: string; outputEpoch: number; pausedSampleOffset: number; generatedSamples: number }): void {
+  playbackPaused(input: PlaybackPausedEvent["payload"]): void {
     const provisional = this.provisional;
     const active = this.active;
     const ledger = this.playback.get(input.playbackId);
@@ -733,7 +741,7 @@ export class SessionOrchestrator {
   }
   rejectBargeIn(): boolean { return this.resolveProvisional("rejected"); }
 
-  playbackProgress(input: { playbackId: string; outputEpoch: number; playedSampleOffset: number; generatedSamples: number }): void {
+  playbackProgress(input: PlaybackProgressEvent["payload"]): void {
     const ledger = this.playback.get(input.playbackId);
     if (!ledger || ledger.terminal || !this.validOffset(input.outputEpoch) || !this.validOffset(input.playedSampleOffset) || !this.validOffset(input.generatedSamples)) return;
     if (input.outputEpoch !== this.epoch || ledger.outputEpoch !== input.outputEpoch) return;
@@ -744,7 +752,7 @@ export class SessionOrchestrator {
     ledger.delivered = Math.max(ledger.delivered, input.playedSampleOffset);
   }
 
-  playbackStopped(input: { playbackId: string; cancelledEpoch: number; finalPlayedSampleOffset: number; reason: "completed" | "cancelled" | "stopped" | "failed" }): void {
+  playbackStopped(input: PlaybackStoppedEvent["payload"]): void {
     const ledger = this.playback.get(input.playbackId);
     if (!ledger || ledger.terminal || !this.validOffset(input.cancelledEpoch) || !this.validOffset(input.finalPlayedSampleOffset)) return;
     if (ledger.outputEpoch !== input.cancelledEpoch || input.finalPlayedSampleOffset > ledger.generatedSamples) return;
@@ -938,7 +946,7 @@ export class SessionOrchestrator {
       this.advanceEpochAndCancel();
       this.phase = "listening";
     }
-    this.emit(`barge_in.${type}`, { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: safe, ...(rewindMs > 0 ? { rewindMs } : {}) });
+    this.emit(type === "rejected" ? "barge_in.rejected" : "barge_in.timed_out", { responseId: provisional.responseId, outputEpoch: provisional.outputEpoch, resumable: safe, ...(rewindMs > 0 ? { rewindMs } : {}) });
     this.emitState();
     return true;
   }
@@ -1030,8 +1038,12 @@ export class SessionOrchestrator {
     this.cancelResponse(active);
     this.clearActive(active);
   }
-  private emitState(): void { this.emit("session.state", { phase: this.phase, personaDigest: this.personaDigest }); }
-  private emit(type: string, payload: Record<string, unknown>): void {
-    this.emitFn({ protocolVersion: 1, sessionId: this.options.sessionId, epoch: this.epoch, eventId: this.idFactory(), type, monotonicMs: Math.max(0, this.now()), payload });
+  private emitState(): void {
+    if (this.phase === "acceptance_pending_terminal") return;
+    const phase: EmittedSessionPhase = this.phase;
+    this.emit("session.state", { phase, personaDigest: this.personaDigest });
+  }
+  private emit<T extends HostEventType>(type: T, payload: HostEventPayload<T>): void {
+    this.emitFn({ protocolVersion: 1, sessionId: this.options.sessionId, epoch: this.epoch, eventId: this.idFactory(), type, monotonicMs: Math.max(0, this.now()), payload } as HostEvent);
   }
 }
