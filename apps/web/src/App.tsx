@@ -231,7 +231,7 @@ export function App() {
     };
   }, []);
 
-  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, settings: SessionStartSettings, activate: () => Promise<void>) => {
+  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, activate: () => Promise<void>) => {
     reconnectUnsubscribeRef.current?.();
     reconnectUnsubscribeRef.current = undefined;
     transportFailureUnsubscribeRef.current?.();
@@ -480,7 +480,7 @@ export function App() {
               if (!reopened.ok) throw new Error(reopened.degradedReason);
               configureSessionClock(await candidate.getSession(target));
             };
-            if (fakeServices) await composeFakeSession(candidate, target, restored, 'fake-recovered', settings, activate);
+            if (fakeServices) await composeFakeSession(candidate, target, restored, 'fake-recovered', activate);
             else await composeRealSession(candidate, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings, activate);
             if (!cancelled) navigate(`/session/${target}`);
           } catch (error) {
@@ -594,7 +594,7 @@ export function App() {
         if (!persisted.ok) throw new Error(persisted.degradedReason);
         configureSessionClock(await opened.getSession(id));
       };
-      if (fakeServices) await composeFakeSession(opened, id, initial, cap, settings, activate);
+      if (fakeServices) await composeFakeSession(opened, id, initial, cap, activate);
       else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings, activate);
     } catch (error) {
       // A failed composition must release the partially-created runtime before
