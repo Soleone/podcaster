@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "sessionId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f1",
+  "epoch": 2,
+  "eventId": "018f06b5-3c8d-7b2a-9f35-8b3388a857f3",
+  "monotonicMs": 1000,
+  "type": "vad.speech_end",
+  "payload": {
+    "streamId": "b39b7a1c-2d4e-4f6a-9b8c-0d1e2f3a4b5c",
+    "utteranceId": "018f1f32-7abe-7def-8abc-0123456789ab",
+    "captureStartSequence": 3,
+    "captureEndSequence": -1
+  }
+}

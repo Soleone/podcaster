@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/vad-speech-start.json",
+  "title": "VadSpeechStartEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "vad.speech_start" },
+        "payload": {
+          "type": "object",
+          "required": ["streamId", "utteranceId", "captureStartSequence"],
+          "properties": {
+            "streamId": { "type": "string", "format": "uuid" },
+            "utteranceId": { "type": "string", "format": "uuid" },
+            "captureStartSequence": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

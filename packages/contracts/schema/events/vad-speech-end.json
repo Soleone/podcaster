@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/vad-speech-end.json",
+  "title": "VadSpeechEndEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "vad.speech_end" },
+        "payload": {
+          "type": "object",
+          "required": ["streamId", "utteranceId", "captureStartSequence", "captureEndSequence"],
+          "properties": {
+            "streamId": { "type": "string", "format": "uuid" },
+            "utteranceId": { "type": "string", "format": "uuid" },
+            "captureStartSequence": { "type": "integer", "minimum": 0 },
+            "captureEndSequence": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

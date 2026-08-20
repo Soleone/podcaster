@@ -12,6 +12,7 @@ export type BargeInEvent = { "protocolVersion": 1; "sessionId": string; "epoch":
 export type BrowserCommand = ({ "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; }) & ({ "type": "session.start"; "payload": { "sessionSeed": string; "reasoningMode": "full" | "transcript_only"; "settings": { "version": 1; "persona": string; "pi"?: { "model": string; "thinkingLevel": "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; }; "voice": { "catalogId": string; "voiceId": string; "backendId"?: string; "modelId"?: string; "speedModifier"?: number; "tonePrompt"?: string; "language"?: "Chinese" | "English" | "Japanese" | "Korean" | "German" | "French" | "Russian" | "Portuguese" | "Spanish" | "Italian"; }; }; }; } | { "type": "audio.start"; "payload": { "streamId": number; "sampleRate": 16000; "channels": 1; "frameSamples": 320; }; } | { "type": "audio.stop"; "payload": { "streamId": number; }; } | { "type": "turn.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "barge_in.confirm" | "barge_in.reject"; "payload": { "responseId": string; "outputEpoch": number; }; } | { "type": "turn.persisted"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; }; } | { "type": "turn.persistence_failed"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; "reasonCode": "quota" | "unavailable" | "aborted"; }; } | { "type": "session.stop"; "payload": { "reason": "user" | "expired" | "disconnect"; }; } | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent);
 export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.paused" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "interruption.decision" | "reasoning.started" | "reasoning.delta" | "reasoning.final" | "response.part_final" | "response.part_started" | "tts.started" | "tts.ended" | "response.failed" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
 export type FailureEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "failure"; "monotonicMs": number; "payload": { "code": string; "detail": string; "correctiveAction": string; "recoverable": boolean; }; };
+export type HostEvent = SessionStateEvent | VadSpeechStartEvent | VadSpeechEndEvent | TranscriptPartialEvent | TranscriptFinalEvent | PolicyDecisionEvent | BargeInEvent | InterruptionDecisionEvent | ReasoningStartedEvent | ReasoningDeltaEvent | ReasoningFinalEvent | ResponsePartStartedEvent | ResponsePartFinalEvent | ResponseFailedEvent | TtsStartedEvent | TtsEndedEvent | FailureEvent;
 export type InterruptionDecisionEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "interruption.decision"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "playbackId": string; "outputEpoch": number; "action": "resume" | "accept"; "intent": "non_substantive" | "continue_previous" | "new_request" | "correction" | "topic_change" | "stop_previous"; "confidence": "low" | "medium" | "high"; "disposition": "resume_noise" | "resume_fragment" | "resume_requested" | "accept_takeover"; "pausedSampleOffset": number; "rewindMs"?: number; "partIndex"?: number; "partId"?: string; }; };
 export type PlaybackPausedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.paused"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "outputEpoch": number; "pausedSampleOffset": number; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; };
 export type PlaybackProgressEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.progress"; "monotonicMs": number; "payload": { "playbackId": string; "outputEpoch": number; "playedSampleOffset": number; "generatedSamples": number; }; };
@@ -39,6 +40,8 @@ export type TranscriptFinalEvent = { "protocolVersion": 1; "sessionId": string; 
 export type TranscriptPartialEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "transcript.partial"; "monotonicMs": number; "payload": { "utteranceId": string; "sequence": number; "text": string; "replacedCharacters": number; }; };
 export type TtsEndedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.ended"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; };
 export type TtsStartedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "tts.started"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "sampleRate": number; "backendId"?: string; "modelId"?: string; "outputStreamId"?: number; "partIndex"?: number; "partId"?: string; }; };
+export type VadSpeechEndEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "vad.speech_end"; "monotonicMs": number; "payload": { "streamId": string; "utteranceId": string; "captureStartSequence": number; "captureEndSequence": number; }; };
+export type VadSpeechStartEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "vad.speech_start"; "monotonicMs": number; "payload": { "streamId": string; "utteranceId": string; "captureStartSequence": number; }; };
 export type HistoryExport = { "version": 1; "exportedAt": string; "sessions": Array<{ "sessionId": string; "startedAt": string; "endedAt"?: string | null; "personaDigest": string; "turns": Array<{ "turnId": string; "role": "user" | "assistant"; "text": string; "createdAt": string; "posture"?: "riff" | "question" | "challenge" | "silence"; "deliveredSampleOffset"?: number; "interrupted"?: boolean; "failures"?: Array<string>; }>; }>; };
 export type Persona = { "version": 1; "name": string; "invitation_only": boolean; "posture_weights": { "riff": number; "question": number; "challenge": number; }; "challenge_enabled": boolean; "interests": Array<string>; "experiences"?: Array<string>; "body": string; };
 export type ProtocolEnvelope = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; };
@@ -2086,6 +2089,64 @@ export const CONTRACT_SCHEMAS = {
             "additionalProperties": false
           }
         }
+      }
+    ]
+  },
+  "events/host-event.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/host-event.json",
+    "title": "HostEvent",
+    "oneOf": [
+      {
+        "$ref": "./session-state.json"
+      },
+      {
+        "$ref": "./vad-speech-start.json"
+      },
+      {
+        "$ref": "./vad-speech-end.json"
+      },
+      {
+        "$ref": "./transcript-partial.json"
+      },
+      {
+        "$ref": "./transcript-final.json"
+      },
+      {
+        "$ref": "./policy-decision.json"
+      },
+      {
+        "$ref": "./barge-in.json"
+      },
+      {
+        "$ref": "./interruption-decision.json"
+      },
+      {
+        "$ref": "./reasoning-started.json"
+      },
+      {
+        "$ref": "./reasoning-delta.json"
+      },
+      {
+        "$ref": "./reasoning-final.json"
+      },
+      {
+        "$ref": "./response-part-started.json"
+      },
+      {
+        "$ref": "./response-part-final.json"
+      },
+      {
+        "$ref": "./response-failed.json"
+      },
+      {
+        "$ref": "./tts-started.json"
+      },
+      {
+        "$ref": "./tts-ended.json"
+      },
+      {
+        "$ref": "./failure.json"
       }
     ]
   },
@@ -4433,6 +4494,101 @@ export const CONTRACT_SCHEMAS = {
       }
     ]
   },
+  "events/vad-speech-end.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/vad-speech-end.json",
+    "title": "VadSpeechEndEvent",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "const": "vad.speech_end"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "utteranceId",
+              "captureStartSequence",
+              "captureEndSequence"
+            ],
+            "properties": {
+              "streamId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "utteranceId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "captureStartSequence": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "captureEndSequence": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
+  "events/vad-speech-start.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/vad-speech-start.json",
+    "title": "VadSpeechStartEvent",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "const": "vad.speech_start"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "streamId",
+              "utteranceId",
+              "captureStartSequence"
+            ],
+            "properties": {
+              "streamId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "utteranceId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "captureStartSequence": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
   "history-export.json": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://podcaster.local/schema/history-export.json",
@@ -4712,4 +4868,4 @@ export const CONTRACT_SCHEMAS = {
   }
 } as const;
 export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;
-export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningDeltaEvent" | "ReasoningFinalEvent" | "ReasoningStartedEvent" | "ResponseFailedEvent" | "ResponsePartFinalEvent" | "ResponsePartStartedEvent" | "SessionStateEvent" | "SidecarMessage" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope" | "VoiceEnrollment";
+export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "HostEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningDeltaEvent" | "ReasoningFinalEvent" | "ReasoningStartedEvent" | "ResponseFailedEvent" | "ResponsePartFinalEvent" | "ResponsePartStartedEvent" | "SessionStateEvent" | "SidecarMessage" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "VadSpeechEndEvent" | "VadSpeechStartEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope" | "VoiceEnrollment";

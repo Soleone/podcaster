@@ -40,6 +40,7 @@ const cases = [
   ["events/barge-in.json", "barge-in", "barge-in"],
   ["events/browser-command.json", "browser-command", "browser-command"],
   ["events/failure.json", "failure", "failure"],
+  ["events/host-event.json", "host-event", "host-event"],
   ["events/interruption-decision.json", "interruption-decision", "interruption-decision"],
   ["events/playback-progress.json", "playback-progress", "playback-progress"],
   ["events/playback-paused.json", "playback-paused", "playback-paused"],
@@ -57,6 +58,8 @@ const cases = [
   ["events/transcript-partial.json", "transcript-partial", "transcript-partial"],
   ["events/tts-ended.json", "tts-ended", "tts-ended"],
   ["events/tts-started.json", "tts-started", "tts-started"],
+  ["events/vad-speech-end.json", "vad-speech-end", "vad-speech-end"],
+  ["events/vad-speech-start.json", "vad-speech-start", "vad-speech-start"],
   ["persona.json", "persona", "persona"],
   ["voice-enrollment.json", "voice-enrollment", "voice-enrollment"],
   ["history-export.json", "history-export", "history-export"],
@@ -66,6 +69,28 @@ const cases = [
   ["benchmarks/summary.json", "benchmark-summary", "benchmark-summary"],
   ["benchmarks/rating.json", "benchmark-rating", "benchmark-rating"],
 ] as const;
+
+const hostEventSchemaPaths = new Set([
+  "events/barge-in.json",
+  "events/failure.json",
+  "events/host-event.json",
+  "events/interruption-decision.json",
+  "events/policy-decision.json",
+  "events/reasoning-delta.json",
+  "events/reasoning-final.json",
+  "events/reasoning-started.json",
+  "events/response-failed.json",
+  "events/response-part-final.json",
+  "events/response-part-started.json",
+  "events/session-state.json",
+  "events/transcript-final.json",
+  "events/transcript-partial.json",
+  "events/tts-ended.json",
+  "events/tts-started.json",
+  "events/vad-speech-end.json",
+  "events/vad-speech-start.json",
+]);
+const hostEventCases = cases.filter(([schemaPath]) => hostEventSchemaPaths.has(schemaPath) && schemaPath !== "events/host-event.json");
 
 type JsonSchema = Record<string, any>;
 const schemasById = new Map<string, JsonSchema>(Object.values(CONTRACT_SCHEMAS).map(schema => [schema.$id, schema as JsonSchema]));
@@ -159,6 +184,29 @@ describe("canonical and generated model-associated validator parity", () => {
   test("generates exactly one runtime schema for every canonical schema", () => {
     expect(Object.keys(CONTRACT_SCHEMAS).sort()).toEqual(cases.map(([path]) => path).sort());
     expect(Object.keys(CONTRACT_VALIDATORS).sort()).toEqual(Object.values(CONTRACT_SCHEMAS).map(schema => schema.title).sort());
+  });
+});
+
+describe("HostEvent union", () => {
+  const hostEventId = "https://podcaster.local/schema/events/host-event.json";
+
+  test.each(hostEventCases)("accepts the valid %s fixture", (_schemaPath, validName) => {
+    const value = readJson(`fixtures/valid/${validName}.json`);
+    expect(canonical.validate(hostEventId, value), JSON.stringify(canonical.errors)).toBe(true);
+    expect(CONTRACT_VALIDATORS.HostEvent(value), JSON.stringify(CONTRACT_VALIDATORS.HostEvent.errors)).toBe(true);
+  });
+
+  test.each(hostEventCases)("rejects the invalid %s fixture", (_schemaPath, _validName, invalidName) => {
+    const value = readJson(`fixtures/invalid/${invalidName}.json`);
+    expect(canonical.validate(hostEventId, value), JSON.stringify(canonical.errors)).toBe(false);
+    expect(CONTRACT_VALIDATORS.HostEvent(value), JSON.stringify(CONTRACT_VALIDATORS.HostEvent.errors)).toBe(false);
+  });
+
+  test("rejects a failure containing only detail", () => {
+    const value = readJson("fixtures/invalid/host-event.json");
+    expect(value).toMatchObject({ type: "failure", payload: { detail: expect.any(String) } });
+    expect(canonical.validate(hostEventId, value), JSON.stringify(canonical.errors)).toBe(false);
+    expect(CONTRACT_VALIDATORS.HostEvent(value), JSON.stringify(CONTRACT_VALIDATORS.HostEvent.errors)).toBe(false);
   });
 });
 

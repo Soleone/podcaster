@@ -33,6 +33,7 @@ CASES = [
     ("events/barge-in.json", "barge-in", "barge-in"),
     ("events/browser-command.json", "browser-command", "browser-command"),
     ("events/failure.json", "failure", "failure"),
+    ("events/host-event.json", "host-event", "host-event"),
     ("events/interruption-decision.json", "interruption-decision", "interruption-decision"),
     ("events/playback-progress.json", "playback-progress", "playback-progress"),
     ("events/playback-paused.json", "playback-paused", "playback-paused"),
@@ -50,6 +51,8 @@ CASES = [
     ("events/transcript-partial.json", "transcript-partial", "transcript-partial"),
     ("events/tts-ended.json", "tts-ended", "tts-ended"),
     ("events/tts-started.json", "tts-started", "tts-started"),
+    ("events/vad-speech-end.json", "vad-speech-end", "vad-speech-end"),
+    ("events/vad-speech-start.json", "vad-speech-start", "vad-speech-start"),
     ("persona.json", "persona", "persona"),
     ("voice-enrollment.json", "voice-enrollment", "voice-enrollment"),
     ("history-export.json", "history-export", "history-export"),
@@ -58,6 +61,29 @@ CASES = [
     ("benchmarks/event.json", "benchmark-event", "benchmark-event"),
     ("benchmarks/summary.json", "benchmark-summary", "benchmark-summary"),
     ("benchmarks/rating.json", "benchmark-rating", "benchmark-rating"),
+]
+HOST_EVENT_SCHEMA_PATHS = {
+    "events/barge-in.json",
+    "events/failure.json",
+    "events/host-event.json",
+    "events/interruption-decision.json",
+    "events/policy-decision.json",
+    "events/reasoning-delta.json",
+    "events/reasoning-final.json",
+    "events/reasoning-started.json",
+    "events/response-failed.json",
+    "events/response-part-final.json",
+    "events/response-part-started.json",
+    "events/session-state.json",
+    "events/transcript-final.json",
+    "events/transcript-partial.json",
+    "events/tts-ended.json",
+    "events/tts-started.json",
+    "events/vad-speech-end.json",
+    "events/vad-speech-start.json",
+}
+HOST_EVENT_CASES = [
+    case for case in CASES if case[0] in HOST_EVENT_SCHEMA_PATHS and case[0] != "events/host-event.json"
 ]
 
 
@@ -220,6 +246,34 @@ def test_persona_body_utf8_byte_limit_and_well_formed_strings() -> None:
 def test_generated_model_exists_for_every_canonical_schema() -> None:
     assert set(contracts.CONTRACT_SCHEMAS) == {path for path, _, _ in CASES}
     assert generated.contracts is contracts
+
+
+@pytest.mark.parametrize("schema_path,valid_name,_", HOST_EVENT_CASES)
+def test_valid_host_fixtures_also_validate_as_host_event(schema_path: str, valid_name: str, _: str) -> None:
+    del schema_path
+    value = load(FIXTURES / "valid" / f"{valid_name}.json")
+    validate("events/host-event.json", value)
+    contracts.HostEvent.model_validate(value)
+
+
+@pytest.mark.parametrize("schema_path,_,invalid_name", HOST_EVENT_CASES)
+def test_invalid_host_fixtures_fail_host_event(schema_path: str, _: str, invalid_name: str) -> None:
+    del schema_path
+    value = load(FIXTURES / "invalid" / f"{invalid_name}.json")
+    with pytest.raises(Exception):
+        validate("events/host-event.json", value)
+    with pytest.raises(ValidationError):
+        contracts.HostEvent.model_validate(value)
+
+
+def test_host_event_rejects_failure_with_only_detail() -> None:
+    value = load(FIXTURES / "invalid/host-event.json")
+    assert value["type"] == "failure"
+    assert value["payload"] == {"detail": value["payload"]["detail"]}
+    with pytest.raises(Exception):
+        validate("events/host-event.json", value)
+    with pytest.raises(ValidationError):
+        contracts.HostEvent.model_validate(value)
 
 
 def test_binary_frame_matches_typescript_fixture() -> None:

@@ -1,4 +1,4 @@
-import type { CoreEvent, PlaybackStoppedEvent } from "../src/generated/contracts.js";
+import type { CoreEvent, HostEvent, PlaybackStoppedEvent } from "../src/generated/contracts.js";
 
 const coreEvent: CoreEvent = {
   protocolVersion: 1,
@@ -19,7 +19,17 @@ const playbackReceipt: PlaybackStoppedEvent = {
     reason: "cancelled",
   },
 };
-void coreEvent; void playbackReceipt;
+const hostEvent: HostEvent = {
+  ...coreEvent,
+  type: "failure",
+  payload: {
+    code: "reasoning_invalid",
+    detail: "Reasoning output was invalid.",
+    correctiveAction: "Continue listening.",
+    recoverable: true,
+  },
+};
+void coreEvent; void playbackReceipt; void hostEvent;
 
 // @ts-expect-error unknown protocol event types are rejected
 const unknownEvent: CoreEvent = { ...coreEvent, type: "unknown.event" };
@@ -33,4 +43,8 @@ const missingReceiptType: PlaybackStoppedEvent = (({ type: _type, ...event }) =>
 const primitivePayload: CoreEvent = { ...coreEvent, payload: "invalid" };
 // @ts-expect-error protocol payloads must be objects, not arrays
 const arrayPayload: CoreEvent = { ...coreEvent, payload: [] };
-void unknownEvent; void missingType; void incompleteReceipt; void missingReceiptType; void primitivePayload; void arrayPayload;
+// @ts-expect-error HostEvent rejects the broad failure payload regression
+const incompleteHostEvent: HostEvent = { ...hostEvent, payload: { detail: "missing failure fields" } };
+// @ts-expect-error browser commands are not HostEvent variants
+const browserCommandAsHostEvent: HostEvent = { ...hostEvent, type: "audio.start", payload: {} };
+void unknownEvent; void missingType; void incompleteReceipt; void missingReceiptType; void primitivePayload; void arrayPayload; void incompleteHostEvent; void browserCommandAsHostEvent;
