@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Brain, Captions, Check, ChevronDown, CircleAlert, CircleStop, Copy, Ear, LoaderCircle, MessageCircleQuestion, Pause, Play, Trash, Volume2, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Brain, Captions, ChevronDown, CircleAlert, CircleStop, Copy, Ear, MessageCircleQuestion, Pause, Play, Trash, Volume2, type LucideIcon } from 'lucide-react';
 import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog';
 import { ExportPopover } from '../components/ExportPopover';
 import { ConversationRow, conversationItemStartsTurn } from '../components/conversation/conversation-item';
@@ -13,7 +13,6 @@ import { Marker, MarkerContent, MarkerIcon } from '../components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '../components/ui/message';
 import { cn } from '../lib/utils';
 import { Spinner } from '../components/ui/spinner';
-import { Progress } from '../components/ui/progress';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '../components/ui/message-scroller';
 import { activityLog, type ActivityEntry } from './activity-log';
 import type { ExportOnProgress } from '../recording/splice';
@@ -99,7 +98,6 @@ export function SessionScreen(props: SessionScreenProps) {
         {assistantActive && !readOnly ? <Button variant="secondary" size="sm" onClick={props.onCancelAssistant}>Stop speaking</Button> : null}
       </div>
     </Card>
-    {!readOnly ? <AudioEngineStatusStrip status={props.state.audioEngine} /> : null}
     <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{props.state.announcement}</p>
     {trimAnnouncement ? <p className="sr-only" role="status" aria-live="polite">{trimAnnouncement}</p> : null}
     {props.state.degradedMessage ? <Alert variant="destructive" className="mt-4"><CircleAlert aria-hidden="true" /><AlertDescription>{props.state.degradedMessage}</AlertDescription></Alert> : null}
@@ -124,31 +122,6 @@ export function SessionScreen(props: SessionScreenProps) {
     </section>
     <ActivityLogPanel />
   </main>;
-}
-
-function AudioEngineStatusStrip({ status }: { status: SessionViewState['audioEngine'] }) {
-  const healthy = status.status === 'ready';
-  const failed = status.status === 'failed';
-  const completed = [status.capture, status.vad, status.tts].filter(value => value === 'ready').length;
-  const value = healthy ? 100 : Math.round((completed / 3) * 100);
-  const label = healthy ? 'Audio engine ready' : failed ? 'Audio engine needs attention' : status.status === 'retrying' ? 'Reconnecting audio engine…' : 'Warming audio engine…';
-  const detail = healthy ? 'Microphone, VAD, and voice are ready.' : status.detail ?? (failed ? 'The local audio engine could not continue.' : 'Preparing microphone, speech detection, and voice playback.');
-  return <Card size="sm" className={cn('mt-3', failed && 'border-destructive/50')} data-audio-status={status.status}>
-    <CardContent className="flex flex-col gap-2 py-3">
-      <div className="flex items-center gap-2 text-xs">
-        {healthy ? <Check className="size-4 text-emerald-600" aria-hidden="true" /> : failed ? <CircleAlert className="size-4 text-destructive" aria-hidden="true" /> : <LoaderCircle className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />}
-        <span className="font-medium">{label}</span>
-        <span className="ml-auto text-muted-foreground">{value}%</span>
-      </div>
-      {!healthy ? <Progress value={value} aria-label="Audio engine warmup progress" className="gap-0 [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-indicator]]:bg-primary" /> : null}
-      <p className="text-xs text-muted-foreground">{detail}</p>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.7rem] text-muted-foreground" aria-label="Audio engine components">
-        <span>Mic {status.capture === 'ready' ? 'ready' : status.capture}</span>
-        <span>VAD {status.vad === 'ready' ? 'ready' : status.vad}</span>
-        <span>Voice {status.tts === 'ready' ? 'ready' : status.tts}</span>
-      </div>
-    </CardContent>
-  </Card>;
 }
 
 function ActivityLogPanel() {

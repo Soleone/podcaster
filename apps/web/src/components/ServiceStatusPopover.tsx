@@ -4,8 +4,9 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from './ui/popover';
+import { Progress } from './ui/progress';
 import { cn } from '../lib/utils';
-import { aggregateServiceState, serviceStateLabel, type ServiceState, type ServiceStatuses } from '../services/service-status';
+import { aggregateServiceState, serviceCheckStateLabel, serviceStateLabel, type ServiceCheck, type ServiceCheckState, type ServiceState, type ServiceStatus, type ServiceStatuses } from '../services/service-status';
 
 export interface ServiceStatusPopoverProps {
   statuses: ServiceStatuses;
@@ -24,12 +25,33 @@ const stateTone: Record<ServiceState, { dot: string; icon: typeof Check; badge: 
   incompatible: { dot: 'bg-destructive', icon: CircleAlert, badge: 'destructive' },
 };
 
+const checkTone: Record<ServiceCheckState, string> = {
+  ready: 'bg-emerald-500',
+  starting: 'bg-amber-500 animate-pulse',
+  warming: 'bg-amber-500 animate-pulse',
+  needs_action: 'bg-amber-500',
+  unavailable: 'bg-destructive',
+};
+
 function StatusLed({ state, className }: { state: ServiceState; className?: string }) {
   const tone = stateTone[state];
   return <span aria-hidden="true" className={cn('inline-block size-2 rounded-full', tone.dot, tone.animate && 'animate-pulse', className)} />;
 }
 
-function ServiceCard({ status, icon: Icon, piSettings }: { status: ServiceStatuses['audio']; icon: typeof Server; piSettings?: PiSettings | undefined }) {
+function ServiceChecks({ checks }: { checks: readonly ServiceCheck[] }) {
+  return <ul className="mt-2 flex flex-col gap-1.5 border-t pt-2" aria-label="Service components">
+    {checks.map(check => <li key={check.label} className="flex items-start gap-2 text-xs">
+      <span aria-hidden="true" className={cn('mt-1 size-1.5 shrink-0 rounded-full', checkTone[check.state])} />
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">{check.label}</span>
+        <span className="text-muted-foreground"> · {serviceCheckStateLabel(check.state)}</span>
+        {check.detail ? <span className="block text-muted-foreground">{check.detail}</span> : null}
+      </span>
+    </li>)}
+  </ul>;
+}
+
+function ServiceCard({ status, icon: Icon, piSettings }: { status: ServiceStatus; icon: typeof Server; piSettings?: PiSettings | undefined }) {
   const tone = stateTone[status.state];
   const StateIcon = tone.icon;
   const detail = status.label === 'Pi service' && status.state === 'ready' && piSettings
@@ -45,6 +67,8 @@ function ServiceCard({ status, icon: Icon, piSettings }: { status: ServiceStatus
         <Badge variant={tone.badge}><StateIcon aria-hidden="true" />{serviceStateLabel(status.state)}</Badge>
       </div>
       <CardDescription className="text-xs leading-relaxed">{detail}</CardDescription>
+      {status.progress !== undefined && status.state !== 'ready' ? <Progress value={status.progress} aria-label={`${status.label} readiness progress`} className="gap-0 [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-indicator]]:bg-primary" /> : null}
+      {status.checks?.length ? <ServiceChecks checks={status.checks} /> : null}
     </CardHeader>
     {status.state !== 'ready' ? <CardFooter className="border-t px-3.5 pt-2.5 pb-3.5 text-xs leading-relaxed">
       <span><span className="font-medium text-foreground">Next:</span> {status.correctiveAction}</span>
@@ -75,7 +99,7 @@ export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false, 
         <div className="flex items-start justify-between gap-3">
           <div>
             <PopoverTitle>Service status</PopoverTitle>
-            <PopoverDescription className="mt-1">Live health for audio and Pi.</PopoverDescription>
+            <PopoverDescription className="mt-1">Live readiness for audio and Pi.</PopoverDescription>
           </div>
           {onRefresh ? <Button variant="ghost" size="icon-xs" aria-label="Refresh service status" title="Refresh service status" onClick={onRefresh} disabled={refreshing}>
             <RefreshCw className={cn(refreshing && 'animate-spin')} aria-hidden="true" />
@@ -86,7 +110,7 @@ export function ServiceStatusPopover({ statuses, onRefresh, refreshing = false, 
         <ServiceCard status={statuses.audio} icon={Server} />
         <ServiceCard status={statuses.pi} icon={Sparkles} piSettings={piSettings} />
       </div>
-      <p className="border-t pt-3 text-xs text-muted-foreground">This indicator updates automatically while Podcaster is open.</p>
+      <p className="border-t pt-3 text-xs text-muted-foreground">Session start stays disabled until required services are ready.</p>
     </PopoverContent>
   </Popover>;
 }

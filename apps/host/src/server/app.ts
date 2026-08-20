@@ -168,18 +168,30 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       : descriptor?.status === 'unavailable'
         ? `${activeLabel} is unavailable. ${descriptor.reason ?? 'Install its local runtime or choose another backend.'}`
         : `${activeLabel} is not available from the local audio engine yet.`;
+    const warmup = snapshot?.warmup ?? { vad: snapshot?.status === 'ready' ? 'ready' as const : 'starting' as const, tts: snapshot?.status === 'ready' ? 'ready' as const : 'starting' as const };
+    const checkState = (state: 'starting' | 'warming' | 'ready' | 'failed'): 'starting' | 'warming' | 'ready' | 'unavailable' => state === 'failed' ? 'unavailable' : state;
+    const audioChecks = [
+      { label: 'Microphone', state: microphoneGranted ? 'ready' as const : 'needs_action' as const, detail: microphoneGranted ? 'Permission granted.' : 'Permission is required before capture can start.' },
+      { label: 'Speech detection', state: checkState(warmup.vad), detail: warmup.vad === 'ready' ? 'VAD is ready.' : 'VAD is warming up.' },
+      { label: 'Voice engine', state: activeReady ? checkState(warmup.tts) : snapshot?.status === 'starting' ? 'starting' as const : 'unavailable' as const, detail: activeReady ? `${activeLabel} is ${warmup.tts === 'ready' ? 'ready' : 'warming up'}.` : voiceOutputReason },
+    ];
+    const audioReadyChecks = audioChecks.filter(check => check.state === 'ready').length;
+    const audioOperational = activeReady && warmup.vad === 'ready' && warmup.tts === 'ready';
     const audioService = !snapshot
-      ? { state: 'unavailable' as const, label: 'Audio server', detail: 'The local audio server could not be reached.', correctiveAction: 'Retry the readiness check.' }
+      ? { state: 'unavailable' as const, label: 'Audio server', detail: 'The local audio server could not be reached.', correctiveAction: 'Retry the readiness check.', checks: audioChecks }
       : snapshot.status === 'starting'
-        ? { state: 'starting' as const, label: 'Audio server', detail: 'The audio server is loading its speech models.', correctiveAction: 'Keep this page open while the local runtime starts.' }
+        ? { state: 'starting' as const, label: 'Audio server', detail: 'The audio server is loading its speech models.', correctiveAction: 'Keep this page open while the local runtime starts.', progress: Math.round((audioReadyChecks / audioChecks.length) * 100), checks: audioChecks }
         : snapshot.status === 'failed'
-          ? { state: 'unavailable' as const, label: 'Audio server', detail: 'The audio server failed to load its runtime.', correctiveAction: 'Restart Podcaster and check the local runtime logs.' }
-          : activeReady
-            ? { state: 'ready' as const, label: 'Audio server', detail: `${activeLabel} and local speech recognition are ready.`, correctiveAction: 'No action needed.' }
-            : { state: 'degraded' as const, label: 'Audio server', detail: voiceOutputReason, correctiveAction: 'Choose an available voice backend in settings, then retry.' };
-    const piService = pi === PI_CHECKING
-      ? { state: 'starting' as const, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction }
-      : { state: pi.status, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction };
+          ? { state: 'unavailable' as const, label: 'Audio server', detail: 'The audio server failed to load its runtime.', correctiveAction: 'Restart Podcaster and check the local runtime logs.', checks: audioChecks }
+          : audioOperational
+            ? { state: 'ready' as const, label: 'Audio server', detail: `${activeLabel} and local speech recognition are ready.`, correctiveAction: 'No action needed.', progress: 100, checks: audioChecks }
+            : activeReady
+              ? { state: 'starting' as const, label: 'Audio server', detail: `${activeLabel} is still warming up.`, correctiveAction: 'Keep this page open while the local runtime starts.', progress: Math.round((audioReadyChecks / audioChecks.length) * 100), checks: audioChecks }
+              : { state: 'degraded' as const, label: 'Audio server', detail: voiceOutputReason, correctiveAction: 'Choose an available voice backend in settings, then retry.', progress: Math.round((audioReadyChecks / audioChecks.length) * 100), checks: audioChecks };
+    const piStarting = pi === PI_CHECKING;
+    const piService = piStarting
+      ? { state: 'starting' as const, label: 'Pi service', detail: pi.detail, correctiveAction: 'Keep this page open while Pi initializes.', progress: 0, checks: [{ label: 'Reasoning backend', state: 'starting' as const, detail: pi.detail }] }
+      : { state: pi.status, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction, progress: pi.status === 'ready' ? 100 : 0, checks: [{ label: 'Reasoning backend', state: pi.status === 'ready' ? 'ready' as const : 'unavailable' as const, detail: pi.detail }] };
     return {
       capabilities: [
         {
@@ -188,10 +200,10 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
           reason: microphoneGranted ? 'Microphone access is allowed.' : 'Microphone access is needed before capture.',
           action: microphoneGranted ? 'No action needed.' : 'Enable the microphone below.',
         },
-        { id: 'voice_output', label: 'Voice output', state: activeReady ? 'ready' : 'unavailable', reason: voiceOutputReason, action: activeReady ? (unavailableTts.length > 0 ? 'Choose another backend in Voice settings, or install the unavailable model runtime.' : 'No action needed.') : 'Choose an available backend in Voice settings, then check again.' },
+        { id: 'voice_output', label: 'Voice output', state: audioOperational ? 'ready' : activeReady ? 'needs_action' : 'unavailable', reason: audioOperational ? voiceOutputReason : activeReady ? `${activeLabel} is still warming up.` : voiceOutputReason, action: audioOperational ? (unavailableTts.length > 0 ? 'Choose another backend in Voice settings, or install the unavailable model runtime.' : 'No action needed.') : 'Keep this page open while the local voice engine warms up.' },
         { id: 'cloud_reasoning', label: 'Cloud reasoning', state: pi.status === 'ready' ? 'ready' : 'needs_action', reason: pi.detail, action: pi.correctiveAction },
       ],
-      sidecar: activeReady ? 'ready' : snapshot?.status === 'starting' ? 'starting' : 'unavailable',
+      sidecar: audioOperational ? 'ready' : snapshot?.status === 'starting' || activeReady ? 'starting' : 'unavailable',
       reasoning: pi === PI_CHECKING ? 'checking' : pi.status,
       services: { audio: audioService, pi: piService },
       ...(responseCatalog ? { voiceCatalog: responseCatalog } : {}),

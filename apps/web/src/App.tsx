@@ -33,7 +33,7 @@ import { bootstrapCapability } from './sessions/session-archive';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
 import { Spinner } from './components/ui/spinner';
 import { persistTheme, readTheme } from './theme';
-import { initialServiceStatuses, serviceStatusesFromSnapshot, type ReadinessSnapshot, type ServiceStatuses } from './services/service-status';
+import { initialServiceStatuses, serviceStatusFromAudioEngine, serviceStatusesFromSnapshot, type ReadinessSnapshot, type ServiceStatuses } from './services/service-status';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 
@@ -273,10 +273,13 @@ export function App() {
       ), statsRef.current),
     });
     unsubscribeRef.current?.();
-    unsubscribeRef.current = controller.subscribe(setView);
     controllerRef.current = controller;
     transportRef.current = transport;
     fakeTransportRef.current = transport;
+    unsubscribeRef.current = controller.subscribe(next => {
+      setView(next);
+      setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(next.audioEngine) }));
+    });
     statsRef.current.captureStarts++;
     const capture = await new BrowserCapture({ onAudio: capture => recorder.onCaptureAudio(capture) }).start({
       send: frame => transport.sendCapture(frame),
@@ -331,7 +334,10 @@ export function App() {
       }, undefined, audio => recorder.onPlaybackAudio(audio)),
     });
     unsubscribeRef.current?.();
-    unsubscribeRef.current = controller.subscribe(setView);
+    unsubscribeRef.current = controller.subscribe(next => {
+      setView(next);
+      setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(next.audioEngine) }));
+    });
     controllerRef.current = controller;
     transportRef.current = transport;
     transportFailureUnsubscribeRef.current = transport.onFailure(() => {

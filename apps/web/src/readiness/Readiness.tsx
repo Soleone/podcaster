@@ -54,7 +54,7 @@ export function Readiness(props: ReadinessProps) {
     const modelKey = props.selectedModel ? `${props.selectedModel.backendId}:${props.selectedModel.modelId}` : '';
     const piKey = `${props.piSettings.model}:${props.piSettings.thinkingLevel}`;
     const readinessKey = `${modelKey}|${piKey}`;
-    if (snapshot?.sidecar === 'ready' && lastReportedMic.current === microphoneReady && lastReportedModel.current === readinessKey) return;
+    if (snapshot?.sidecar === 'ready' && snapshot.reasoning === 'ready' && lastReportedMic.current === microphoneReady && lastReportedModel.current === readinessKey) return;
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -139,11 +139,11 @@ export function Readiness(props: ReadinessProps) {
 
   const activeDescriptor = snapshot?.ttsModels?.find(model => snapshot.activeTtsModel && model.backendId === snapshot.activeTtsModel.backendId && model.modelId === snapshot.activeTtsModel.modelId);
   const activeBackendLabel = activeDescriptor?.label ?? snapshot?.activeTtsModel?.backendId;
-  const audioReady = snapshot?.sidecar === 'ready';
+  const audioReady = snapshot?.sidecar === 'ready' && (!snapshot.services?.audio.checks || snapshot.services.audio.checks.every(check => check.state === 'ready'));
   const reasoningReady = snapshot?.capabilities.find(item => item.id === 'cloud_reasoning')?.state === 'ready';
   const reasoningChecking = snapshot?.reasoning === 'checking';
   const reasoningUnavailable = Boolean(snapshot?.reasoning && snapshot.reasoning !== 'ready' && !reasoningChecking);
-  const realSessionReady = audioReady && (reasoningReady || reasoningChecking);
+  const realSessionReady = audioReady && reasoningReady;
   const transcriptOnlyReady = audioReady && reasoningUnavailable;
   const canStart = props.sessionAvailable || realSessionReady || transcriptOnlyReady;
 
@@ -173,8 +173,8 @@ export function Readiness(props: ReadinessProps) {
     ? 'Starting your session…'
     : !snapshot && loading
     ? 'Checking local audio and Pi in the background…'
-    : realSessionReady && reasoningChecking
-      ? 'Pi is still warming up. You can start now.'
+    : reasoningChecking
+      ? 'Pi is still warming up. Start will be enabled when the reasoning backend is ready.'
       : realSessionReady
         ? `${activeBackendLabel ? `${activeBackendLabel} is ready. ` : ''}Everything is ready on this device.`
         : transcriptOnlyReady
@@ -212,7 +212,7 @@ export function Readiness(props: ReadinessProps) {
             {transcriptOnlyReady ? <Button variant="secondary" className="min-h-11 w-full sm:w-auto" onClick={() => void startSession('transcript_only')} disabled={!capability || starting}>{starting ? <><Spinner aria-hidden="true" />Starting…</> : 'Start transcript-only session'}</Button> : null}
           </div>
           {transcriptOnlyReady ? <p className="text-muted-foreground leading-relaxed" role="status">Pi reasoning is unavailable. Transcript-only mode records stable local transcripts and does not generate or speak assistant responses.</p> : null}
-          {!canStart ? <p className="text-muted-foreground leading-relaxed">Active conversation is unavailable until the host audio-model integration is ready.</p> : null}
+          {!canStart ? <p className="text-muted-foreground leading-relaxed">Start is blocked until the required audio and reasoning services are ready. Open Services in the app bar for live details.</p> : null}
         </>}
       </CardContent>
       <CardFooter className="flex-wrap gap-3">

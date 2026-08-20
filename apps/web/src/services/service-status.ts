@@ -1,12 +1,21 @@
 import type { TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
 
 export type ServiceState = 'starting' | 'ready' | 'degraded' | 'unavailable' | 'login_required' | 'rate_limited' | 'incompatible';
+export type ServiceCheckState = 'starting' | 'warming' | 'ready' | 'needs_action' | 'unavailable';
+
+export interface ServiceCheck {
+  label: string;
+  state: ServiceCheckState;
+  detail?: string;
+}
 
 export interface ServiceStatus {
   state: ServiceState;
   label: string;
   detail: string;
   correctiveAction: string;
+  progress?: number;
+  checks?: readonly ServiceCheck[];
 }
 
 export interface ServiceStatuses {
@@ -35,6 +44,36 @@ export const initialServiceStatuses: ServiceStatuses = {
   audio: initialStatus('Audio server'),
   pi: initialStatus('Pi service'),
 };
+
+/** Converts the host's live session audio event into the global service shape. */
+export function serviceStatusFromAudioEngine(audio: {
+  status: 'starting' | 'warming' | 'ready' | 'failed' | 'retrying';
+  capture: 'starting' | 'ready' | 'failed';
+  vad: 'starting' | 'warming' | 'ready' | 'failed';
+  tts: 'starting' | 'warming' | 'ready' | 'failed';
+  detail?: string;
+}): ServiceStatus {
+  const checks: ServiceCheck[] = [
+    { label: 'Microphone', state: checkState(audio.capture) },
+    { label: 'Speech detection', state: checkState(audio.vad) },
+    { label: 'Voice engine', state: checkState(audio.tts) },
+  ];
+  const readyCount = checks.filter(check => check.state === 'ready').length;
+  const failed = audio.status === 'failed' || checks.some(check => check.state === 'unavailable');
+  const ready = audio.status === 'ready';
+  return {
+    state: ready ? 'ready' : failed ? 'unavailable' : 'starting',
+    label: 'Audio server',
+    detail: audio.detail ?? (ready ? 'Microphone, speech detection, and voice playback are ready.' : 'Preparing the local audio runtime.'),
+    correctiveAction: failed ? 'Retry the session or check the local audio runtime.' : 'Keep this page open while the local runtime starts.',
+    progress: ready ? 100 : Math.round((readyCount / checks.length) * 100),
+    checks,
+  };
+}
+
+function checkState(state: 'starting' | 'warming' | 'ready' | 'failed'): ServiceCheckState {
+  return state === 'failed' ? 'unavailable' : state;
+}
 
 /** Keeps older readiness fixtures useful while the richer service fields roll out. */
 export function serviceStatusesFromSnapshot(snapshot: Pick<ReadinessSnapshot, 'sidecar' | 'reasoning' | 'services'>): ServiceStatuses {
@@ -69,10 +108,21 @@ export function serviceStateLabel(state: ServiceState): string {
   }
 }
 
+export function serviceCheckStateLabel(state: ServiceCheckState): string {
+  switch (state) {
+    case 'starting': return 'Starting';
+    case 'warming': return 'Warming';
+    case 'ready': return 'Ready';
+    case 'needs_action': return 'Needs action';
+    case 'unavailable': return 'Unavailable';
+  }
+}
+
 export function aggregateServiceState(statuses: ServiceStatuses): ServiceState {
   const states = [statuses.audio.state, statuses.pi.state];
-  if (states.includes('unavailable') || states.includes('login_required') || states.includes('incompatible')) return 'unavailable';
-  if (states.includes('rate_limited') || states.includes('degraded')) return 'degraded';
-  if (states.includes('starting')) return 'starting';
+  const checks = [...(statuses.audio.checks ?? []), ...(statuses.pi.checks ?? [])];
+  if (states.includes('unavailable') || states.includes('login_required') || states.includes('incompatible') || checks.some(check => check.state === 'unavailable')) return 'unavailable';
+  if (states.includes('rate_limited') || states.includes('degraded') || checks.some(check => check.state === 'needs_action')) return 'degraded';
+  if (states.includes('starting') || checks.some(check => check.state === 'starting' || check.state === 'warming')) return 'starting';
   return 'ready';
 }
