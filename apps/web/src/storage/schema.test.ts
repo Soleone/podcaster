@@ -1,6 +1,6 @@
 import { indexedDB } from 'fake-indexeddb';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openPodcasterDatabase, STORES } from './schema';
+import { openPodcasterDatabase, PODCASTER_DB_VERSION, STORES } from './schema';
 
 let name = '';
 afterEach(async () => { if (name) await new Promise<void>(resolve => { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = () => resolve(); }); });
@@ -54,6 +54,22 @@ describe('IndexedDB schema', () => {
     db.close(); db = await openPodcasterDatabase(indexedDB, name);
     const read = db.transaction(STORES.turns, 'readonly').objectStore(STORES.turns).get('kept');
     expect(await new Promise(resolve => { read.onsuccess = () => resolve(read.result); })).toMatchObject({ key: 'kept' });
+    db.close();
+  });
+
+  it('closes connections on versionchange so a higher-version open is not blocked', async () => {
+    name = `schema-versionchange-${Date.now()}-${Math.random()}`;
+    const db = await openPodcasterDatabase(indexedDB, name);
+    let blocked = false;
+    const request = indexedDB.open(name, PODCASTER_DB_VERSION + 1);
+    request.onblocked = () => { blocked = true; };
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    expect(blocked).toBe(false);
+    expect(upgraded.version).toBe(PODCASTER_DB_VERSION + 1);
+    upgraded.close();
     db.close();
   });
 

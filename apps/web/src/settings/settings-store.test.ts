@@ -23,6 +23,13 @@ describe('SettingsStore', () => {
     expect(await reopened.load()).toEqual(settings());
   });
 
+  it('closes safely and idempotently', async () => {
+    dbName = 'settings-test-close';
+    const store = await SettingsStore.open(indexedDB, dbName);
+    expect(() => store.close()).not.toThrow();
+    expect(() => store.close()).not.toThrow();
+  });
+
   it('returns undefined for a corrupt or invalid stored row', async () => {
     dbName = 'settings-test-b';
     const db = await openPodcasterDatabase(indexedDB, dbName);

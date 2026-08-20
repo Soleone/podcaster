@@ -109,6 +109,10 @@ export class SettingsStore {
     return new SettingsStore(await openPodcasterDatabase(factory, name));
   }
 
+  close(): void {
+    this.db.close();
+  }
+
   async load(): Promise<StoredSettings | undefined> {
     try {
       const transaction = this.db.transaction(STORES.meta, 'readonly');
