@@ -206,6 +206,36 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                 {agentNameInvalid ? <FieldError>Agent name exceeds the {MAX_AGENT_NAME_BYTES}-byte limit.</FieldError> : null}
               </Field>
             </FieldGroup>
+            <section className="rounded-xl border p-4" aria-labelledby="settings-pi-service-heading">
+              <h3 id="settings-pi-service-heading" className="text-sm font-medium">Pi service</h3>
+              <FieldGroup className="mt-3 gap-4">
+                <Field data-invalid={piModelInvalid || undefined}>
+                  <FieldLabel htmlFor="settings-pi-model">Model</FieldLabel>
+                  <Input
+                    id="settings-pi-model"
+                    value={pi.model}
+                    onChange={event => setPi(previous => ({ ...previous, model: event.target.value }))}
+                    aria-invalid={piModelInvalid || undefined}
+                    aria-describedby="settings-pi-model-description"
+                    placeholder="provider/model"
+                  />
+                  <FieldDescription id="settings-pi-model-description">Pi model identifier, such as openai-codex/gpt-5.6-sol. Changes apply to the next session.</FieldDescription>
+                  {piModelInvalid ? <FieldError>Enter a model without spaces, up to {MAX_PI_MODEL_BYTES} bytes.</FieldError> : null}
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="settings-pi-thinking">Thinking level</FieldLabel>
+                  <Select value={pi.thinkingLevel} onValueChange={value => { if ((PI_THINKING_LEVELS as readonly string[]).includes(value ?? '')) setPi(previous => ({ ...previous, thinkingLevel: value as PiSettings['thinkingLevel'] })); }}>
+                    <SelectTrigger id="settings-pi-thinking" className="w-full" aria-label="Thinking level">
+                      <SelectValue>{pi.thinkingLevel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>{PI_THINKING_LEVELS.map(level => <SelectItem key={level} value={level}>{level}</SelectItem>)}</SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>Controls how much reasoning Pi uses before answering. The model may support only some levels.</FieldDescription>
+                </Field>
+              </FieldGroup>
+            </section>
             <Accordion multiple defaultValue={['persona']} className="shrink-0 rounded-xl">
               <AccordionItem value="persona">
                 <AccordionTrigger>Persona</AccordionTrigger>
@@ -248,38 +278,6 @@ export function SettingsDialog({ open, onOpenChange, model, catalog, models = []
                     />
                     <FieldDescription id="settings-system-prompt-description">Your saved persona is appended to this base prompt when the next session starts.</FieldDescription>
                   </Field>
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="pi-service">
-                <AccordionTrigger>Pi service</AccordionTrigger>
-                <AccordionContent>
-                  <FieldGroup>
-                    <Field data-invalid={piModelInvalid || undefined}>
-                      <FieldLabel htmlFor="settings-pi-model">Model</FieldLabel>
-                      <Input
-                        id="settings-pi-model"
-                        value={pi.model}
-                        onChange={event => setPi(previous => ({ ...previous, model: event.target.value }))}
-                        aria-invalid={piModelInvalid || undefined}
-                        aria-describedby="settings-pi-model-description"
-                        placeholder="provider/model"
-                      />
-                      <FieldDescription id="settings-pi-model-description">Pi model identifier, such as openai-codex/gpt-5.6-sol. Changes apply to the next session.</FieldDescription>
-                      {piModelInvalid ? <FieldError>Enter a model without spaces, up to {MAX_PI_MODEL_BYTES} bytes.</FieldError> : null}
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="settings-pi-thinking">Thinking level</FieldLabel>
-                      <Select value={pi.thinkingLevel} onValueChange={value => { if ((PI_THINKING_LEVELS as readonly string[]).includes(value ?? '')) setPi(previous => ({ ...previous, thinkingLevel: value as PiSettings['thinkingLevel'] })); }}>
-                        <SelectTrigger id="settings-pi-thinking" className="w-full" aria-label="Thinking level">
-                          <SelectValue>{pi.thinkingLevel}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>{PI_THINKING_LEVELS.map(level => <SelectItem key={level} value={level}>{level}</SelectItem>)}</SelectGroup>
-                        </SelectContent>
-                      </Select>
-                      <FieldDescription>Controls how much reasoning Pi uses before answering. The model may support only some levels.</FieldDescription>
-                    </Field>
-                  </FieldGroup>
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
