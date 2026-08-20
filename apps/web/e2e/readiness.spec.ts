@@ -1,10 +1,7 @@
-import { expect, test, type Page } from '@playwright/test';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer(); });
-test.afterAll(async () => { await stopDevServer(server); });
+import { expect, test } from './support/dev-server';
+import type { Page } from '@playwright/test';
 
-test('disclosure precedes secure readiness and explicit microphone permission', async ({ page }) => {
+test('disclosure precedes secure readiness and explicit microphone permission', async ({ page, origin }) => {
   await page.addInitScript(() => {
     (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls = 0;
     Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: async () => {
@@ -17,7 +14,7 @@ test('disclosure precedes secure readiness and explicit microphone permission', 
     }) } });
   });
   let bootstrapCalls = 0; page.on('request', request => { if (request.url().endsWith('/api/bootstrap')) bootstrapCalls++; });
-  await page.goto(server.origin);
+  await page.goto(origin);
   await expect(page.getByRole('heading', { name: 'Before you continue' })).toBeVisible();
   await expect(page.getByText(/current transcript, bounded recent conversation context/)).toBeVisible();
   await expect(page.getByText(/sent as system instructions to the configured cloud model/)).toBeVisible();

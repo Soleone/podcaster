@@ -1,12 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/dev-server';
 import { installFakeMicrophone } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
 
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
-
-test('keeps the home page open after all three readiness checks turn green', async ({ page }) => {
+test('keeps the home page open after all three readiness checks turn green', async ({ page, origin }) => {
   await installFakeMicrophone(page);
   await page.route('**/api/readiness', route => route.fulfill({
     status: 200,
@@ -25,7 +20,7 @@ test('keeps the home page open after all three readiness checks turn green', asy
       },
     }),
   }));
-  await page.goto(server.origin);
+  await page.goto(origin);
   await page.getByRole('button', { name: 'Continue and check readiness' }).click();
   await expect(page.getByText('Voice input', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Enable microphone' }).click();

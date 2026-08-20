@@ -1,12 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/dev-server';
 import { emit, enterFakeSession } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
 
-test('restrains live announcements and resolves interruptions automatically', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('restrains live announcements and resolves interruptions automatically', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   const live = page.getByRole('status');
   await expect(live).toHaveText('Listening');
   for (let index = 0; index < 12; index++) await page.evaluate(async text => window.__podcasterTest!.partial(text), `revision ${index}`);
@@ -35,8 +31,8 @@ test('restrains live announcements and resolves interruptions automatically', as
   await expect(page.getByRole('button', { name: 'End session' })).toHaveCount(0);
 });
 
-test('activity log panel is keyboard-operable and lists session events', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('activity log panel is keyboard-operable and lists session events', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   const toggle = page.getByRole('button', { name: 'Activity log' });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');

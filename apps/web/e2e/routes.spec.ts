@@ -1,12 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/dev-server';
 import { emit, enterFakeSession } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
 
-test('the shared app header returns home from a session and stays anchored across routes', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('the shared app header returns home from a session and stays anchored across routes', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   const header = page.locator('[data-slot="app-header"]');
   const sessionHeaderBox = await header.boundingBox();
   await expect(header.getByRole('link', { name: 'Podcaster home' })).toBeVisible();
@@ -30,8 +26,8 @@ test('the shared app header returns home from a session and stays anchored acros
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 });
 
-test('each session lives at its own URL and appears on the index', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('each session lives at its own URL and appears on the index', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   const sessionUrl = page.url();
   expect(sessionUrl).toMatch(/\/session\/[0-9a-f-]{36}$/);
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
@@ -41,7 +37,7 @@ test('each session lives at its own URL and appears on the index', async ({ page
   await expect(page.getByRole('heading', { name: 'Session paused' })).toBeVisible();
 
   // Back on the index the paused session is listed with its facts and resume action.
-  await page.goto(server.origin);
+  await page.goto(origin);
   await expect(page.getByRole('heading', { name: 'Your sessions' })).toBeVisible();
   await expect(page.getByText('Past sessions')).toBeVisible();
   const row = page.getByRole('listitem').filter({ hasText: 'A stable thought' }).first();
@@ -52,8 +48,8 @@ test('each session lives at its own URL and appears on the index', async ({ page
   await expect(row.getByRole('button', { name: 'Export' })).toBeDisabled();
 });
 
-test('a paused session opens read-only with its conversation and can be resumed', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('a paused session opens read-only with its conversation and can be resumed', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   const sessionUrl = page.url();
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
   await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
@@ -77,13 +73,13 @@ test('a paused session opens read-only with its conversation and can be resumed'
   await expect(page.getByText('Carried on here')).toBeVisible();
 });
 
-test('resuming an active session from the index restores its conversation', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('resuming an active session from the index restores its conversation', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   const sessionUrl = page.url();
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
   await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
 
-  await page.goto(server.origin);
+  await page.goto(origin);
   const row = page.getByRole('listitem').filter({ hasText: 'A stable thought' }).first();
   await expect(row.getByRole('button', { name: 'Resume' })).toBeVisible();
   await row.getByRole('button', { name: 'Resume' }).click();
@@ -94,8 +90,8 @@ test('resuming an active session from the index restores its conversation', asyn
   await expect(page.getByText('What matters most?')).toBeVisible();
 });
 
-test('the index shows a running session and returning to it keeps it live', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('the index shows a running session and returning to it keeps it live', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   const sessionUrl = page.url();
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
 

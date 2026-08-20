@@ -1,22 +1,25 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/dev-server';
 import { installFakeMicrophone } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
 
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
-
-async function openSettings(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(server.origin);
+async function openSettings(page: import('@playwright/test').Page, origin: string): Promise<void> {
+  await page.route('**/api/readiness', async route => {
+    const response = await route.fetch();
+    const snapshot = await response.json() as Record<string, unknown>;
+    delete snapshot.voiceCatalog;
+    delete snapshot.ttsModels;
+    delete snapshot.activeTtsModel;
+    await route.fulfill({ json: snapshot });
+  });
+  await page.goto(origin);
   await page.getByRole('button', { name: 'Continue and check readiness' }).click();
   await page.getByRole('button', { name: 'Enable microphone' }).click();
   await page.getByRole('button', { name: /Open settings/ }).first().click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 }
 
-test('settings dialog edits persona with a byte counter and inspects the base prompt', async ({ page }) => {
+test('settings dialog edits persona with a byte counter and inspects the base prompt', async ({ page, origin }) => {
   await installFakeMicrophone(page);
-  await openSettings(page);
+  await openSettings(page, origin);
 
   await expect(page.getByText('These apply to the next session you start.')).toBeVisible();
   const dialog = page.getByRole('dialog');
@@ -89,9 +92,9 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('settings survive a reload on the same browser', async ({ page }) => {
+test('settings survive a reload on the same browser', async ({ page, origin }) => {
   await installFakeMicrophone(page);
-  await openSettings(page);
+  await openSettings(page, origin);
   await page.getByLabel('Agent name').fill('Lin');
   await page.getByLabel('Persona').fill('You are a gentle storyteller.');
   await page.getByRole('button', { name: 'Pi service' }).click();

@@ -1,6 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from './support/dev-server';
+import type { Page } from '@playwright/test';
 import { installFakeMicrophone } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
 
 // QW-8 backend-toggle UI coverage. The readiness and preview endpoints are
 // routed so the switch path is deterministic: two verified TTS models (Kokoro
@@ -75,8 +75,8 @@ function silentWav(): Buffer {
   return buffer;
 }
 
-async function openSettings(page: Page): Promise<void> {
-  await page.goto(server.origin);
+async function openSettings(page: Page, origin: string): Promise<void> {
+  await page.goto(origin);
   await page.getByRole('button', { name: 'Continue and check readiness' }).click();
   await page.getByRole('button', { name: 'Enable microphone' }).click();
   await page.getByRole('button', { name: /Open settings/ }).first().click();
@@ -84,11 +84,8 @@ async function openSettings(page: Page): Promise<void> {
   await page.getByRole('tab', { name: 'Voice' }).click();
 }
 
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
 
-test('switching the TTS backend reconciles voice and speed controls and previews through the selected backend', async ({ page }) => {
+test('switching the TTS backend reconciles voice and speed controls and previews through the selected backend', async ({ page, origin }) => {
   await installFakeMicrophone(page);
   const previewRequests: Array<Record<string, unknown>> = [];
   await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
@@ -96,7 +93,7 @@ test('switching the TTS backend reconciles voice and speed controls and previews
     previewRequests.push(route.request().postDataJSON() as Record<string, unknown>);
     await route.fulfill({ contentType: 'audio/wav', body: silentWav() });
   });
-  await openSettings(page);
+  await openSettings(page, origin);
 
   // Kokoro is the verified default with its own catalog and speed range.
   await expect(page.getByRole('combobox', { name: 'Speech model' })).toContainText('Kokoro CUDA');
@@ -135,10 +132,10 @@ test('switching the TTS backend reconciles voice and speed controls and previews
   await expect(page.getByLabel('Speed modifier')).toHaveValue('1.25');
 });
 
-test('a stored custom voice is appended only to Qwen and survives backend switching', async ({ page }) => {
+test('a stored custom voice is appended only to Qwen and survives backend switching', async ({ page, origin }) => {
   await installFakeMicrophone(page);
   await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
-  await page.goto(server.origin);
+  await page.goto(origin);
   await page.getByRole('button', { name: 'Continue and check readiness' }).click();
   await page.getByRole('button', { name: 'Enable microphone' }).click();
   await page.evaluate(async () => {
@@ -181,11 +178,11 @@ test('a stored custom voice is appended only to Qwen and survives backend switch
   await expect(page.getByRole('combobox', { name: 'Voice' })).toContainText('Local Me');
 });
 
-test('a selected Qwen backend persists across reload and survives with its own voice profile', async ({ page }) => {
+test('a selected Qwen backend persists across reload and survives with its own voice profile', async ({ page, origin }) => {
   await installFakeMicrophone(page);
   await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
   await page.route('**/api/voice-preview', async route => { await route.fulfill({ contentType: 'audio/wav', body: silentWav() }); });
-  await openSettings(page);
+  await openSettings(page, origin);
 
   await page.getByRole('combobox', { name: 'Speech model' }).click();
   await page.getByRole('option', { name: 'Qwen CustomVoice' }).click();

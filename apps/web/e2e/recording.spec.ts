@@ -1,9 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/dev-server';
 import { emit, enterFakeSession } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
 
 const STREAM = '018f1f32-7abf-7def-8abc-0123456789ab';
 const UTTERANCE = '018f1f32-7ac0-7def-8abc-0123456789ab';
@@ -29,8 +25,8 @@ async function waitForStoredRecording(page: import('@playwright/test').Page): Pr
   }));
 }
 
-test('trims completed agent output with a compact in-bubble action', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('trims completed agent output with a compact in-bubble action', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
 
   await emit(page, 'reasoning.started', { turnId: 'turn-1', responseId: 'response-1', posture: 'question' });
   await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'A recorded answer' });
@@ -50,8 +46,8 @@ test('trims completed agent output with a compact in-bubble action', async ({ pa
   await expect(page.locator('.conversation-bubble.assistant-bubble.trimmed')).toHaveAttribute('data-trimmed', 'true');
 });
 
-test('trims one assistant part without removing the rest of its bubble', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('trims one assistant part without removing the rest of its bubble', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
 
   await emit(page, 'reasoning.started', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', partIndex: 0 });
   await emit(page, 'reasoning.final', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', text: 'The quick acknowledgement.', partIndex: 0 });
@@ -81,8 +77,8 @@ test('trims one assistant part without removing the rest of its bubble', async (
   await expect(page.getByRole('button', { name: "Remove Assistant's part 2 from recording" })).toBeVisible();
 });
 
-test('refreshes the remove control when a persisted user clip gets its turn id late', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('refreshes the remove control when a persisted user clip gets its turn id late', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
 
   // Let the recorder persist the clip before delivering its transcript. This
   // leaves a temporary null turnId, which must not strand the visible message
@@ -98,8 +94,8 @@ test('refreshes the remove control when a persisted user clip gets its turn id l
   await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible({ timeout: 3_000 });
 });
 
-test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page }) => {
-  await enterFakeSession(page, server.origin, { decodeDelayMs: 50 });
+test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page, origin }) => {
+  await enterFakeSession(page, origin, { decodeDelayMs: 50 });
 
   await recordUserTurn(page);
 

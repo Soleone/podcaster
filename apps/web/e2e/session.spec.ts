@@ -1,12 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/dev-server';
 import { emit, enterFakeSession } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
 
-test('pauses and resumes the full session without ending it', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('pauses and resumes the full session without ending it', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureRunning)).toBe(true);
   await emit(page, 'transcript.final', { turnId: 'pause-turn', text: 'Keep this transcript', endpointComplete: true });
   await expect(page.getByText('Keep this transcript')).toBeVisible();
@@ -23,8 +19,8 @@ test('pauses and resumes the full session without ending it', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
 });
 
-test('keeps a paused session resumable after refresh', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('keeps a paused session resumable after refresh', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   await emit(page, 'transcript.final', { turnId: 'refresh-turn', text: 'Survive the pause', endpointComplete: true });
   await page.getByRole('button', { name: 'Pause session' }).click();
   await expect(page.getByRole('heading', { name: 'Session paused' })).toBeVisible();
@@ -36,9 +32,9 @@ test('keeps a paused session resumable after refresh', async ({ page }) => {
   await expect(page.getByText('Survive the pause')).toBeVisible();
 });
 
-test('keeps a short conversation message on one line at narrow widths', async ({ page }) => {
+test('keeps a short conversation message on one line at narrow widths', async ({ page, origin }) => {
   await page.setViewportSize({ width: 238, height: 285 });
-  await enterFakeSession(page, server.origin);
+  await enterFakeSession(page, origin);
   await emit(page, 'transcript.final', { turnId: 'turn-short', text: 'Hello', endpointComplete: true });
   const metrics = await page.locator('.user-bubble p').evaluate(element => {
     const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
@@ -47,8 +43,8 @@ test('keeps a short conversation message on one line at narrow widths', async ({
   expect(metrics.height).toBeLessThanOrEqual(metrics.lineHeight + 0.5);
 });
 
-test('runs stable session states and recovers stable work after refresh', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('runs stable session states and recovers stable work after refresh', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureFrames)).toBe(1);
   expect(await page.evaluate(() => ({ running: window.__podcasterTest!.stats().captureRunning, mediaCalls: (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls }))).toEqual({ running: true, mediaCalls: 2 });

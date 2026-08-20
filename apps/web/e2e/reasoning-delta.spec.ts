@@ -1,13 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './support/dev-server';
 import { emit, enterFakeSession } from './support/fake-browser-services';
-import { startDevServer, stopDevServer, type DevServer } from './support/dev-server';
 
-let server: DevServer;
-test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
-test.afterAll(async () => { await stopDevServer(server); });
-
-test('streams a dimmed assistant preview before audio and solidifies it on final', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('streams a dimmed assistant preview before audio and solidifies it on final', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
 
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'Tell me about perceived latency', endpointComplete: true });
@@ -42,8 +37,8 @@ test('streams a dimmed assistant preview before audio and solidifies it on final
   await expect(page.locator('.assistant-bubble', { hasText: 'Perceived latency drops when text streams first.' })).toBeVisible();
 });
 
-test('drops a streaming preview when the response fails before finalizing', async ({ page }) => {
-  await enterFakeSession(page, server.origin);
+test('drops a streaming preview when the response fails before finalizing', async ({ page, origin }) => {
+  await enterFakeSession(page, origin);
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
 
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'Say something risky', endpointComplete: true });
