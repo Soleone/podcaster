@@ -14,22 +14,6 @@ export interface ServiceStatuses {
   pi: ServiceStatus;
 }
 
-// Shared lifecycle rules. Both services begin in starting, may settle into a
-// healthy or degraded state, and can always be retried from a terminal state.
-export const SERVICE_STATE_TRANSITIONS: Record<ServiceState, readonly ServiceState[]> = {
-  starting: ['starting', 'ready', 'degraded', 'unavailable', 'login_required', 'rate_limited', 'incompatible'],
-  ready: ['ready', 'degraded', 'unavailable'],
-  degraded: ['degraded', 'ready', 'unavailable'],
-  unavailable: ['unavailable', 'starting'],
-  login_required: ['login_required', 'starting', 'ready', 'unavailable'],
-  rate_limited: ['rate_limited', 'starting', 'ready', 'unavailable'],
-  incompatible: ['incompatible', 'starting', 'ready', 'unavailable'],
-};
-
-export function canTransitionServiceState(from: ServiceState, to: ServiceState): boolean {
-  return SERVICE_STATE_TRANSITIONS[from].includes(to);
-}
-
 export interface ReadinessSnapshot {
   capabilities: Array<{ id: string; label: string; state: 'ready' | 'needs_action' | 'unavailable'; reason: string; action: string }>;
   sidecar: string;

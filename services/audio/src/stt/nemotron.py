@@ -369,9 +369,6 @@ class NemotronStreamingAdapter:
     def transcribe(self, stream: Iterable[bytes], cancel: Cancellation) -> str:
         return self.transcribe_stream(stream, cancel).text
 
-    def synthesize(self, text: str, cancel: Cancellation) -> Iterable[bytes]:
-        raise NotImplementedError("Nemotron is an STT-only adapter")
-
     def reset(self) -> None:
         if self.closed or self.backend is None:
             raise RuntimeError("adapter is closed or unprepared")

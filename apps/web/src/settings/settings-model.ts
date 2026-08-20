@@ -7,7 +7,6 @@ import {
   DEFAULT_AGENT_PERSONA,
   DEFAULT_PI_SETTINGS,
   DEFAULT_TTS_MODEL,
-  DEFAULT_VOICE_SPEED_CAPABILITY,
   DEFAULT_VOICE_SPEED_MODIFIER,
   isVoiceInCatalog,
   isValidVoicePreference,
@@ -173,9 +172,6 @@ export function reconcileSettings(input: ReconcileSettingsInput, models: readonl
     : { selectedModel, voice: activeVoice, voiceProfiles: profiles };
 }
 
-/** Alias kept deliberately small for callers that describe this as TTS selection. */
-export const reconcileTtsSettings = reconcileSettings;
-
 /** Build a SettingsModel honoring exactOptionalPropertyTypes. */
 export function applyReconciled(
   base: { agentName: string; persona: string; pi?: PiSettings; selectedModel?: TtsModelSelection; voiceProfiles?: Record<string, VoicePreference> },
@@ -190,8 +186,4 @@ export function applyReconciled(
   const model: SettingsModel = { agentName: base.agentName, persona: base.persona, pi: { ...(base.pi ?? DEFAULT_PI_SETTINGS) }, selectedModel: { ...selectedModel }, voice, voiceProfiles };
   if (reconciled.notice) model.notice = reconciled.notice;
   return model;
-}
-
-export function speedCapabilityForCatalog(catalog: VoiceCatalog | undefined) {
-  return catalog?.speed ?? DEFAULT_VOICE_SPEED_CAPABILITY;
 }

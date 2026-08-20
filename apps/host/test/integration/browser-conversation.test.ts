@@ -552,7 +552,7 @@ describe('browser conversation routing', () => {
       },
       async shutdown() {},
     };
-    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
@@ -602,7 +602,7 @@ describe('browser conversation routing', () => {
       },
       async shutdown() {},
     };
-    const app = await buildApp({ sidecar, pi, researchPi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const app = await buildApp({ sidecar, pi, multiPartEnabled: true, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);

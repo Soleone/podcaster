@@ -1,5 +1,5 @@
 import type { StableEvent } from '../storage/stable-turn-writer';
-import { joinAssistantParts, type AssistantPart, type ConversationItem } from './conversation';
+import { joinAssistantParts, type ConversationItem } from './conversation';
 
 export type DominantState = 'idle' | 'paused' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
 export type AudioEngineStatus = 'starting' | 'warming' | 'ready' | 'failed' | 'retrying';
@@ -47,7 +47,6 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   // any still-tentative assistant preview must not linger.
   let next = event.epoch > state.epoch ? { ...state, epoch: event.epoch, conversationItems: dropTentativeAssistant(state.conversationItems) } : state;
   if (event.type === 'transcript.partial') return { ...next, tentativeText: typeof event.payload.text === 'string' ? event.payload.text : '' };
-  if (event.type === 'capture.endpoint') return dominant(next, 'transcribing');
   if (event.type === 'transcript.final') {
     const turnId = typeof event.payload.turnId === 'string' ? event.payload.turnId : '';
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';

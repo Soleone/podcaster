@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateServiceState, canTransitionServiceState, serviceStatusesFromSnapshot, serviceStateLabel } from './service-status';
+import { aggregateServiceState, serviceStatusesFromSnapshot, serviceStateLabel } from './service-status';
 
 const ready = { state: 'ready' as const, label: 'service', detail: 'ready', correctiveAction: 'No action needed.' };
 
@@ -15,12 +15,6 @@ describe('service status state machine', () => {
     const statuses = serviceStatusesFromSnapshot({ sidecar: 'ready', reasoning: 'checking' });
     expect(statuses.audio.state).toBe('ready');
     expect(statuses.pi.state).toBe('starting');
-  });
-
-  it('allows health changes and explicit retries, but not silent recovery from ready', () => {
-    expect(canTransitionServiceState('starting', 'ready')).toBe(true);
-    expect(canTransitionServiceState('unavailable', 'starting')).toBe(true);
-    expect(canTransitionServiceState('ready', 'starting')).toBe(false);
   });
 
   it('uses human-readable labels for every state', () => {

@@ -7,8 +7,6 @@ describe('conversation turn anchors', () => {
     const user: ConversationItem = { kind: 'user', id: 'user', text: 'Question', status: 'stable', sequence: 1 };
     const control: ConversationItem = { kind: 'user', id: 'control', text: 'Carry on', status: 'control', sequence: 2 };
     const assistant: ConversationItem = { kind: 'assistant', id: 'assistant', responseId: 'response', text: 'Answer', playback: 'playing', sequence: 3 };
-    const marker: ConversationItem = { kind: 'continuation', id: 'continued', responseId: 'response', label: 'Continued previous response', sequence: 4 };
-
-    expect([user, control, assistant, marker].map(conversationItemStartsTurn)).toEqual([true, true, false, false]);
+    expect([user, control, assistant].map(conversationItemStartsTurn)).toEqual([true, true, false]);
   });
 });

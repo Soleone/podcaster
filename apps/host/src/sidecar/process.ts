@@ -95,13 +95,3 @@ export async function sidecarSnapshot(sidecar: SidecarProcess): Promise<SidecarR
     return snapshot;
   } catch { return undefined; }
 }
-
-export async function sidecarHealth(sidecar: SidecarProcess): Promise<boolean> {
-  const snapshot = await sidecarSnapshot(sidecar);
-  return Boolean(
-    snapshot?.status === 'ready'
-    && snapshot.voiceCatalog !== undefined
-    && snapshot.stt === 'nemotron-3.5-transformers-fp32-320ms-paced-v1'
-    && snapshot.tts === 'kokoro-82m-onnx-fp32-af-heart-cuda-v1'
-  );
-}

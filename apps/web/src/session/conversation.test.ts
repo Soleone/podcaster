@@ -12,6 +12,6 @@ describe('chronological conversation selector', () => {
     ]);
     expect(items.map(item => `${item.kind}:${item.id}`)).toEqual(['user:1', 'assistant:assistant:r1', 'user:2']);
     expect(items.find(item => item.kind === 'user' && item.id === '2')).toMatchObject({ status: 'control' });
-    expect(items.some(item => item.kind === 'continuation')).toBe(false);
+    expect(items).not.toContainEqual(expect.objectContaining({ kind: 'notice' }));
   });
 });

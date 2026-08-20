@@ -347,10 +347,6 @@ export class WebSocketSessionTransport implements SessionTransport {
     for (const binding of this.outputs.byStream.values()) if (binding.playbackId === playbackId) return binding;
     return this.outputs.single?.playbackId === playbackId ? this.outputs.single : undefined;
   }
-  private currentBinding(): OutputBinding | undefined {
-    const first = this.outputs.byStream.values().next().value as OutputBinding | undefined;
-    return first ?? this.outputs.single;
-  }
   private sendCommand(type: string, payload: Record<string, unknown>, epoch = this.epoch()): void {
     const key = type === 'playback.progress' ? `playback.progress:${String(payload.playbackId)}:${String(payload.outputEpoch)}` : undefined;
     this.sendWire(JSON.stringify(createEnvelope({ sessionId: this.sessionId, epoch, type, payload })), type, key);

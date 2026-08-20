@@ -5,10 +5,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
-class SttCancelled(RuntimeError):
-    """Raised after the caller establishes a local cancellation cutoff."""
-
-
 class Cancellation(Protocol):
     @property
     def cancelled(self) -> bool: ...

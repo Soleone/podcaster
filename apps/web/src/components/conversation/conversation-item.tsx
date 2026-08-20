@@ -103,7 +103,6 @@ function AssistantPartRow({ part, index, responseId, recording, onToggleBubbleTr
 }
 
 export function ConversationRow({ item, agentName, recording, onToggleBubbleTrim }: ConversationRowProps) {
-  if (item.kind === 'continuation') return <Marker variant="separator" className="continuation-marker"><MarkerContent>{item.label}</MarkerContent></Marker>;
   if (item.kind === 'notice') return <Marker className={cn('conversation-notice', item.tone === 'warning' ? 'text-destructive' : 'text-muted-foreground')}><MarkerContent>{item.text}</MarkerContent></Marker>;
   if (item.kind === 'user') {
     const target = item.id ? recording.targets.get(`user:${item.id}`) : undefined;

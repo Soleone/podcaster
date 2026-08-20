@@ -513,9 +513,6 @@ class ParakeetStreamingAdapter:
     def transcribe(self, stream: Iterable[bytes], cancel: Cancellation) -> str:
         return self.transcribe_stream(stream, cancel).text
 
-    def synthesize(self, text: str, cancel: Cancellation) -> Iterable[bytes]:
-        raise NotImplementedError("Parakeet is an STT-only adapter")
-
     def reset(self) -> None:
         with self._lifecycle_lock:
             if self.closed or self.backend is None:

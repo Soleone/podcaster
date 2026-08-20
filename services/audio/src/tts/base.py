@@ -17,10 +17,6 @@ def speed_capability(*, supported: bool = True, minimum: float = MIN_VOICE_SPEED
     return {"supported": supported, "min": minimum, "max": maximum, "default": default}
 
 
-class TtsCancelled(RuntimeError):
-    """Raised after the caller establishes the local no-more-audio cutoff."""
-
-
 class Cancellation(Protocol):
     @property
     def cancelled(self) -> bool: ...

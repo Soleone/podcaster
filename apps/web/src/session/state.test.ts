@@ -137,7 +137,7 @@ describe('session presentation state', () => {
     expect(state.conversationItems.filter(item => item.kind === 'assistant' && item.responseId === 'r')).toEqual([
       expect.objectContaining({ text: 'One complete answer', playback: 'playing' }),
     ]);
-    expect(state.conversationItems.filter(item => item.kind === 'continuation')).toEqual([]);
+    expect(state.conversationItems).not.toContainEqual(expect.objectContaining({ kind: 'notice' }));
     expect(state.conversationItems.filter(item => item.kind === 'user' && item.status === 'control')).toHaveLength(10);
     expect(state.playbackNotice).toBe('');
     expect(state.announcement).toBe('Continuing the response');

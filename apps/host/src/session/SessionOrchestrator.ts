@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { DEFAULT_PERSONA_MARKDOWN, parsePersona, type PersonaInterpretation } from "@app/contracts";
 import { decide, POLICY_VERSION, type PolicyDecision, type PolicyInput, type Posture } from "@app/policy";
-import type { PiClient, PiEvent, PiPosture } from "../pi/PiClient.js";
+import type { PiClient, PiPosture } from "../pi/PiClient.js";
 import type { PiResearchClient } from "../pi/PiResearchClient.js";
 import { fallbackInterruptionDecision, hasCorrectionIntent, hasLexicalContent, isBareRedirection, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
 import { ReasoningSpeechAssembler } from "./ReasoningSpeechAssembler.js";
@@ -148,15 +148,6 @@ function truncateUtf8(value: string, maxBytes: number): string {
   while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
   return bytes.subarray(0, end).toString("utf8");
 }
-function validReasoning(text: string, posture: PiPosture): string | undefined {
-  const normalized = text.trim().replace(/\s+/gu, " ");
-  if (!normalized) return;
-  if ((normalized.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? []).length > 45) return;
-  if (posture === "question" && (normalized.match(/\?/gu) ?? []).length > 1) return;
-  if (/^(?:```|\{|\[|assistant\s*:|system\s*:|<\/?(?:script|iframe)\b)/iu.test(normalized)) return;
-  return normalized;
-}
-
 export class SessionOrchestrator {
   private phase: SessionPhase = "idle";
   private epoch = 0;
