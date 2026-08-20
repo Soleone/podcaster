@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "test": "vitest run",
+    "build": "corepack pnpm --filter @app/contracts build && vite build",
+    "test": "corepack pnpm --filter @app/contracts build && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

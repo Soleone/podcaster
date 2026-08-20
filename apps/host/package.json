@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "corepack pnpm --filter @app/contracts build && tsc -p tsconfig.json",
-    "test": "corepack pnpm --filter @app/contracts build && corepack pnpm --filter @app/web build && vitest run",
+    "build": "tsc -p tsconfig.json",
+    "test": "corepack pnpm --filter @app/web build && corepack pnpm --filter @app/policy build && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

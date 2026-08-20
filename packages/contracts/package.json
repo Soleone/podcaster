@@ -5,9 +5,9 @@
   "type": "module",
   "exports": {
     ".": { "types": "./src/index.ts", "import": "./dist/index.js" },
-    "./binary": { "types": "./src/binary.ts", "import": "./src/binary.ts" },
-    "./settings": { "types": "./src/settings/index.ts", "import": "./src/settings/index.ts" },
-    "./validators": { "types": "./src/validators.ts", "import": "./src/validators.ts" }
+    "./binary": { "types": "./src/binary.ts", "import": "./dist/binary.js" },
+    "./settings": { "types": "./src/settings/index.ts", "import": "./dist/settings/index.js" },
+    "./validators": { "types": "./src/validators.ts", "import": "./dist/validators.js" }
   },
   "scripts": {
     "generate": "node scripts/generate.mjs",

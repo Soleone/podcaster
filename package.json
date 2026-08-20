@@ -11,7 +11,7 @@
     "contracts:generate": "node packages/contracts/scripts/generate.mjs",
     "test": "node scripts/test.mjs",
     "check": "bash scripts/check.sh",
-    "build": "corepack pnpm --filter @app/web build && corepack pnpm --filter @app/host build",
+    "build": "corepack pnpm --filter @app/web build && corepack pnpm --filter @app/policy build && corepack pnpm --filter @app/host build",
     "bootstrap:assets": "bash scripts/bootstrap-worktree-assets.sh",
     "dev": "node scripts/dev-hmr.mjs",
     "dev:build": "node scripts/dev.mjs",

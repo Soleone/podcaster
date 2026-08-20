@@ -70,6 +70,7 @@ async function run(command, args) {
 try {
   if (process.env.PODCASTER_WEB_BUILD_ENTRY) await run(process.execPath, [process.env.PODCASTER_WEB_BUILD_ENTRY]);
   else await run('corepack', ['pnpm', '--filter', '@app/web', 'build']);
+  await run('corepack', ['pnpm', '--filter', '@app/policy', 'build']);
   await run('corepack', ['pnpm', '--filter', '@app/host', 'build']);
   const hostEntry = process.env.PODCASTER_HOST_ENTRY ?? 'apps/host/dist/server/main.js';
   const host = spawnGroup(process.execPath, [hostEntry]);

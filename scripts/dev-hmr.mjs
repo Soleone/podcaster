@@ -173,10 +173,10 @@ function startVite(env) {
 }
 
 try {
-  // The host still needs its generated contracts and server build. Vite owns
+  // The host still needs its contracts, policy, and server build. Vite owns
   // the browser bundle in this mode, so rebuilding the web app here would
   // defeat the fast feedback loop.
-  await run('corepack', ['pnpm', '--filter', '@app/host', 'build']);
+  await run('corepack', ['pnpm', '--filter', '@app/host...', 'build']);
   const hostEntry = process.env.PODCASTER_HOST_ENTRY ?? 'apps/host/dist/server/main.js';
   const host = startHost(hostEntry);
   const backendOrigin = await host.ready;
