@@ -40,6 +40,15 @@ describe("production Pi RPC boundary", () => {
     expect(calls[0].env).not.toContain("OPENAI_API_KEY");
   });
 
+  it("bounds a provider readiness probe separately from the normal request deadline", async () => {
+    const fake = await makeFakePi("hanging-probe"); cleanups.push(fake.cleanup);
+    const value = new StdioPiClient({ executable: fake.executable, startupDeadlineMs: 300, requestDeadlineMs: 5_000, probeDeadlineMs: 50 });
+    const startedAt = Date.now();
+    await expect(value.probe()).resolves.toMatchObject({ status: "unavailable" });
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    await value.shutdown();
+  });
+
   it.each([
     ["login", "login_required"], ["rate-limit", "rate_limited"], ["incompatible-model", "incompatible"]
   ] as const)("maps %s readiness safely", async (scenario, expected) => {

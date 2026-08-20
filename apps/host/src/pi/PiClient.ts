@@ -16,6 +16,7 @@ const MAX_PROBE_RESPONSE_BYTES = 1024;
 const PROBE_MARKER = "RPC_READY";
 const STARTUP_DEADLINE_MS = 8_000;
 const REQUEST_DEADLINE_MS = 60_000;
+export const PI_PROBE_DEADLINE_MS = 10_000;
 
 type ObjectValue = Record<string, unknown>;
 export type PiReadinessStatus = "ready" | "login_required" | "unavailable" | "incompatible" | "rate_limited";
@@ -27,7 +28,7 @@ export type PiEvent =
   | { type: "final"; text: string }
   | { type: "error"; state: Exclude<PiReadinessStatus, "ready">; detail: string; correctiveAction: string };
 export interface PiClient { probe(): Promise<PiReadiness>; request(input: PiRequestInput, signal: AbortSignal): AsyncIterable<PiEvent>; shutdown(): Promise<void> }
-export interface PiClientOptions { executable?: string; model?: string; thinkingLevel?: PiThinkingLevel; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number }
+export interface PiClientOptions { executable?: string; model?: string; thinkingLevel?: PiThinkingLevel; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number; probeDeadlineMs?: number }
 interface Pending { resolve(value: ObjectValue): void; reject(error: Error): void; timer: NodeJS.Timeout }
 interface Lifecycle { messageEnded: boolean; stopReason: string | undefined; providerError: string | undefined; settled: boolean; assistantText: string; responseBytes: number; textExceeded: boolean }
 interface ActiveRequest extends Lifecycle {
@@ -97,7 +98,7 @@ function promptFor(input: PiRequestInput): string {
 export class StdioPiClient implements PiClient {
   private readonly executable: string | undefined; private readonly executableError: Error | undefined; private readonly model: string; private readonly thinkingLevel: PiThinkingLevel | undefined;
   private readonly systemPrompt: string; private readonly personaAppend: string;
-  private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number;
+  private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number; private readonly probeDeadlineMs: number;
   private child: ChildProcessWithoutNullStreams | undefined; private buffer = Buffer.alloc(0); private stderrBytes = 0;
   private pending = new Map<string, Pending>(); private sequence = 0; private active: ActiveRequest | undefined; private probeLifecycle: Lifecycle | undefined;
   private starting: Promise<void> | undefined; private ownership: Promise<void> = Promise.resolve(); private closed = false;
@@ -114,7 +115,7 @@ export class StdioPiClient implements PiClient {
         this.executableError = error instanceof PiExecutableConfigurationError ? error : new PiExecutableConfigurationError("could not resolve the executable");
       }
     }
-    this.model = options.model ?? PI_MODEL; this.thinkingLevel = options.thinkingLevel; this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? ""; this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
+    this.model = options.model ?? PI_MODEL; this.thinkingLevel = options.thinkingLevel; this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? ""; this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS; this.probeDeadlineMs = options.probeDeadlineMs ?? Math.min(this.requestDeadlineMs, PI_PROBE_DEADLINE_MS);
   }
 
   private async acquire(): Promise<() => void> {
@@ -127,8 +128,11 @@ export class StdioPiClient implements PiClient {
       await this.ensureStarted();
       const state = await this.send("get_state"); const models = await this.send("get_available_models"); this.assertPinnedModel(state, models);
       const lifecycle: Lifecycle = { messageEnded: false, stopReason: undefined, providerError: undefined, settled: false, assistantText: "", responseBytes: 0, textExceeded: false }; this.probeLifecycle = lifecycle;
-      await this.send("prompt", { message: `Reply with exactly ${PROBE_MARKER} and no other text.` }, this.requestDeadlineMs);
-      await this.waitUntil(() => lifecycle.messageEnded && lifecycle.settled, this.requestDeadlineMs, "probe completion timed out");
+      // Readiness must not wait as long as a real spoken response. A provider
+      // can spend minutes at a high thinking level on a one-line marker, which
+      // otherwise leaves the UI stuck in "Starting" even though Pi spawned.
+      await this.send("prompt", { message: `Reply with exactly ${PROBE_MARKER} and no other text.` }, this.probeDeadlineMs);
+      await this.waitUntil(() => lifecycle.messageEnded && lifecycle.settled, this.probeDeadlineMs, "probe completion timed out");
       if (lifecycle.stopReason !== "stop" || lifecycle.providerError) throw new Error(lifecycle.providerError ?? "provider did not complete normally");
       if (lifecycle.textExceeded || lifecycle.assistantText !== PROBE_MARKER) throw new Error("provider probe returned an invalid readiness marker");
       return readiness("ready");

@@ -186,7 +186,7 @@ export function Readiness(props: ReadinessProps) {
     : !snapshot && loading
     ? 'Checking local audio and Pi in the background…'
     : reasoningChecking
-      ? 'Pi is still warming up. Start will be enabled when the reasoning backend is ready.'
+      ? 'Pi is checking the selected model. Start will be enabled when the reasoning backend is ready.'
       : realSessionReady
         ? `${activeBackendLabel ? `${activeBackendLabel} is ready. ` : ''}Everything is ready on this device.`
         : transcriptOnlyReady

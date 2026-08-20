@@ -6,7 +6,7 @@ import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
 import type { SidecarProcess, SidecarRuntimeSnapshot } from '../sidecar/process.js';
 import { sidecarSnapshot } from '../sidecar/process.js';
-import { createPiClient, type PiClient } from '../pi/PiClient.js';
+import { createPiClient, PI_PROBE_DEADLINE_MS, type PiClient } from '../pi/PiClient.js';
 import { createPiResearchClient, type PiResearchClient } from '../pi/PiResearchClient.js';
 import { PI_CHECKING, PiReadinessProbe } from '../pi/readiness-probe.js';
 import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifier.js';
@@ -38,7 +38,10 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   const app = Fastify({ bodyLimit: 16 * 1024, logger: false, forceCloseConnections: true });
   // Per-session client factories: session-owned Pi children are created lazily at
   // validated session.start, each frozen with the session's persona append.
-  const createProbeClient = options.createProbeClient ?? ((piSettings: PiSettings) => createPiClient({ model: piSettings.model, thinkingLevel: piSettings.thinkingLevel }));
+  // Readiness only needs to verify that the selected model can answer. Keep
+  // the probe cheap and bounded; live response clients still use the user's
+  // configured thinking level.
+  const createProbeClient = options.createProbeClient ?? ((piSettings: PiSettings) => createPiClient({ model: piSettings.model, thinkingLevel: 'off', probeDeadlineMs: PI_PROBE_DEADLINE_MS }));
   const createResponseClient = options.createResponseClient ?? ((personaAppend: string, piSettings?: PiSettings) => createPiClient({ personaAppend, ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}) }));
   const createResearchClient = options.createResearchClient ?? ((personaAppend: string, piSettings?: PiSettings) => createPiResearchClient({ personaAppend, ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}) }));
   const createClassifierClient = options.createClassifierClient ?? ((piSettings?: PiSettings) => createPiClient({ systemPrompt: CLASSIFIER_SYSTEM_PROMPT, ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}) }));
@@ -190,7 +193,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
               : { state: 'degraded' as const, label: 'Audio server', detail: voiceOutputReason, correctiveAction: 'Choose an available voice backend in settings, then retry.', progress: Math.round((audioReadyChecks / audioChecks.length) * 100), checks: audioChecks };
     const piStarting = pi === PI_CHECKING;
     const piService = piStarting
-      ? { state: 'starting' as const, label: 'Pi service', detail: pi.detail, correctiveAction: 'Keep this page open while Pi initializes.', progress: 0, checks: [{ label: 'Reasoning backend', state: 'starting' as const, detail: pi.detail }] }
+      ? { state: 'starting' as const, label: 'Pi service', detail: pi.detail, correctiveAction: 'Keep this page open while Pi verifies provider access.', progress: 0, checks: [{ label: 'Reasoning backend', state: 'starting' as const, detail: pi.detail }] }
       : { state: pi.status, label: 'Pi service', detail: pi.detail, correctiveAction: pi.correctiveAction, progress: pi.status === 'ready' ? 100 : 0, checks: [{ label: 'Reasoning backend', state: pi.status === 'ready' ? 'ready' as const : 'unavailable' as const, detail: pi.detail }] };
     return {
       capabilities: [

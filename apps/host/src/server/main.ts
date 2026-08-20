@@ -1,10 +1,10 @@
 import { buildApp } from './app.js';
 import { startSidecar } from '../sidecar/process.js';
-import { createPiClient } from '../pi/PiClient.js';
+import { createPiClient, PI_PROBE_DEADLINE_MS } from '../pi/PiClient.js';
 const sidecar = await startSidecar();
 const app = await buildApp({
   sidecar,
-  createProbeClient: piSettings => createPiClient({ model: piSettings.model, thinkingLevel: piSettings.thinkingLevel }),
+  createProbeClient: piSettings => createPiClient({ model: piSettings.model, thinkingLevel: 'off', probeDeadlineMs: PI_PROBE_DEADLINE_MS }),
 });
 const configuredPort = process.env.PODCASTER_PORT ?? '43127';
 const port = Number(configuredPort);

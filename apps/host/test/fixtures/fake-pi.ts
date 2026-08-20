@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export type FakePiScenario = "normal" | "slow" | "malformed" | "oversized" | "invalid-utf8" | "unicode-separator" | "crlf" | "crash" | "login" | "rate-limit" | "async-login" | "async-rate-limit" | "too-many-words" | "stubborn-descendant" | "incompatible-model" | "unrelated-probe" | "tools";
+export type FakePiScenario = "normal" | "slow" | "hanging-probe" | "malformed" | "oversized" | "invalid-utf8" | "unicode-separator" | "crlf" | "crash" | "login" | "rate-limit" | "async-login" | "async-rate-limit" | "too-many-words" | "stubborn-descendant" | "incompatible-model" | "unrelated-probe" | "tools";
 
 export interface FakePi { executable: string; log: string; cleanup(): Promise<void> }
 
@@ -38,6 +38,7 @@ function command(c) {
   if (scenario === "crash") return process.exit(7);
   if (scenario === "async-login" || scenario === "async-rate-limit") { send({type:"message_end", message:{role:"assistant", stopReason:"error", errorMessage: scenario === "async-login" ? "unauthorized bearer SUPERSECRET" : "HTTP 429 quota"}}); return send({type:"agent_settled"}); }
   const probe = c.message === "Reply with exactly RPC_READY and no other text.";
+  if (probe && scenario === "hanging-probe") return;
   aborted = false;
   const delay = scenario === "slow" ? 40 : 2;
   send({type:"agent_start"});

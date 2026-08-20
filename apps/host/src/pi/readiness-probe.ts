@@ -3,8 +3,8 @@ import type { PiClient, PiReadiness } from './PiClient.js';
 
 export const PI_CHECKING: PiReadiness = {
   status: 'unavailable',
-  detail: 'Pi is still starting.',
-  correctiveAction: 'You can start now; the first response may take a little longer.',
+  detail: 'Pi is checking the selected model.',
+  correctiveAction: 'Keep this page open while Pi verifies provider access.',
 };
 
 const PI_UNAVAILABLE: PiReadiness = {
