@@ -248,7 +248,8 @@ class SidecarServer:
                 elif message_type == "stt.bind_epoch":
                     self.runtime.bind_epoch(opened_stream, str(payload["utteranceId"]), int(payload["epoch"]))
                 elif message_type == "tts.open":
-                    self.runtime.open_tts(
+                    await asyncio.to_thread(
+                        self.runtime.open_tts,
                         opened_stream,
                         str(payload["responseId"]),
                         int(payload["epoch"]),
