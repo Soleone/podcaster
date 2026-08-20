@@ -18,6 +18,8 @@ export class FakeSessionTransport implements SessionTransport {
   async connect(_capability: string): Promise<void> { this.connected = true; }
   disconnect(): void { this.connected = false; }
   startSession(): void { this.commands.push('session.start'); }
+  cancelPlanning(): void { this.commands.push('planning.cancel'); }
+  retryPlanning(): void { this.commands.push('planning.retry'); }
   startAudio(): void { this.commands.push('audio.start'); }
   stopAudio(): void { this.commands.push('audio.stop'); }
   acknowledgePersisted(): void { this.commands.push('turn.persisted'); }

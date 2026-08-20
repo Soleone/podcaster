@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 import { normalizePersona } from "./persona.js";
 import { DEFAULT_PI_SETTINGS, MAX_PI_MODEL_BYTES, PI_THINKING_LEVELS, type PiSettings } from "./pi.js";
-import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_CAPABILITY, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, QWEN_VOICE_LANGUAGES, type TtsModelDescriptor, type VoiceSpeedCapability } from "./types.js";
+import { DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_CAPABILITY, DEFAULT_VOICE_SPEED_MODIFIER, MAX_PLANNING_NOTES_BYTES, MAX_PLANNING_TOPIC_BYTES, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER, PLANNING_DEPTHS, QWEN_VOICE_LANGUAGES, type SessionPlanningRequest, type TtsModelDescriptor, type VoiceSpeedCapability } from "./types.js";
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -105,6 +105,26 @@ export function normalizeVoicePreference(value: unknown): VoicePreference | unde
     ...(value.backendId === undefined && value.modelId === undefined ? {} : { backendId: value.backendId as string, modelId: value.modelId as string }),
   };
   return isValidVoicePreference(normalized) ? normalized : undefined;
+}
+
+export function isValidSessionPlanningRequest(value: unknown): value is SessionPlanningRequest {
+  if (!isPlainObject(value)
+    || (value.enabled !== undefined && value.enabled !== true)
+    || typeof value.topic !== "string"
+    || value.topic.trim().length === 0
+    || new TextEncoder().encode(value.topic).length > MAX_PLANNING_TOPIC_BYTES
+    || typeof value.depth !== "string"
+    || !(PLANNING_DEPTHS as readonly string[]).includes(value.depth)) return false;
+  if (value.notes !== undefined && (typeof value.notes !== "string" || new TextEncoder().encode(value.notes).length > MAX_PLANNING_NOTES_BYTES)) return false;
+  if (value.reuse !== undefined && typeof value.reuse !== "boolean") return false;
+  return Object.keys(value).every(key => ["enabled", "topic", "depth", "notes", "reuse"].includes(key));
+}
+
+export function normalizeSessionPlanningRequest(value: unknown): SessionPlanningRequest | undefined {
+  if (!isValidSessionPlanningRequest(value)) return undefined;
+  const topic = value.topic.trim();
+  const notes = value.notes?.trim();
+  return { ...(value.enabled === true ? { enabled: true as const } : {}), topic, depth: value.depth, ...(notes ? { notes } : {}), ...(value.reuse === true ? { reuse: true } : {}) };
 }
 
 export function isValidPiSettings(value: unknown): value is PiSettings {

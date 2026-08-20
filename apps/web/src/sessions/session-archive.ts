@@ -73,10 +73,12 @@ export async function exportSessionRecording(sessionId: string, writer: StableTu
  * transcript survives both read-only inspection and a later resume.
  */
 export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string, mode: 'stopped' | 'paused' | 'active' = 'stopped'): Promise<SessionViewState> {
-  const turns = await writer.getTurns(sessionId);
+  const [turns, session] = await Promise.all([writer.getTurns(sessionId), writer.getSession(sessionId)]);
   const paused = mode === 'paused';
+  const planning = session?.planning;
   return {
     ...initialSessionState,
+    planning: planning ? { status: planning.status, progress: planning.progress ?? (planning.status === 'ready' ? 100 : 0), ...(planning.topic ? { topic: planning.topic } : {}), ...(planning.depth ? { depth: planning.depth } : {}), ...(planning.detail ? { detail: planning.detail } : {}), ...(planning.notes ? { notes: planning.notes } : {}) } : initialSessionState.planning,
     dominant: mode === 'active' ? 'listening' : paused ? 'paused' : 'idle',
     announcement: mode === 'active' ? 'Listening' : paused ? 'Session paused' : 'Session stopped',
     playbackNotice: paused ? 'Any assistant response in progress was stopped and will not resume automatically.' : '',

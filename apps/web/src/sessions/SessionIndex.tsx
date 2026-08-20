@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, Clock, History, Mic2, Play, Radio } from 'lucide-react';
 import { Link } from 'react-router';
-import type { PiSettings, TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
+import type { PiSettings, SessionPlanningRequest, TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
 import { Badge } from '../components/ui/badge';
 import { Button, buttonVariants } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -12,6 +12,7 @@ import type { ExportOnProgress } from '../recording/splice';
 import { Readiness, type Snapshot } from '../readiness/Readiness';
 import { RecordingStore } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
+import type { PlanningViewState } from '../session/state';
 import { exportSessionRecording, loadSessionArchive, sessionDurationSeconds, type SessionSummary } from './session-archive';
 
 function formatWhen(iso: string): string {
@@ -35,8 +36,10 @@ export interface SessionIndexProps {
   sessionAvailable: boolean;
   liveSessionId: string | undefined;
   liveSessionPaused: boolean;
+  planningStatus?: PlanningViewState;
   elapsedSeconds: number;
-  onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => Promise<void>;
+  onStart: (capability: string, reasoningMode: 'full' | 'transcript_only', planning?: SessionPlanningRequest) => void | Promise<void>;
+  onCancelPlanning?: () => void;
   selectedModel: TtsModelSelection;
   piSettings: PiSettings;
   onCatalog: (catalog: VoiceCatalog) => void;
@@ -87,7 +90,7 @@ export function SessionIndex(props: SessionIndexProps) {
     </Card> : null}
 
     <section aria-label="Start a new session" className="mb-10">
-      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} selectedModel={props.selectedModel} piSettings={props.piSettings} onStart={props.onStart} onCatalog={props.onCatalog} onModels={props.onModels} onCapability={props.onCapability} onSnapshot={props.onSnapshot} />
+      <Readiness className="my-0 w-full" sessionAvailable={props.sessionAvailable} selectedModel={props.selectedModel} piSettings={props.piSettings} {...(props.planningStatus ? { planningStatus: props.planningStatus } : {})} onStart={props.onStart} {...(props.onCancelPlanning ? { onCancelPlanning: props.onCancelPlanning } : {})} onCatalog={props.onCatalog} onModels={props.onModels} onCapability={props.onCapability} onSnapshot={props.onSnapshot} />
     </section>
 
     <section aria-labelledby="session-list-title">

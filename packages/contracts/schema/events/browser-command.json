@@ -31,6 +31,18 @@
                     "transcript_only"
                   ]
                 },
+                "planning": {
+                  "type": "object",
+                  "required": ["topic", "depth"],
+                  "properties": {
+                    "enabled": { "const": true },
+                    "topic": { "type": "string", "minLength": 1, "maxUtf8Bytes": 2048 },
+                    "depth": { "enum": ["light", "standard", "deep"] },
+                    "notes": { "type": "string", "maxUtf8Bytes": 12288 },
+                    "reuse": { "type": "boolean" }
+                  },
+                  "additionalProperties": false
+                },
                 "settings": {
                   "type": "object",
                   "required": [
@@ -113,6 +125,42 @@
                   "additionalProperties": false
                 }
               },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "planning.cancel"
+            },
+            "payload": {
+              "type": "object",
+              "required": ["reason"],
+              "properties": {
+                "reason": { "enum": ["user", "stop"] }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "planning.retry"
+            },
+            "payload": {
+              "type": "object",
               "additionalProperties": false
             }
           },

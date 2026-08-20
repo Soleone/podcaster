@@ -8,7 +8,7 @@ import { ReasoningSpeechAssembler } from "./ReasoningSpeechAssembler.js";
 import { ResearchPartAssembler } from "./ResearchPartAssembler.js";
 import { log } from "../logger.js";
 
-export type SessionPhase = "idle" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
+export type SessionPhase = "idle" | "planning" | "ready" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
 export type SessionEvent = HostEvent;
 type HostEventType = HostEvent["type"];
 type HostEventFor<T extends HostEventType> = HostEvent extends infer Event
@@ -64,6 +64,8 @@ export interface SessionOrchestratorOptions {
   transcriptOnly?: boolean;
   reasoningDeltaCoalesceChars?: number;
   researchPi?: PiResearchClient;
+  /** Frozen, bounded preparation notes. They are context only and never spoken directly. */
+  planningContext?: string;
   multiPartEnabled?: boolean;
 }
 export interface SessionSnapshot {
@@ -188,6 +190,7 @@ export class SessionOrchestrator {
   private readonly policyDecide: (input: PolicyInput) => PolicyDecision;
   private readonly reasoningDeltaCoalesceChars: number;
   private readonly researchPi: PiResearchClient | undefined;
+  private readonly planningContext: string;
   private readonly multiPartEnabled: boolean;
 
   constructor(private readonly options: SessionOrchestratorOptions) {
@@ -210,6 +213,7 @@ export class SessionOrchestrator {
     this.policyDecide = options.policyDecide ?? decide;
     this.reasoningDeltaCoalesceChars = Math.max(1, options.reasoningDeltaCoalesceChars ?? 16);
     this.researchPi = options.researchPi;
+    this.planningContext = truncateUtf8(options.planningContext?.trim() ?? "", 3_072);
     this.multiPartEnabled = Boolean(options.researchPi && options.multiPartEnabled);
   }
 
@@ -1024,8 +1028,21 @@ export class SessionOrchestrator {
   }
   private boundedContext(): string {
     const lines = this.context.slice(-this.maxContextTurns).map(turn => `${turn.role}: ${turn.text}`);
-    while (lines.length && Buffer.byteLength(lines.join("\n"), "utf8") > this.maxContextBytes) lines.shift();
-    return truncateUtf8(lines.join("\n"), this.maxContextBytes);
+    if (!this.planningContext) {
+      while (lines.length && Buffer.byteLength(lines.join("\n"), "utf8") > this.maxContextBytes) lines.shift();
+      return truncateUtf8(lines.join("\n"), this.maxContextBytes);
+    }
+    // Keep preparation notes clearly delimited and reserve their bounded slice
+    // before trimming ordinary conversation context. The base Pi prompt treats
+    // all of this as untrusted data, so notes cannot redefine spoken behavior.
+    const planBlock = `<session_preparation>
+${truncateUtf8(this.planningContext, Math.min(3_072, this.maxContextBytes))}
+</session_preparation>`;
+    const planBytes = Buffer.byteLength(planBlock, "utf8");
+    const contextBudget = Math.max(0, this.maxContextBytes - planBytes - (lines.length ? 1 : 0));
+    while (lines.length && Buffer.byteLength(lines.join("\n"), "utf8") > contextBudget) lines.shift();
+    const context = lines.join("\n");
+    return truncateUtf8(context ? `${planBlock}\n${context}` : planBlock, this.maxContextBytes);
   }
   private fail(code: string, detail: string, correctiveAction: string): void { this.emit("failure", { code, detail, correctiveAction, recoverable: true }); }
   private failResponse(active: ActiveResponse, reasonCode: "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"): void {

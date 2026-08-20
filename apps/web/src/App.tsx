@@ -22,7 +22,7 @@ import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn
 import type { StoredSession } from './storage/schema';
 import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
-import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
+import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type SessionPlanningRequest, type SessionPlanningSnapshot, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import type { HostEvent } from '@app/contracts';
 import { SettingsStore } from './settings/settings-store';
 import { createResourceOwner } from './storage/resource-lifecycle';
@@ -43,6 +43,19 @@ const StoppedSession = lazy(() => import('./sessions/StoppedSession').then(({ St
 const SettingsDialog = lazy(() => import('./settings/SettingsDialog').then(({ SettingsDialog: component }) => ({ default: component })));
 type SessionStartSettings = SessionSettingsSnapshot;
 type LifecycleAction = 'idle' | 'pausing' | 'resuming' | 'ending';
+
+function planningSnapshotForStart(planning: SessionPlanningRequest | undefined): SessionPlanningSnapshot {
+  if (!planning) return { status: 'skipped', progress: 100 };
+  return { status: planning.reuse ? 'ready' : 'planning', topic: planning.topic, depth: planning.depth, progress: planning.reuse ? 100 : 0, ...(planning.notes ? { notes: planning.notes } : {}) };
+}
+function planningForResume(planning: SessionPlanningSnapshot | undefined): SessionPlanningRequest | undefined {
+  if (!planning || (planning.status !== 'ready' && planning.status !== 'planning') || !planning.topic || !planning.depth) return undefined;
+  return { topic: planning.topic, depth: planning.depth, ...(planning.status === 'ready' && planning.notes ? { notes: planning.notes } : {}), reuse: true };
+}
+function planningViewForStart(planning: SessionPlanningRequest | undefined): SessionViewState['planning'] {
+  if (!planning) return { status: 'skipped', progress: 100 };
+  return { status: planning.reuse ? 'ready' : 'planning', topic: planning.topic, depth: planning.depth, progress: planning.reuse ? 100 : 0, ...(planning.notes ? { notes: planning.notes } : {}) };
+}
 
 interface FakeRuntimeStats {
   captureStarts: number;
@@ -231,7 +244,7 @@ export function App() {
     };
   }, []);
 
-  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, activate: () => Promise<void>) => {
+  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, planning: SessionPlanningRequest | undefined, activate: () => Promise<void>) => {
     reconnectUnsubscribeRef.current?.();
     reconnectUnsubscribeRef.current = undefined;
     transportFailureUnsubscribeRef.current?.();
@@ -280,6 +293,9 @@ export function App() {
       setView(next);
       setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(next.audioEngine) }));
     });
+    let activated = false;
+    if (planning) { await activate(); activated = true; }
+    if (planning) await transport.emit(createFakeHostEvent(id, controller.snapshot().epoch, 'session.state', { phase: 'ready', personaDigest: '0'.repeat(64), planning: { status: 'ready', topic: planning.topic, depth: planning.depth, progress: 100, detail: 'Fake services are ready to go live.' } }));
     statsRef.current.captureStarts++;
     const capture = await new BrowserCapture({ onAudio: capture => recorder.onCaptureAudio(capture) }).start({
       send: frame => transport.sendCapture(frame),
@@ -294,13 +310,14 @@ export function App() {
         statsRef.current.captureRunning = false;
       },
     };
-    await activate();
+    if (!activated) await activate();
+    if (planning) await transport.emit(createFakeHostEvent(id, controller.snapshot().epoch, 'session.state', { phase: 'listening', personaDigest: '0'.repeat(64) }));
     setCapability(cap);
     setSessionId(id);
     stoppedRef.current = false;
   }, []);
 
-  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings, activate: () => Promise<void>) => {
+  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings, planning: SessionPlanningRequest | undefined, activate: () => Promise<void>) => {
     reconnectUnsubscribeRef.current?.();
     reconnectUnsubscribeRef.current = undefined;
     transportFailureUnsubscribeRef.current?.();
@@ -390,7 +407,12 @@ export function App() {
       captureRecoveryRef.current = recovery;
       return recovery;
     });
-    await transport.startSession({ sessionSeed: seed, reasoningMode, settings });
+    // Planning must be durable before its first lifecycle event arrives. The
+    // no-planning branch keeps the previous activation point and transport
+    // sequence unchanged.
+    let activated = false;
+    if (planning) { await activate(); activated = true; }
+    await transport.startSession({ sessionSeed: seed, reasoningMode, ...(planning ? { planning } : {}), settings });
     const random = new Uint32Array(1); crypto.getRandomValues(random);
     const streamId = random[0] ?? 0;
     captureStreamIdRef.current = streamId;
@@ -410,7 +432,7 @@ export function App() {
       });
       await transport.startAudio(streamId);
       audioReady = true;
-      await activate();
+      if (!activated) await activate();
       for (const frame of pendingCapture.splice(0)) transport.sendCapture(frame);
     } catch (error) {
       try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
@@ -486,8 +508,8 @@ export function App() {
               if (!reopened.ok) throw new Error(reopened.degradedReason);
               configureSessionClock(await candidate.getSession(target));
             };
-            if (fakeServices) await composeFakeSession(candidate, target, restored, 'fake-recovered', activate);
-            else await composeRealSession(candidate, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings, activate);
+            if (fakeServices) await composeFakeSession(candidate, target, restored, 'fake-recovered', planningForResume(stored.planning), activate);
+            else await composeRealSession(candidate, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings, planningForResume(stored.planning), activate);
             if (!cancelled) navigate(`/session/${target}`);
           } catch (error) {
             try { await controllerRef.current?.pause(); } catch { /* best-effort rollback */ }
@@ -544,7 +566,7 @@ export function App() {
     return () => { delete window.__podcasterTest; };
   }, [sessionId, view]);
 
-  async function start(cap: string, reasoningMode: 'full' | 'transcript_only' = 'full', existingId?: string) {
+  async function start(cap: string, reasoningMode: 'full' | 'transcript_only' = 'full', existingId?: string, requestedPlanning?: SessionPlanningRequest) {
     const opened = writerRef.current;
     if (!opened) throw new Error('Local session storage is not ready yet.');
     await settingsReadyPromiseRef.current!;
@@ -565,6 +587,7 @@ export function App() {
       voiceProfiles: { ...activeSettings.voiceProfiles },
     };
     const storedSettings = existing?.settings && isValidSessionSettingsSnapshot(existing.settings) ? existing.settings : undefined;
+    const planning = preserveIdentity ? planningForResume(existing?.planning) : requestedPlanning;
     const settings: SessionStartSettings = preserveIdentity && storedSettings
       ? storedSettings
       : { version: 1, persona: current.persona, voice: { ...current.voice }, pi: { ...current.pi } };
@@ -594,14 +617,14 @@ export function App() {
       // must return it to paused rather than leaving an orphaned active row.
       const initial: SessionViewState = existingId
         ? await sessionViewStateFromTurns(opened, id, 'active')
-        : { ...initialSessionState, dominant: 'listening', announcement: 'Listening' };
+        : { ...initialSessionState, dominant: planning ? 'planning' : 'listening', planning: planningViewForStart(planning), announcement: planning ? 'Preparing your session' : 'Listening' };
       const activate = async (): Promise<void> => {
-        const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest, settings });
+        const persisted = await opened.beginSession({ sessionId: id, sessionSeed: seed, personaDigest, settings, planning: planningSnapshotForStart(planning) });
         if (!persisted.ok) throw new Error(persisted.degradedReason);
         configureSessionClock(await opened.getSession(id));
       };
-      if (fakeServices) await composeFakeSession(opened, id, initial, cap, activate);
-      else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings, activate);
+      if (fakeServices) await composeFakeSession(opened, id, initial, cap, planning, activate);
+      else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings, planning, activate);
     } catch (error) {
       // A failed composition must release the partially-created runtime before
       // returning to the durable paused state. This is also the stale-event
@@ -1100,8 +1123,10 @@ export function App() {
             piSettings={settingsModel.pi}
             liveSessionId={sessionId}
             liveSessionPaused={sessionPaused}
+            {...(view?.planning ? { planningStatus: view.planning } : {})}
             elapsedSeconds={elapsed}
-            onStart={start}
+            onStart={(capability, mode, planning) => start(capability, mode, undefined, planning)}
+            onCancelPlanning={() => { try { transportRef.current?.cancelPlanning(); } catch { /* planning may already have reached its terminal state */ } }}
             onCatalog={onCatalog}
             onModels={onModels}
             onCapability={setCapability}

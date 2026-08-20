@@ -1,9 +1,9 @@
 import { decodeBinaryAudioFrame } from '@app/contracts/binary';
-import type { BrowserCommand, HostEvent, PlaybackPausedEvent, PlaybackStoppedEvent, TranscriptFinalEvent, VoicePreference } from '@app/contracts';
+import type { BrowserCommand, HostEvent, PlaybackPausedEvent, PlaybackStoppedEvent, TranscriptFinalEvent } from '@app/contracts';
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
 import { activityLog } from './activity-log';
 import { createEnvelope, type BrowserCommandPayload } from './envelope';
-import type { OutputAudioChunk, SessionTransport } from './transport';
+import type { OutputAudioChunk, PlanningStartResult, SessionStartRequest, SessionTransport } from './transport';
 
 const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
 // Close codes in 3000-4999 are application-defined and valid for a browser
@@ -49,6 +49,7 @@ export class WebSocketSessionTransport implements SessionTransport {
   private intentionalDisconnect = false;
   private failureNotified = false;
   private pendingAudioStart: { streamId: number; resolve(): void; reject(error: Error): void } | undefined;
+  private pendingPlanningStart: { resolve(result: PlanningStartResult): void; reject(error: Error): void } | undefined;
 
   constructor(
     private readonly sessionId: string,
@@ -133,6 +134,14 @@ export class WebSocketSessionTransport implements SessionTransport {
       }
       const hostEvent = value;
       if (hostEvent.sessionId !== this.sessionId) { this.protocolFailure('the event sessionId did not match this session.'); return; }
+      if (hostEvent.type === 'session.state' && hostEvent.payload.planning && typeof hostEvent.payload.planning === 'object' && !Array.isArray(hostEvent.payload.planning)) {
+        const status = (hostEvent.payload.planning as { status?: unknown }).status;
+        if (this.pendingPlanningStart && (status === 'ready' || status === 'failed' || status === 'cancelled' || status === 'continued')) {
+          const pending = this.pendingPlanningStart;
+          this.pendingPlanningStart = undefined;
+          pending.resolve(status as PlanningStartResult);
+        }
+      }
       if (hostEvent.type === 'reasoning.started') {
         const responseId = String(hostEvent.payload.responseId);
         const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
@@ -266,12 +275,26 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.reconnecting = false;
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
     this.queuedCommands.length = 0;
+    const pendingPlanning = this.pendingPlanningStart;
+    this.pendingPlanningStart = undefined;
+    pendingPlanning?.reject(new Error('Session planning was cancelled.'));
     activityLog.append({ level: 'info', source: 'transport', message: 'session socket closed intentionally' });
     const socket = this.socket;
     this.socket = undefined;
     socket?.close(1000, 'session ended');
   }
-  startSession(input: { sessionSeed: string; reasoningMode: 'full' | 'transcript_only'; settings: { version: 1; persona: string; voice: VoicePreference } }): void { this.sendCommand('session.start', { sessionSeed: input.sessionSeed, reasoningMode: input.reasoningMode, settings: input.settings }); }
+  startSession(input: SessionStartRequest): void | Promise<PlanningStartResult | undefined> {
+    const payload = { sessionSeed: input.sessionSeed, reasoningMode: input.reasoningMode, ...(input.planning ? { planning: input.planning } : {}), settings: input.settings };
+    if (!input.planning) { this.sendCommand('session.start', payload); return; }
+    if (this.pendingPlanningStart) return Promise.reject(new Error('session planning is already in progress'));
+    return new Promise<PlanningStartResult>((resolve, reject) => {
+      this.pendingPlanningStart = { resolve, reject };
+      try { this.sendCommand('session.start', payload); }
+      catch (error) { this.pendingPlanningStart = undefined; reject(error instanceof Error ? error : new Error('session planning could not start')); }
+    });
+  }
+  cancelPlanning(): void { this.sendCommand('planning.cancel', { reason: 'user' }); }
+  retryPlanning(): void { this.sendCommand('planning.retry', {}); }
   startAudio(streamId: number): Promise<void> {
     if (this.pendingAudioStart) return Promise.reject(new Error('another microphone warmup is already in progress'));
     return new Promise<void>((resolve, reject) => {
@@ -393,6 +416,8 @@ export class WebSocketSessionTransport implements SessionTransport {
   private notifyFailure(message: string): void {
     this.pendingAudioStart?.reject(new Error(message));
     this.pendingAudioStart = undefined;
+    this.pendingPlanningStart?.reject(new Error(message));
+    this.pendingPlanningStart = undefined;
     if (this.failureNotified || this.intentionalDisconnect) return;
     this.failureNotified = true;
     for (const listener of this.failureListeners) listener(message);
@@ -440,16 +465,27 @@ function isHostEventShape(value: unknown): boolean {
   const anyUuid = uuid;
   switch (event.type) {
     case 'session.state': {
-      if (!hasOnly(payload, ['phase', 'personaDigest'], ['audio']) || !['idle', 'listening', 'deciding', 'reasoning', 'synthesizing', 'playing', 'echo_provisional', 'interruption_deciding', 'stopped'].includes(String(payload.phase)) || typeof payload.personaDigest !== 'string' || !/^[a-f0-9]{64}$/.test(payload.personaDigest)) return false;
-      if (payload.audio === undefined) return true;
-      if (typeof payload.audio !== 'object' || payload.audio === null || Array.isArray(payload.audio)) return false;
-      const audio = payload.audio as Record<string, unknown>;
-      return hasOnly(audio, ['status', 'capture', 'vad', 'tts'], ['detail'])
-        && ['starting', 'warming', 'ready', 'failed', 'retrying'].includes(String(audio.status))
-        && ['starting', 'ready', 'failed'].includes(String(audio.capture))
-        && ['starting', 'warming', 'ready', 'failed'].includes(String(audio.vad))
-        && ['starting', 'warming', 'ready', 'failed'].includes(String(audio.tts))
-        && (audio.detail === undefined || (typeof audio.detail === 'string' && audio.detail.length <= 512));
+      if (!hasOnly(payload, ['phase', 'personaDigest'], ['audio', 'planning']) || !['idle', 'planning', 'ready', 'listening', 'deciding', 'reasoning', 'synthesizing', 'playing', 'echo_provisional', 'interruption_deciding', 'stopped'].includes(String(payload.phase)) || typeof payload.personaDigest !== 'string' || !/^[a-f0-9]{64}$/.test(payload.personaDigest)) return false;
+      if (payload.audio !== undefined) {
+        if (typeof payload.audio !== 'object' || payload.audio === null || Array.isArray(payload.audio)) return false;
+        const audio = payload.audio as Record<string, unknown>;
+        if (!hasOnly(audio, ['status', 'capture', 'vad', 'tts'], ['detail'])
+          || !['starting', 'warming', 'ready', 'failed', 'retrying'].includes(String(audio.status))
+          || !['starting', 'ready', 'failed'].includes(String(audio.capture))
+          || !['starting', 'warming', 'ready', 'failed'].includes(String(audio.vad))
+          || !['starting', 'warming', 'ready', 'failed'].includes(String(audio.tts))
+          || (audio.detail !== undefined && (typeof audio.detail !== 'string' || audio.detail.length > 512))) return false;
+      }
+      if (payload.planning === undefined) return true;
+      if (typeof payload.planning !== 'object' || payload.planning === null || Array.isArray(payload.planning)) return false;
+      const planning = payload.planning as Record<string, unknown>;
+      return hasOnly(planning, ['status'], ['topic', 'depth', 'progress', 'detail', 'notes'])
+        && ['skipped', 'planning', 'ready', 'failed', 'cancelled', 'continued'].includes(String(planning.status))
+        && (planning.topic === undefined || (typeof planning.topic === 'string' && planning.topic.length > 0 && new TextEncoder().encode(planning.topic).length <= 2048))
+        && (planning.depth === undefined || ['light', 'standard', 'deep'].includes(String(planning.depth)))
+        && (planning.progress === undefined || (integer(planning.progress) && Number(planning.progress) <= 100))
+        && (planning.detail === undefined || (typeof planning.detail === 'string' && planning.detail.length <= 512))
+        && (planning.notes === undefined || (typeof planning.notes === 'string' && new TextEncoder().encode(planning.notes).length <= 12_288));
     }
     case 'transcript.partial': return exact(payload, ['utteranceId', 'sequence', 'text', 'replacedCharacters']) && uuid('utteranceId') && integer(payload.sequence) && typeof payload.text === 'string' && payload.text.length <= 16_384 && integer(payload.replacedCharacters);
     case 'transcript.final': return exact(payload, ['turnId', 'text', 'endpointComplete']) && uuid('turnId') && typeof payload.text === 'string' && payload.text.length <= 16_384 && payload.endpointComplete === true;

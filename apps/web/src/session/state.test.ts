@@ -6,6 +6,18 @@ let sequence = 0;
 const event = <T extends StableEvent['type']>(type: T, payload: Record<string, unknown> = {}, epoch = 0): StableEvent => ({ protocolVersion: 1, eventId: `e-${++sequence}`, sessionId: 's', epoch, monotonicMs: sequence, type, payload } as StableEvent);
 
 describe('session presentation state', () => {
+  it('shows bounded planning progress and preserves notes when live capture starts', () => {
+    let state = reduceSessionState(initialSessionState, event('session.state', { phase: 'planning', planning: { status: 'planning', topic: 'radio', depth: 'light', progress: 35, detail: 'Researching' } }));
+    expect(state.dominant).toBe('planning');
+    expect(state.planning).toMatchObject({ status: 'planning', topic: 'radio', depth: 'light', progress: 35 });
+    state = reduceSessionState(state, event('session.state', { phase: 'ready', planning: { status: 'ready', topic: 'radio', depth: 'light', progress: 100, notes: 'Talking points' } }));
+    expect(state.dominant).toBe('ready');
+    expect(state.planning.notes).toBe('Talking points');
+    state = reduceSessionState(state, event('session.state', { phase: 'listening' }));
+    expect(state.dominant).toBe('listening');
+    expect(state.planning).toMatchObject({ status: 'ready', notes: 'Talking points' });
+  });
+
   it('keeps partials tentative and out of announcements', () => {
     const listening = reduceSessionState(initialSessionState, event('session.state', { phase: 'listening' }));
     const partial = reduceSessionState(listening, event('transcript.partial', { text: 'revising words' }));

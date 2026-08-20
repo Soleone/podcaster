@@ -19,6 +19,22 @@ async function events(value: StdioPiResearchClient, signal = new AbortController
 }
 
 describe("production Pi research RPC boundary", () => {
+  it("creates a bounded preparation prompt for each validated depth without exposing tool output", async () => {
+    const { value, fake } = await client();
+    expect(value.requestPlan).toBeDefined();
+    const result: PiEvent[] = [];
+    for await (const event of value.requestPlan!({ topic: "The future of local radio", depth: "deep" }, new AbortController().signal)) result.push(event);
+    expect(result.at(-1)).toEqual({ type: "final", text: "Hello world" });
+    const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    const prompt = String(calls.find(call => call.command === "prompt")?.message);
+    expect(prompt).toContain("The future of local radio");
+    expect(prompt).toContain("Preparation depth: deep");
+    expect(prompt).toContain("Useful facts");
+    expect(prompt).toContain("read-only research tools");
+    expect(prompt).not.toContain("PRIVATE");
+    await value.shutdown();
+  });
+
   it("spawns with the read-only research tool allowlist, never the write/shell tools, and no --no-tools", async () => {
     const { value, fake } = await client();
     const iterator = value.requestBody(input, new AbortController().signal);

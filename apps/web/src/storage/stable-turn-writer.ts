@@ -1,4 +1,5 @@
 import type { HostEvent, PlaybackPausedEvent, PlaybackProgressEvent, PlaybackStoppedEvent } from '@app/contracts';
+import { MAX_PLANNING_NOTES_BYTES, MAX_PLANNING_TOPIC_BYTES, type PlanningDepth, type PlanningStatus } from '@app/contracts/settings';
 import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory, type StoredSession, type StoredTurn } from './schema';
 
 export type PersistedSessionEvent = HostEvent | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent;
@@ -53,6 +54,28 @@ function blankTurn(sessionId: string, turnId: string, at: string, timelineSequen
   return { key: turnKey(sessionId, turnId), sessionId, turnId, stableText: null, posture: null, eligible: null, policyReason: null, responseId: null, assistantText: null, playbackId: null, outputEpoch: null, sampleRate: null, generatedSamples: 0, deliveredSampleOffset: 0, pendingDeliveredOffset: 0, terminalReason: null, interrupted: false, pausedSampleOffset: null, interruptionDisposition: null, interruptionIntent: null, interruptedResponseId: null, controlOnly: false, continuationState: 'none', timelineSequence, failures: [], createdAt: at, updatedAt: at };
 }
 
+function planningSnapshot(value: unknown): StoredSession['planning'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const input = value as Record<string, unknown>;
+  const statuses: PlanningStatus[] = ['skipped', 'planning', 'ready', 'failed', 'cancelled', 'continued'];
+  const depths: PlanningDepth[] = ['light', 'standard', 'deep'];
+  if (!Object.keys(input).every(key => ['status', 'topic', 'depth', 'progress', 'detail', 'notes'].includes(key))) return undefined;
+  if (!statuses.includes(input.status as PlanningStatus)) return undefined;
+  if (input.topic !== undefined && (typeof input.topic !== 'string' || input.topic.length === 0 || new TextEncoder().encode(input.topic).length > MAX_PLANNING_TOPIC_BYTES)) return undefined;
+  if (input.depth !== undefined && !depths.includes(input.depth as PlanningDepth)) return undefined;
+  if (input.progress !== undefined && (!Number.isSafeInteger(input.progress) || Number(input.progress) < 0 || Number(input.progress) > 100)) return undefined;
+  if (input.detail !== undefined && (typeof input.detail !== 'string' || input.detail.length > 512)) return undefined;
+  if (input.notes !== undefined && (typeof input.notes !== 'string' || new TextEncoder().encode(input.notes).length > MAX_PLANNING_NOTES_BYTES)) return undefined;
+  return {
+    status: input.status as PlanningStatus,
+    ...(typeof input.topic === 'string' ? { topic: input.topic } : {}),
+    ...(depths.includes(input.depth as PlanningDepth) ? { depth: input.depth as PlanningDepth } : {}),
+    ...(typeof input.progress === 'number' ? { progress: input.progress } : {}),
+    ...(typeof input.detail === 'string' ? { detail: input.detail } : {}),
+    ...(typeof input.notes === 'string' ? { notes: input.notes } : {}),
+  };
+}
+
 export class StableTurnWriter {
   constructor(private readonly db: IDBDatabase) {}
 
@@ -62,7 +85,7 @@ export class StableTurnWriter {
 
   close(): void { this.db.close(); }
 
-  async beginSession(input: { sessionId: string; sessionSeed: string; personaDigest: string; settings?: StoredSession['settings']; startedAt?: string }): Promise<StorageResult> {
+  async beginSession(input: { sessionId: string; sessionSeed: string; personaDigest: string; settings?: StoredSession['settings']; planning?: StoredSession['planning']; startedAt?: string }): Promise<StorageResult> {
     return this.guard(async () => {
       const transaction = this.db.transaction([STORES.sessions, STORES.meta], 'readwrite');
       const sessions = transaction.objectStore(STORES.sessions);
@@ -71,7 +94,7 @@ export class StableTurnWriter {
       const nowMs = timestampMs(now) ?? Date.now();
       const activeDurationMs = existing ? sessionActiveDurationMs(existing, nowMs) : 0;
       if (!existing) {
-        sessions.put({ sessionId: input.sessionId, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, startedAt: now, updatedAt: now, endedAt: null, state: 'active', activeDurationMs, runningSince: now, pausedAt: null, ...(input.settings ? { settings: input.settings } : {}), failures: [] } satisfies StoredSession);
+        sessions.put({ sessionId: input.sessionId, sessionSeed: input.sessionSeed, personaDigest: input.personaDigest, startedAt: now, updatedAt: now, endedAt: null, state: 'active', activeDurationMs, runningSince: now, pausedAt: null, ...(input.settings ? { settings: input.settings } : {}), ...(input.planning ? { planning: input.planning } : {}), failures: [] } satisfies StoredSession);
       } else {
         const preserveIdentity = existing.state !== 'stopped';
         sessions.put({
@@ -80,6 +103,7 @@ export class StableTurnWriter {
           personaDigest: preserveIdentity ? existing.personaDigest : input.personaDigest,
           state: 'active', endedAt: null, updatedAt: now, activeDurationMs, runningSince: now, pausedAt: null,
           ...(preserveIdentity ? ((existing.settings ?? input.settings) ? { settings: existing.settings ?? input.settings } : {}) : (input.settings ? { settings: input.settings } : {})),
+          ...(preserveIdentity ? ((existing.planning ?? input.planning) ? { planning: existing.planning ?? input.planning } : {}) : (input.planning ? { planning: input.planning } : {})),
         });
       }
       transaction.objectStore(STORES.meta).put({ key: 'activeSession', sessionId: input.sessionId });
@@ -180,7 +204,21 @@ export class StableTurnWriter {
         throw new DuplicateEvent();
       }
       const turns = transaction.objectStore(STORES.turns);
+      const sessions = transaction.objectStore(STORES.sessions);
       const at = isoNow();
+      if (event.type === 'session.state') {
+        const session = await requestResult(sessions.get(event.sessionId)) as StoredSession | undefined;
+        const planning = planningSnapshot(event.payload.planning);
+        if (session && planning) {
+          const prior = session.planning;
+          const identityMatches = (!prior?.topic || !planning.topic || prior.topic === planning.topic)
+            && (!prior?.depth || !planning.depth || prior.depth === planning.depth);
+          // Once a plan is ready, a late event from an old host must not replace
+          // the frozen notes during reconnect.
+          const notStale = prior?.status !== 'ready';
+          if (identityMatches && notStale) sessions.put({ ...session, planning: { ...prior, ...planning }, updatedAt: at });
+        }
+      }
       let turn: StoredTurn | undefined;
       const turnId = 'turnId' in event.payload ? stringValue(event.payload.turnId) : undefined;
       if (turnId) turn = (await requestResult(turns.get(turnKey(event.sessionId, turnId))) as StoredTurn | undefined) ?? blankTurn(event.sessionId, turnId, at, event.monotonicMs);

@@ -363,6 +363,13 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         if (size > 64 * 1024) { socket.close(1009, 'frame too large'); return; }
         const conversation = session.conversation;
         if (!conversation) { socket.close(1011, 'session composition missing'); return; }
+        // Planning runs inside session.start, so cancellation/retry must bypass
+        // the ordered command chain or it could wait behind the in-flight Pi
+        // request forever. All ordinary audio/turn commands remain serialized.
+        if (conversation.isPlanningControl(raw, binary)) {
+          void conversation.handlePlanningControl(raw, binary).catch(() => socket.close(1011, 'planning control failure'));
+          return;
+        }
         session.messageChain = session.messageChain.then(() => conversation.handle(raw, binary)).catch(() => socket.close(1011, 'conversation failure'));
         return;
       }

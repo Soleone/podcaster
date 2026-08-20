@@ -195,6 +195,25 @@ function emitBinary(socket: EventSocket, streamId: number, sequence: number, sam
 }
 
 describe('WebSocketSessionTransport recovery', () => {
+  it('waits for a planning terminal state and keeps cancellation out of the ordered start wait', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const pending = transport.startSession({
+      sessionSeed: SESSION,
+      reasoningMode: 'full',
+      planning: { topic: 'radio', depth: 'standard' },
+      settings: { version: 1, persona: '', voice: { catalogId: 'catalog', voiceId: 'voice', speedModifier: 1 } },
+    });
+    expect(pending).toBeInstanceOf(Promise);
+    const start = JSON.parse(String(socket.sent.at(-1))) as { type: string; payload: { planning: unknown } };
+    expect(start).toMatchObject({ type: 'session.start', payload: { planning: { topic: 'radio', depth: 'standard' } } });
+    transport.cancelPlanning();
+    expect(JSON.parse(String(socket.sent.at(-1))).type).toBe('planning.cancel');
+    emitText(socket, hostEvent('session.state', { phase: 'ready', personaDigest: '0'.repeat(64), planning: { status: 'cancelled', topic: 'radio', depth: 'standard', progress: 100 } }));
+    await expect(pending).resolves.toBe('cancelled');
+    expectNoProtocolFailure(socket);
+  });
+
   it('reconnects within the grace window, queues commands, and avoids a failure notification', async () => {
     vi.useFakeTimers();
     try {

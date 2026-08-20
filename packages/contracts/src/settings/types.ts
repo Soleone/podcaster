@@ -20,6 +20,36 @@ export const MAX_VOICE_SPEED_MODIFIER = 2.0;
 /** Upper bound for an optional Qwen delivery-style instruction. */
 export const MAX_VOICE_TONE_PROMPT_BYTES = 1024;
 
+/** A rough topic is intentionally small so planning never becomes a hidden transcript upload. */
+export const MAX_PLANNING_TOPIC_BYTES = 2 * 1024;
+/** Prepared notes are durable context, not an unbounded research transcript. */
+export const MAX_PLANNING_NOTES_BYTES = 12 * 1024;
+/** The planning effort is a user-visible, validated contract. */
+export const PLANNING_DEPTHS = ["light", "standard", "deep"] as const;
+export type PlanningDepth = (typeof PLANNING_DEPTHS)[number];
+export type PlanningStatus = "skipped" | "planning" | "ready" | "failed" | "cancelled" | "continued";
+
+/** Frozen input/result carried by a session start and reused on reconnect. */
+export interface SessionPlanningRequest {
+  /** Optional explicit marker for callers that prefer enabled:true over omission. */
+  enabled?: true;
+  topic: string;
+  depth: PlanningDepth;
+  /** Present only when a persisted plan is being reused after reconnect. */
+  notes?: string;
+  reuse?: boolean;
+}
+
+/** Durable, user-visible planning state attached to a local session row. */
+export interface SessionPlanningSnapshot {
+  status: PlanningStatus;
+  topic?: string;
+  depth?: PlanningDepth;
+  progress?: number;
+  detail?: string;
+  notes?: string;
+}
+
 /** Languages supported by Qwen3-TTS CustomVoice and Base voice cloning. */
 export const QWEN_VOICE_LANGUAGES = [
   "Chinese",

@@ -27,6 +27,20 @@ describe('StableTurnWriter', () => {
     reopened.close();
   });
 
+  it('persists planning lifecycle and keeps the first topic/depth/notes on reconnect', async () => {
+    const { writer } = await open();
+    const planning = { status: 'planning' as const, topic: 'The future of local radio', depth: 'standard' as const, progress: 0 };
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed', personaDigest: 'digest', planning });
+    await writer.apply(event('session', 'session.state', { phase: 'planning', personaDigest: 'digest', planning: { ...planning, progress: 55, detail: 'Researching' } }));
+    await writer.apply(event('session', 'session.state', { phase: 'ready', personaDigest: 'digest', planning: { ...planning, status: 'ready', progress: 100, notes: 'Useful facts\nTalking points' } }));
+    await writer.apply(event('session', 'session.state', { phase: 'ready', personaDigest: 'digest', planning: { status: 'ready', topic: 'The future of local radio', depth: 'standard', progress: 100, notes: 'Late replacement' } }));
+    await writer.apply(event('session', 'session.state', { phase: 'ready', personaDigest: 'digest', planning: { status: 'failed', topic: 'Changed topic', depth: 'deep', progress: 100 } }));
+    expect(await writer.getSession('session')).toMatchObject({ planning: { status: 'ready', topic: 'The future of local radio', depth: 'standard', notes: 'Useful facts\nTalking points', progress: 100 } });
+    await writer.beginSession({ sessionId: 'session', sessionSeed: 'new-seed', personaDigest: 'new-digest', planning: { status: 'planning', topic: 'Changed topic', depth: 'deep' } });
+    expect(await writer.getSession('session')).toMatchObject({ sessionSeed: 'seed', personaDigest: 'digest', planning: { topic: 'The future of local radio', depth: 'standard', notes: 'Useful facts\nTalking points' } });
+    writer.close();
+  });
+
   it('reopens a stopped session as active with a fresh seed and clears its end time', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-1', personaDigest: 'digest' });

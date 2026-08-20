@@ -294,6 +294,102 @@ describe('browser conversation routing', () => {
     socket.close();
   });
 
+  it('runs optional pre-live planning before opening audio and injects only bounded notes into live reasoning', async () => {
+    const sidecar = await fakeAudio();
+    const researchCalls: Array<{ topic: string; depth: string }> = [];
+    const responseInputs: PiRequestInput[] = [];
+    const responsePi: PiClient = {
+      async probe() { return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' }; },
+      request(input, signal) { responseInputs.push(input); return pi.request(input, signal); },
+      async shutdown() {},
+    };
+    const researchPi: PiResearchClient = {
+      async *requestBody() {},
+      async *requestPlan(input) {
+        researchCalls.push(input);
+        yield { type: 'delta' as const, text: 'PRIVATE_TOOL_TRACE' };
+        yield { type: 'final' as const, text: 'Useful facts\nTalking points: ask about local radio.' };
+      },
+      async shutdown() {},
+    };
+    const app = await buildApp({ sidecar, createProbeClient: () => responsePi, createResponseClient: () => responsePi, createResearchClient: () => researchPi, createClassifierClient: () => responsePi });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', planning: { topic: 'The future of local radio', depth: 'standard' }, settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
+    await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, unknown>).planning && ((message.payload as Record<string, any>).planning.status === 'planning'));
+    expect(messages.some(message => message.type === 'vad.speech_start')).toBe(false);
+    await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'ready');
+    expect(researchCalls).toEqual([{ topic: 'The future of local radio', depth: 'standard' }]);
+
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    const final = await waitFor(messages, 'transcript.final');
+    const finalPayload = final.payload as Record<string, unknown>;
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));
+    await waitFor(messages, 'reasoning.started');
+    expect(responseInputs[0]?.boundedContext).toContain('<session_preparation>');
+    expect(responseInputs[0]?.boundedContext).toContain('Talking points: ask about local radio.');
+    expect(responseInputs[0]?.boundedContext).not.toContain('PRIVATE_TOOL_TRACE');
+    socket.close();
+  });
+
+  it('cancels pre-live planning through the fast control path and then permits direct audio start', async () => {
+    const sidecar = await fakeAudio();
+    const researchPi: PiResearchClient = {
+      async *requestBody() {},
+      async *requestPlan(_input, signal) {
+        yield { type: 'delta' as const, text: 'private progress' };
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      async shutdown() {},
+    };
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', planning: { topic: 'A cancellable plan', depth: 'light' }, settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
+    await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'planning');
+    socket.send(JSON.stringify(command('planning.cancel', { reason: 'user' })));
+    await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'cancelled');
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    await expect(waitFor(messages, 'vad.speech_start')).resolves.toMatchObject({ type: 'vad.speech_start' });
+    socket.close();
+  });
+
+  it('fails soft on planning provider errors and still permits a transcript/live audio start', async () => {
+    const sidecar = await fakeAudio();
+    const researchPi: PiResearchClient = {
+      async *requestBody() {},
+      async *requestPlan() { yield { type: 'error' as const, state: 'unavailable' as const, detail: 'provider detail must stay private', correctiveAction: 'retry' }; },
+      async shutdown() {},
+    };
+    const app = await buildApp({ sidecar, createProbeClient: () => pi, createResponseClient: () => pi, createResearchClient: () => researchPi, createClassifierClient: () => pi });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', planning: { topic: 'A provider failure', depth: 'standard' }, settings: { version: 1, persona: '', voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
+    const failed = await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'failed');
+    expect(JSON.stringify(failed)).not.toContain('provider detail must stay private');
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    await expect(waitFor(messages, 'vad.speech_start')).resolves.toMatchObject({ type: 'vad.speech_start' });
+    socket.close();
+  });
+
   it('uses the frozen editable persona for policy decisions on the wire', async () => {
     const sidecar = await fakeAudio({ transcript: 'The weather changed overnight.' });
     const responseInputs: PiRequestInput[] = [];

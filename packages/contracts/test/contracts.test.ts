@@ -245,6 +245,27 @@ describe("multi-part response part constraints", () => {
   });
 });
 
+describe("optional session planning contract", () => {
+  const envelope = { protocolVersion: 1, sessionId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f1", epoch: 0, eventId: "018f06b5-3c8d-7b2a-9f35-8b3388a857f3", monotonicMs: 1 };
+  const settings = { version: 1, persona: "", voice: { catalogId: "catalog", voiceId: "voice" } };
+  test("accepts a bounded topic and validated depth while keeping planning optional", () => {
+    const value = { ...envelope, type: "session.start", payload: { sessionSeed: "018f06b5-3c8d-7b2a-9f35-8b3388a857f5", reasoningMode: "full", settings, planning: { topic: "The future of local radio", depth: "deep" } } };
+    expect(CONTRACT_VALIDATORS.BrowserCommand(value)).toBe(true);
+    expect(CONTRACT_VALIDATORS.BrowserCommand({ ...value, payload: { ...value.payload, planning: undefined } })).toBe(true);
+  });
+  test("rejects incomplete, unknown, and oversized planning input", () => {
+    const base = { ...envelope, type: "session.start", payload: { sessionSeed: "018f06b5-3c8d-7b2a-9f35-8b3388a857f5", reasoningMode: "full", settings, planning: { topic: "topic", depth: "standard" } } };
+    expect(CONTRACT_VALIDATORS.BrowserCommand({ ...base, payload: { ...base.payload, planning: { topic: "topic" } } })).toBe(false);
+    expect(CONTRACT_VALIDATORS.BrowserCommand({ ...base, payload: { ...base.payload, planning: { topic: "topic", depth: "extreme" } } })).toBe(false);
+    expect(CONTRACT_VALIDATORS.BrowserCommand({ ...base, payload: { ...base.payload, planning: { topic: "x".repeat(2049), depth: "standard" } } })).toBe(false);
+  });
+  test("accepts durable planning lifecycle state and rejects an unbounded note", () => {
+    const value = { ...envelope, type: "session.state", payload: { phase: "planning", personaDigest: "0".repeat(64), planning: { status: "planning", topic: "topic", depth: "standard", progress: 40, detail: "Researching" } } };
+    expect(CONTRACT_VALIDATORS.SessionStateEvent(value)).toBe(true);
+    expect(CONTRACT_VALIDATORS.SessionStateEvent({ ...value, payload: { ...value.payload, planning: { ...value.payload.planning, notes: "x".repeat(12_289) } } })).toBe(false);
+  });
+});
+
 describe("binary PCM framing", () => {
   const fixture = readJson("fixtures/valid/binary-frame.json");
   test("encodes the shared little-endian fixture", () => {

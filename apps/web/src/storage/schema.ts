@@ -1,4 +1,4 @@
-import type { CustomVoiceMetadata, SessionSettingsSnapshot } from '@app/contracts/settings';
+import type { CustomVoiceMetadata, SessionPlanningSnapshot, SessionSettingsSnapshot } from '@app/contracts/settings';
 
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
 export const PODCASTER_DB_VERSION = 5;
@@ -19,6 +19,8 @@ export interface StoredSession {
   personaDigest: string;
   /** Frozen TTS/persona settings used by the active session, when recorded. */
   settings?: SessionSettingsSnapshot;
+  /** Frozen pre-live planning input and bounded notes, when preparation was requested. */
+  planning?: SessionPlanningSnapshot;
   startedAt: string;
   updatedAt: string;
   endedAt: string | null;

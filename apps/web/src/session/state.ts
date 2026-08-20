@@ -1,7 +1,8 @@
+import type { PlanningDepth, PlanningStatus } from '@app/contracts';
 import type { StableEvent } from '../storage/stable-turn-writer';
 import { joinAssistantParts, type ConversationItem } from './conversation';
 
-export type DominantState = 'idle' | 'paused' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
+export type DominantState = 'idle' | 'planning' | 'ready' | 'paused' | 'listening' | 'transcribing' | 'deciding' | 'intentional_silence' | 'reasoning' | 'speaking' | 'stopping' | 'degraded';
 export type AudioEngineStatus = 'starting' | 'warming' | 'ready' | 'failed' | 'retrying';
 export type AudioEngineSubstep = 'starting' | 'warming' | 'ready' | 'failed';
 export interface AudioEngineViewState {
@@ -11,9 +12,18 @@ export interface AudioEngineViewState {
   tts: AudioEngineSubstep;
   detail?: string;
 }
+export interface PlanningViewState {
+  status: PlanningStatus;
+  topic?: string;
+  depth?: PlanningDepth;
+  progress: number;
+  detail?: string;
+  notes?: string;
+}
 export interface SessionViewState {
   dominant: DominantState;
   audioEngine: AudioEngineViewState;
+  planning: PlanningViewState;
   epoch: number;
   tentativeText: string;
   stableTurns: Array<{ turnId: string; text: string; posture?: 'riff' | 'question' | 'challenge' | 'silence'; policyReason?: string }>;
@@ -24,9 +34,9 @@ export interface SessionViewState {
   announcement: string;
 }
 
-export const initialSessionState: SessionViewState = { dominant: 'idle', audioEngine: { status: 'starting', capture: 'starting', vad: 'starting', tts: 'starting' }, epoch: 0, tentativeText: '', stableTurns: [], conversationItems: [], assistantText: '', playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
+export const initialSessionState: SessionViewState = { dominant: 'idle', audioEngine: { status: 'starting', capture: 'starting', vad: 'starting', tts: 'starting' }, planning: { status: 'skipped', progress: 0 }, epoch: 0, tentativeText: '', stableTurns: [], conversationItems: [], assistantText: '', playbackNotice: '', degradedMessage: '', announcement: 'Idle' };
 const label: Record<DominantState, string> = {
-  idle: 'Session stopped', paused: 'Session paused', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
+  idle: 'Session stopped', planning: 'Preparing your session', ready: 'Ready to go live', paused: 'Session paused', listening: 'Listening', transcribing: 'Finishing transcript', deciding: 'Considering what you meant…', intentional_silence: 'Giving you space', reasoning: 'Forming a response…', speaking: 'Speaking', stopping: 'Stopping response…', degraded: 'Session needs attention',
 };
 
 function dominant(state: SessionViewState, next: DominantState): SessionViewState {
@@ -192,6 +202,20 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   }
   if (event.type === 'failure') return { ...dominant(next, 'degraded'), degradedMessage: typeof event.payload.detail === 'string' ? event.payload.detail : 'A session component failed.' };
   if (event.type === 'session.state') {
+    const planning = event.payload.planning;
+    if (planning && typeof planning === 'object' && !Array.isArray(planning)) {
+      const value = planning as Record<string, unknown>;
+      if (value.status === 'skipped' || value.status === 'planning' || value.status === 'ready' || value.status === 'failed' || value.status === 'cancelled' || value.status === 'continued') {
+        next = { ...next, planning: {
+          status: value.status,
+          progress: typeof value.progress === 'number' ? Math.max(0, Math.min(100, value.progress)) : next.planning.progress,
+          ...(typeof value.topic === 'string' ? { topic: value.topic } : {}),
+          ...(value.depth === 'light' || value.depth === 'standard' || value.depth === 'deep' ? { depth: value.depth } : {}),
+          ...(typeof value.detail === 'string' ? { detail: value.detail } : {}),
+          ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
+        } };
+      }
+    }
     const audio = event.payload.audio;
     let audioStatusUpdated = false;
     if (audio && typeof audio === 'object' && !Array.isArray(audio)) {
@@ -206,6 +230,8 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     }
     if (audioStatusUpdated) return next;
     const phase = event.payload.phase;
+    if (phase === 'planning') return dominant(next, 'planning');
+    if (phase === 'ready') return dominant(next, 'ready');
     if (phase === 'listening') return dominant(next, 'listening');
     if (phase === 'deciding' || phase === 'interruption_deciding') return dominant(next, 'deciding');
     if (phase === 'reasoning' || phase === 'synthesizing') return dominant(next, 'reasoning');

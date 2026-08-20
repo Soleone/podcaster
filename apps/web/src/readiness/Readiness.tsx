@@ -5,14 +5,16 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
+import { Progress } from '../components/ui/progress';
 import { cn } from '../lib/utils';
-import type { PiSettings, TtsModelDescriptor, TtsModelSelection, VoiceCatalog } from '@app/contracts/settings';
+import type { PlanningViewState } from '../session/state';
+import { MAX_PLANNING_TOPIC_BYTES, PLANNING_DEPTHS, type PiSettings, type PlanningDepth, type SessionPlanningRequest, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog } from '@app/contracts/settings';
 import type { ReadinessSnapshot } from '../services/service-status';
 
 type Capability = ReadinessSnapshot['capabilities'][number];
 export type Snapshot = ReadinessSnapshot;
 
-type ReadinessProps = { sessionAvailable: boolean; selectedModel?: TtsModelSelection; piSettings: PiSettings; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only') => Promise<void>; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string | undefined) => void; onSnapshot?: (snapshot: Snapshot) => void; className?: string };
+type ReadinessProps = { sessionAvailable: boolean; selectedModel?: TtsModelSelection; piSettings: PiSettings; planningStatus?: PlanningViewState; onStart: (capability: string, reasoningMode: 'full' | 'transcript_only', planning?: SessionPlanningRequest) => void | Promise<void>; onCancelPlanning?: () => void; onCatalog?: (catalog: VoiceCatalog) => void; onModels?: (models: TtsModelDescriptor[]) => void; onCapability?: (capability: string | undefined) => void; onSnapshot?: (snapshot: Snapshot) => void; className?: string };
 
 const DISCLOSURE_KEY = 'podcaster.disclosure';
 const DISCLOSURE_VERSION = 'voice-cloud-boundary-v1';
@@ -29,6 +31,9 @@ export function Readiness(props: ReadinessProps) {
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [planningEnabled, setPlanningEnabled] = useState(false);
+  const [planningTopic, setPlanningTopic] = useState('');
+  const [planningDepth, setPlanningDepth] = useState<PlanningDepth>('standard');
   const restored = useRef(false);
   const lastReportedMic = useRef<boolean | undefined>(undefined);
   const lastReportedModel = useRef<string | undefined>(undefined);
@@ -146,13 +151,20 @@ export function Readiness(props: ReadinessProps) {
   const realSessionReady = audioReady && reasoningReady;
   const transcriptOnlyReady = audioReady && reasoningUnavailable;
   const canStart = props.sessionAvailable || realSessionReady || transcriptOnlyReady;
+  const planningStatus = props.planningStatus;
 
   async function startSession(reasoningMode: 'full' | 'transcript_only'): Promise<void> {
     if (!capability || starting) return;
+    const topic = planningTopic.trim();
+    if (reasoningMode === 'full' && planningEnabled && (!topic || new TextEncoder().encode(topic).length > MAX_PLANNING_TOPIC_BYTES)) {
+      setError('Add a short topic prompt (up to 2,048 bytes), or turn preparation off.');
+      return;
+    }
+    const planning = reasoningMode === 'full' && planningEnabled ? { topic, depth: planningDepth } : undefined;
     setStarting(true);
     setError(undefined);
     try {
-      await props.onStart(capability, reasoningMode);
+      await props.onStart(capability, reasoningMode, planning);
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : 'Session could not be started.';
       // App.start tears down the failed host session, which also invalidates
@@ -207,8 +219,24 @@ export function Readiness(props: ReadinessProps) {
             <CircleCheck aria-hidden="true" />
             <AlertDescription>Microphone permission is ready. Capture is stopped until the session starts.</AlertDescription>
           </Alert>
+          {starting && planningStatus && planningStatus.status !== 'skipped' ? <div className="rounded-lg border bg-muted/30 p-3" role="status" aria-live="polite">
+            <div className="flex items-center justify-between gap-3 text-sm"><span className="font-medium">{planningStatus.status === 'ready' ? 'Preparation ready. Starting live capture…' : planningStatus.status === 'failed' ? 'Preparation failed. Continuing without it…' : planningStatus.status === 'cancelled' ? 'Preparation cancelled. Continuing without it…' : 'Preparing before live capture…'}</span><span className="tabular-nums text-muted-foreground">{planningStatus.progress}%</span></div>
+            {planningStatus.status === 'planning' ? <Progress value={planningStatus.progress} aria-label="Preparation progress" className="mt-2 gap-0 [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-indicator]]:bg-primary" /> : null}
+            {planningStatus.detail ? <p className="mt-2 text-xs text-muted-foreground">{planningStatus.detail}</p> : null}
+          </div> : null}
+          {!transcriptOnlyReady ? <div className="rounded-lg border bg-muted/30 p-3">
+            <label className="flex cursor-pointer items-start gap-3 text-sm">
+              <input className="mt-0.5 size-4 accent-primary" type="checkbox" checked={planningEnabled} onChange={event => setPlanningEnabled(event.target.checked)} disabled={starting} />
+              <span><span className="font-medium">Prepare before going live</span><span className="mt-1 block text-muted-foreground">Optional read-only research creates private notes, facts, talking points, follow-up questions, and conversation goals before the microphone starts.</span></span>
+            </label>
+            {planningEnabled ? <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
+              <label className="grid gap-1.5 text-sm sm:col-span-2"><span className="font-medium">Rough topic</span><textarea className="min-h-20 resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" value={planningTopic} onChange={event => setPlanningTopic(event.target.value)} maxLength={2048} placeholder="What do you want to explore?" aria-describedby="planning-topic-help" disabled={starting} /><span id="planning-topic-help" className="text-xs text-muted-foreground">Keep it brief. The topic is sent to the configured research provider.</span></label>
+              <label className="grid gap-1.5 text-sm sm:col-span-2"><span className="font-medium">Preparation depth</span><select className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" value={planningDepth} onChange={event => setPlanningDepth(event.target.value as PlanningDepth)} disabled={starting} aria-label="Preparation depth">{PLANNING_DEPTHS.map(value => <option key={value} value={value}>{value[0]!.toUpperCase() + value.slice(1)}</option>)}</select></label>
+            </div> : null}
+          </div> : null}
           <div className="flex flex-wrap justify-end gap-3">
-            {!transcriptOnlyReady ? <Button className="min-h-11 w-full sm:w-auto" onClick={() => void startSession('full')} disabled={!capability || !canStart || starting}>{starting ? <><Spinner aria-hidden="true" />Starting…</> : 'Start session'}</Button> : null}
+            {starting && planningEnabled ? <Button variant="outline" className="min-h-11 w-full sm:w-auto" onClick={() => props.onCancelPlanning?.()}>Skip preparation</Button> : null}
+            {!transcriptOnlyReady ? <Button className="min-h-11 w-full sm:w-auto" onClick={() => void startSession('full')} disabled={!capability || !canStart || starting}>{starting ? <><Spinner aria-hidden="true" />{planningEnabled ? 'Preparing…' : 'Starting…'}</> : planningEnabled ? 'Prepare and start session' : 'Start session'}</Button> : null}
             {transcriptOnlyReady ? <Button variant="secondary" className="min-h-11 w-full sm:w-auto" onClick={() => void startSession('transcript_only')} disabled={!capability || starting}>{starting ? <><Spinner aria-hidden="true" />Starting…</> : 'Start transcript-only session'}</Button> : null}
           </div>
           {transcriptOnlyReady ? <p className="text-muted-foreground leading-relaxed" role="status">Pi reasoning is unavailable. Transcript-only mode records stable local transcripts and does not generate or speak assistant responses.</p> : null}

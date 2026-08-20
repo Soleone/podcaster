@@ -1,16 +1,20 @@
-import type { HostEvent, PiSettings, PlaybackPausedEvent, PlaybackStoppedEvent, TranscriptFinalEvent, VoicePreference } from '@app/contracts';
+import type { HostEvent, PiSettings, PlaybackPausedEvent, PlaybackStoppedEvent, PlanningStatus, SessionPlanningRequest, TranscriptFinalEvent, VoicePreference } from '@app/contracts';
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
 
 export interface OutputAudioChunk { playbackId: string; sequence: number; sampleOffset: number; pcm16: Int16Array }
 export interface SessionStartRequest {
   sessionSeed: string;
   reasoningMode: 'full' | 'transcript_only';
+  planning?: SessionPlanningRequest;
   settings: { version: 1; persona: string; voice: VoicePreference; pi?: PiSettings };
 }
+export type PlanningStartResult = Extract<PlanningStatus, 'ready' | 'failed' | 'cancelled' | 'continued'>;
 export interface SessionTransport {
   connect(capability: string): Promise<void>;
   disconnect(): void;
-  startSession(input: SessionStartRequest): void | Promise<void>;
+  startSession(input: SessionStartRequest): void | Promise<PlanningStartResult | undefined>;
+  cancelPlanning(): void | Promise<void>;
+  retryPlanning(): void | Promise<void>;
   startAudio(streamId: number): void | Promise<void>;
   stopAudio(streamId: number): void | Promise<void>;
   acknowledgePersisted(event: TranscriptFinalEvent): void | Promise<void>;
