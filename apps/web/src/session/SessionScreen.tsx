@@ -56,6 +56,7 @@ export function SessionScreen(props: SessionScreenProps) {
   const canExport = !readOnly && !actionBusy && props.recording.includedCount > 0 && !props.exporting && !props.deleting;
   const canDelete = !readOnly && !actionBusy && props.recording.totalCount > 0 && !props.deleting && !props.exporting;
   const pauseLabel = props.lifecycleAction === 'pausing' ? 'Pausing…' : props.lifecycleAction === 'resuming' ? 'Resuming…' : props.sessionPaused ? 'Resume session' : 'Pause session';
+  const pauseBusy = props.lifecycleAction === 'pausing' || props.lifecycleAction === 'resuming';
   // Keep the dimmed tentative row as the visible progress signal after a preview arrives.
   const hasAssistantText = props.state.conversationItems.some(item => item.kind === 'assistant' && item.text.trim() !== '');
   const showAssistantActivity = props.state.dominant === 'speaking' || (props.state.dominant === 'reasoning' && !hasAssistantText);
@@ -66,7 +67,9 @@ export function SessionScreen(props: SessionScreenProps) {
       <div className="flex flex-wrap items-center gap-2">
         {readOnly ? <Button variant="outline" size="sm" onClick={props.onStop}><ArrowLeft data-icon="inline-start" aria-hidden="true" />All sessions</Button> : <>
           <ButtonGroup aria-label="Session controls" className="session-controls">
-            <Button variant="outline" size="sm" disabled={actionBusy} aria-label={pauseLabel} title={pauseLabel} onClick={props.onTogglePause}>{props.sessionPaused ? <Play data-icon="inline-start" aria-hidden="true" /> : <Pause data-icon="inline-start" aria-hidden="true" />}{pauseLabel}</Button>
+            <Button variant="outline" size="icon" disabled={actionBusy} aria-label={pauseLabel} title={pauseLabel} onClick={props.onTogglePause} aria-busy={pauseBusy}>
+              {pauseBusy ? <Spinner aria-hidden="true" /> : props.sessionPaused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
+            </Button>
             <ButtonGroupSeparator />
             <ExportPopover
               sessionId={props.sessionId}
