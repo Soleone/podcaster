@@ -5,7 +5,7 @@ let server: DevServer;
 test.beforeAll(async () => { server = await startDevServer({ fakeServices: true }); });
 test.afterAll(async () => { await stopDevServer(server); });
 
-test('pauses and resumes microphone capture without ending the session', async ({ page }) => {
+test('pauses and resumes the full session without ending it', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureRunning)).toBe(true);
   await emit(page, 'transcript.final', { turnId: 'pause-turn', text: 'Keep this transcript', endpointComplete: true });
@@ -14,7 +14,7 @@ test('pauses and resumes microphone capture without ending the session', async (
   await expect(page.getByRole('heading', { name: 'Session paused' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Resume session' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop session' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'End session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'End session' })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureRunning)).toBe(false);
   await page.getByRole('button', { name: 'Resume session' }).click();
   await expect(page.getByRole('button', { name: 'Pause session' })).toBeVisible();
@@ -93,7 +93,8 @@ test('runs stable session states and recovers stable work after refresh', async 
   const stats = await page.evaluate(() => window.__podcasterTest!.stats());
   expect(stats).toMatchObject({ playbackStops: ['cancelled'] });
   expect(stats.commands).not.toContain('confirm');
-  await page.getByRole('button', { name: 'End session' }).click();
-  await expect(page.getByRole('heading', { name: 'Session stopped' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'All sessions' })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause session' }).click();
+  await expect(page.getByRole('heading', { name: 'Session paused' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'End session' })).toHaveCount(0);
 });

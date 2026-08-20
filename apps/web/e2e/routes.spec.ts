@@ -37,39 +37,39 @@ test('each session lives at its own URL and appears on the index', async ({ page
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
   await expect(page.getByText('A stable thought')).toBeVisible();
 
-  await page.getByRole('button', { name: 'End session' }).click();
-  await expect(page.getByRole('heading', { name: 'Session stopped' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'All sessions' })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause session' }).click();
+  await expect(page.getByRole('heading', { name: 'Session paused' })).toBeVisible();
 
-  // Back on the index the finished session is listed with its facts and actions.
+  // Back on the index the paused session is listed with its facts and resume action.
   await page.goto(server.origin);
   await expect(page.getByRole('heading', { name: 'Your sessions' })).toBeVisible();
   await expect(page.getByText('Past sessions')).toBeVisible();
   const row = page.getByRole('listitem').filter({ hasText: 'A stable thought' }).first();
   await expect(row).toContainText('1 turn');
-  await expect(row.getByRole('button', { name: 'Continue' })).toBeVisible();
+  await expect(row).toContainText('Paused');
+  await expect(row.getByRole('button', { name: 'Resume' })).toBeVisible();
   // Recording is off by default, so there is nothing to re-export yet.
   await expect(row.getByRole('button', { name: 'Export' })).toBeDisabled();
 });
 
-test('a stopped session opens read-only with its conversation and can be continued', async ({ page }) => {
+test('a paused session opens read-only with its conversation and can be resumed', async ({ page }) => {
   await enterFakeSession(page, server.origin);
   const sessionUrl = page.url();
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
   await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
-  await page.getByRole('button', { name: 'End session' }).click();
-  await expect(page.getByRole('heading', { name: 'Session stopped' })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause session' }).click();
+  await expect(page.getByRole('heading', { name: 'Session paused' })).toBeVisible();
 
   // Fresh load of the session URL shows the stored conversation read-only.
-  await page.goto(sessionUrl);
-  await expect(page.getByText('Ended session')).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Paused session')).toBeVisible();
   await expect(page.getByText('A stable thought')).toBeVisible();
   await expect(page.getByText('What matters most?')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Continue session' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume session' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export recording' })).toBeDisabled();
 
-  // Continuing reopens the same session under the same URL.
-  await page.getByRole('button', { name: 'Continue session' }).click();
+  // Resuming reopens the same session under the same URL.
+  await page.getByRole('button', { name: 'Resume session' }).click();
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
   expect(page.url()).toBe(sessionUrl);
   await page.waitForFunction(() => Boolean(window.__podcasterTest));

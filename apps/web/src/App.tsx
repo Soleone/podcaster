@@ -624,7 +624,7 @@ export function App() {
       const rolledBack = await opened.pauseSession(id);
       if (!rolledBack.ok) {
         activityLog.append({ level: 'error', source: 'app', message: 'resume failed and could not checkpoint the session', ...(rolledBack.degradedReason ? { detail: rolledBack.degradedReason } : {}) });
-        setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'Resume failed and the session could not be safely paused. Retry resume or end the session.', announcement: 'Session needs attention' } : previous);
+        setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'Resume failed and the session could not be safely paused. Retry resume or return to your sessions.', announcement: 'Session needs attention' } : previous);
       }
       if (cap !== 'fake-recovered') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': cap } }).catch(() => undefined);
       setCapability(undefined);
@@ -662,7 +662,7 @@ export function App() {
     captureRecoveryRef.current = undefined;
     stoppedRef.current = true;
     sessionPausedRef.current = false;
-    activityLog.append({ level: 'info', source: 'app', message: 'session ended by user' });
+    activityLog.append({ level: 'info', source: 'app', message: 'session stopped for navigation' });
     reconnectUnsubscribeRef.current?.();
     reconnectUnsubscribeRef.current = undefined;
     transportFailureUnsubscribeRef.current?.();
@@ -703,7 +703,7 @@ export function App() {
       stoppedRef.current = true;
       sessionPausedRef.current = true;
       setSessionPaused(true);
-      setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'The session ended locally, but its final state could not be saved. Resume it and try again.', announcement: 'Session needs attention' } : previous);
+      setView(previous => previous ? { ...previous, dominant: 'degraded', degradedMessage: 'The session stopped locally, but its final state could not be saved. Resume it and try again.', announcement: 'Session needs attention' } : previous);
     }
     lifecycleActionRef.current = 'idle';
     setLifecycleAction('idle');

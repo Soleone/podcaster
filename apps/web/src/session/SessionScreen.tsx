@@ -83,7 +83,6 @@ export function SessionScreen(props: SessionScreenProps) {
               trigger={<Button variant="outline" size="icon" disabled={!canDelete} title="Delete recording" aria-label="Delete recording"><Trash aria-hidden="true" /></Button>}
             />
           </ButtonGroup>
-          <Button variant="ghost" size="sm" disabled={actionBusy} onClick={props.onStop}>End session</Button>
         </>}
       </div>
     </header>
