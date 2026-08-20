@@ -25,7 +25,7 @@ const pi: PiClient = {
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
-async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; multiUtterance?: boolean; multipart?: boolean; failMidTurn?: boolean; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
+async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; multiUtterance?: boolean; multipart?: boolean; failMidTurn?: boolean; transcript?: string; onStreamClose?: () => void } = {}): Promise<SidecarProcess> {
   const server = createServer();
   const wss = new WebSocketServer({ server });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -55,9 +55,10 @@ async function fakeAudio(options: { tts?: boolean; progressiveTts?: boolean; mul
         }, 10);
       } else if (message.type === 'stt.bind_epoch') {
         const boundUtterance = String(message.payload.utteranceId);
+        const transcript = options.transcript ?? 'Could you share what you think about this complete idea?';
         socket.send(JSON.stringify({ type: 'vad.speech_end', payload: { streamId: opened, utteranceId: boundUtterance, captureStartSequence: utteranceSequence - 1, captureEndSequence: utteranceSequence - 1 } }));
         socket.send(JSON.stringify({ type: 'stt.partial', payload: { streamId: opened, utteranceId: boundUtterance, epoch: message.payload.epoch, sequence: 0, text: 'Could you share', replacedCharacters: 0 } }));
-        socket.send(JSON.stringify({ type: 'stt.final', payload: { streamId: opened, utteranceId: boundUtterance, epoch: message.payload.epoch, text: 'Could you share what you think about this complete idea?', endpointComplete: true } }));
+        socket.send(JSON.stringify({ type: 'stt.final', payload: { streamId: opened, utteranceId: boundUtterance, epoch: message.payload.epoch, text: transcript, endpointComplete: true } }));
       } else if (message.type === 'stream.close') {
         options.onStreamClose?.();
       } else if (message.type === 'tts.open' && options.multipart) {
@@ -290,6 +291,44 @@ describe('browser conversation routing', () => {
     expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe((reasoningFinal.payload as Record<string, unknown>).responseId);
     expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe((ttsStarted.payload as Record<string, unknown>).responseId);
     expect((ttsStarted.payload as Record<string, unknown>).partIndex).toBeUndefined();
+    socket.close();
+  });
+
+  it('uses the frozen editable persona for policy decisions on the wire', async () => {
+    const sidecar = await fakeAudio({ transcript: 'The weather changed overnight.' });
+    const responseInputs: PiRequestInput[] = [];
+    const personaAppends: string[] = [];
+    const responsePi: PiClient = {
+      async probe() { return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' }; },
+      request(input, signal) { responseInputs.push(input); return pi.request(input, signal); },
+      async shutdown() {},
+    };
+    const persona = '---\nversion: 1\nname: Invite-only companion\ninvitation_only: true\n---\nWait for a direct invitation.';
+    const app = await buildApp({
+      sidecar,
+      pi: responsePi,
+      createResponseClient: append => { personaAppends.push(append); return responsePi; },
+      createResearchClient: () => responsePi,
+      createClassifierClient: () => responsePi,
+    });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
+    cleanup.push(async () => app.close());
+    const { body, cookie } = await bootstrap(app, origin);
+    const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (raw, binary) => { if (!binary) messages.push(JSON.parse(raw.toString())); });
+    await new Promise<void>(resolve => { socket.once('open', () => socket.send(JSON.stringify({ capability: body.capability }))); socket.once('message', () => resolve()); });
+    socket.send(JSON.stringify(command('session.start', { sessionSeed: seed, reasoningMode: 'full', settings: { version: 1, persona, voice: { catalogId: 'sess-catalog', voiceId: 'af_heart' } } })));
+    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })));
+    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: 0, monotonicUs: 1n, pcm16: new Int16Array(320) }, 64 * 1024));
+    const final = await waitFor(messages, 'transcript.final');
+    const finalPayload = final.payload as Record<string, unknown>;
+    socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));
+    const decision = await waitFor(messages, 'policy.decision');
+    expect(decision.payload).toMatchObject({ eligible: false, posture: 'silence', reasonCodes: ['invitation_required'] });
+    expect(responseInputs).toEqual([]);
+    expect(personaAppends[0]).toContain('Invite-only companion');
+    expect(messages.some(message => message.type === 'reasoning.started')).toBe(false);
     socket.close();
   });
 

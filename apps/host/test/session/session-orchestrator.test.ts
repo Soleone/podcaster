@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CONTRACT_VALIDATORS } from "@app/contracts";
 import { decide, type PolicyDecision, type PolicyInput } from "@app/policy";
 import type { PiClient, PiEvent, PiRequestInput } from "../../src/pi/PiClient.js";
-import { PersonaValidationError, SessionOrchestrator, type Scheduler, type SessionEvent, type SpeechOutputPort } from "../../src/session/SessionOrchestrator.js";
+import { SessionOrchestrator, type Scheduler, type SessionEvent, type SpeechOutputPort } from "../../src/session/SessionOrchestrator.js";
 
 const SESSION_ID = "018f06b5-3c8d-7b2a-9f35-8b3388a857f1";
 const ids = Array.from({ length: 100 }, (_, index) => `018f06b5-3c8d-7b2a-9f35-${(0x8b3388a85000 + index).toString(16)}`);
@@ -170,8 +170,38 @@ describe("safe session orchestrator", () => {
 
   it("validates persona before policy or Pi can run", () => {
     const pi = new FakePi();
-    expect(() => setup({ pi, personaSource: "---\nunknown: true\n---\nbody" })).toThrow(PersonaValidationError);
+    expect(() => setup({ pi, personaSource: "---\nunknown: true\n---\nbody" })).toThrow("session persona validation failed");
     expect(pi.inputs).toEqual([]);
+  });
+
+  it("accepts plain-text personas with the supported parser defaults", async () => {
+    let policyPersona: PolicyInput["persona"] | undefined;
+    const { session } = setup({
+      personaSource: "You are a plain-text companion.",
+      policyDecide: input => { policyPersona = input.persona; return policy("silence")(input); },
+    });
+    await session.handleStableFinal(turn(0));
+    expect(policyPersona).toMatchObject({
+      name: "Oliver",
+      invitation_only: false,
+      posture_weights: { riff: 50, question: 35, challenge: 15 },
+      challenge_enabled: true,
+      body: "You are a plain-text companion.",
+    });
+  });
+
+  it("keeps parsed persona interpretations and digests session-local", async () => {
+    const observations: Array<{ name: string; digest: string }> = [];
+    const observe = (input: PolicyInput): PolicyDecision => {
+      observations.push({ name: input.persona.name, digest: input.personaDigest });
+      return policy("silence")(input);
+    };
+    const first = setup({ personaSource: "---\nname: Ada\n---\nA sharp skeptic.", policyDecide: observe });
+    const second = setup({ personaSource: "---\nname: Lin\n---\nA gentle storyteller.", policyDecide: observe });
+    await first.session.handleStableFinal(turn(0));
+    await second.session.handleStableFinal(turn(1));
+    expect(observations.map(value => value.name)).toEqual(["Ada", "Lin"]);
+    expect(observations[0]!.digest).not.toBe(observations[1]!.digest);
   });
 
   it("keeps the structured persona out of user-facing Pi requests while it still drives policy", async () => {

@@ -165,6 +165,7 @@ export class BrowserSession {
       sessionSeed: String(command.payload.sessionSeed),
       pi: this.responsePi,
       speech: this.audio,
+      personaSource: settings.persona,
       researchPi: this.researchPi,
       multiPartEnabled: this.options.multiPartEnabled,
       transcriptOnly: reasoningMode === 'transcript_only',

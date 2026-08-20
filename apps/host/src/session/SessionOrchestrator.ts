@@ -129,7 +129,7 @@ interface MultiPartState {
 }
 
 export class PersonaValidationError extends Error {
-  constructor(readonly diagnostics: readonly { code: string; message: string }[]) { super("default persona validation failed"); }
+  constructor(readonly diagnostics: readonly { code: string; message: string }[]) { super("session persona validation failed"); }
 }
 
 function defaultUuidV7(now: number): string {
