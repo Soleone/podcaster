@@ -45,6 +45,10 @@ benchmarks/results/*/
 !benchmarks/results/schema/
 !benchmarks/results/README.md
 
+# Test runner output
+playwright-report/
+test-results/
+
 # build/editor/OS
 .pi-subagents/
 build/

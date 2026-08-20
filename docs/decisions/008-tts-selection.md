@@ -1,4 +1,4 @@
-# Decision 007 — Keep Qwen evaluation-only after operator preference review
+# Decision 008 — Keep Qwen evaluation-only after operator preference review
 
 **Date:** 2026-08-16  
 **Milestone:** 6  

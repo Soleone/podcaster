@@ -1,6 +1,6 @@
 # Decision 007 — Multi-part voice responses use a separate Pi research mode
 
-**Status:** accepted and implemented — epic `ap6` (2026-08-10)
+**Status:** accepted and implemented — epic `ap6` (2026-08-10). Per PM direction (ARC-001), multi-part mode is default-off in production and is enabled only by explicit opt-in.
 **Date:** 2026-08-10
 
 ## Decision

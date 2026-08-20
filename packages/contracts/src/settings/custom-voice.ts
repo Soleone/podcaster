@@ -5,7 +5,7 @@
 //
 // The wire format, hard bounds, and (where expressible) the validation limits
 // are mirrored by packages/contracts/schema/voice-enrollment.json, which the
-// audio sidecar validates strictly. See docs/decisions/008.
+// audio sidecar validates strictly. See docs/decisions/009.
 //
 // Determinism: a voice id is derived from the exact reference bytes the user
 // saved, so the same reference always yields the same voice and the same

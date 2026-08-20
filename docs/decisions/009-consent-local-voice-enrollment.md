@@ -1,4 +1,4 @@
-# Decision 008: Consent and local-retention contract for Qwen voice enrollment
+# Decision 009: Consent and local-retention contract for Qwen voice enrollment
 
 **Status:** Accepted (QW-9 implementation contract)
 **Date:** 2026-08-17

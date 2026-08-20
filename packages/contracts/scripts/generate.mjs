@@ -1,5 +1,5 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { readdir, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { basename, join, relative } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const schemaRoot = join(root, 'schema');
@@ -80,6 +80,20 @@ const core = schemas.find(({ path }) => path === 'events/core-events.json').sche
 lines.push('', `export const CORE_EVENT_TYPES = ${JSON.stringify(core.allOf[1].properties.type.enum, null, 2)} as const;`, 'export type CoreEventType = (typeof CORE_EVENT_TYPES)[number];');
 lines.push('', `export const CONTRACT_SCHEMAS = ${JSON.stringify(Object.fromEntries(schemas.map(({ path, schema }) => [path, schema])), null, 2)} as const;`, 'export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;', `export type ContractModelName = ${schemas.map(({ schema }) => JSON.stringify(schema.title)).join(' | ')};`, '');
 await writeFile(join(root, 'src/generated/contracts.ts'), lines.join('\n'));
+
+// The contracts package owns the benchmark publication schemas: copy the exact
+// canonical bytes to benchmarks/results/schema so the published copies cannot
+// drift from the schemas the harness validates against. scripts/check.sh
+// includes these copies in its freshness gate.
+const repoRoot = new URL('../../../', import.meta.url).pathname;
+const publicationDir = join(repoRoot, 'benchmarks/results/schema');
+await mkdir(publicationDir, { recursive: true });
+for (const entry of schemas) {
+  if (entry.path.startsWith('benchmarks/')) {
+    const source = await readFile(join(schemaRoot, entry.path));
+    await writeFile(join(publicationDir, basename(entry.path)), source);
+  }
+}
 
 function requiredKeys(schema, owner) {
   const keys = new Set(schema.required ?? []);

@@ -1,9 +1,9 @@
 {
   "sampleRate": 16000,
-  "sources": [
-    "/home/soleone/src/tries/2026-08-06-podcaster/benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0002.flac",
-    "/home/soleone/src/tries/2026-08-06-podcaster/benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0012.flac",
-    "/home/soleone/src/tries/2026-08-06-podcaster/benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0005.flac"
+  "sourcePaths": [
+    "benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0002.flac",
+    "benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0012.flac",
+    "benchmarks/datasets/librispeech-t3/source/LibriSpeech/test-clean/4507/16021/4507-16021-0005.flac"
   ],
   "utterances": [
     {
@@ -27,5 +27,9 @@
       "durationSeconds": 4.21,
       "peakRms": 1596
     }
-  ]
+  ],
+  "raw": {
+    "sha256": "3f9f0b51b9efbd7f87172340e3e04fe9d98f51890940a9fa44f574d6a4660b99",
+    "byteLength": 420160
+  }
 }

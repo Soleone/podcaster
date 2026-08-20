@@ -1,9 +1,22 @@
 # Web build performance
 
-The web build is the first build step run by `pnpm dev` (`scripts/dev.mjs` runs
-`pnpm --filter @app/web build`). These measurements use the checkout's locked
-toolchain: Node 22.22.3, pnpm 9.15.9, and Vite 7.3.6. The pnpm store was warm;
-each build started with a clean `apps/web/dist`.
+This note records the lazy-import split of the web bundle as a historical
+measurement, then the current state of the same build. Build timings are
+single-run samples for direction, not a benchmark contract; run
+`pnpm --filter @app/web build` for fresh numbers.
+
+Dev launcher: `pnpm dev` runs the HMR workflow via `scripts/dev-hmr.mjs` and
+does not build the web app (Vite serves the browser bundle). The build-first
+workflow is `pnpm dev:build`; `pnpm build` produces both build artifacts
+without starting a server. The measurements below come from a
+`pnpm --filter @app/web build` in the build-first path.
+
+## Historical measurement (2026-08-16)
+
+The web build is the first build step run by the build-first workflow. These
+measurements use the checkout's locked toolchain: Node 22.22.3, pnpm 9.15.9,
+and Vite 7.3.6. The pnpm store was warm; each build started with a clean
+`apps/web/dist`.
 
 ## Before and after
 
@@ -27,6 +40,27 @@ assets measured the main chunk at 116.98 kB. Skipping the report avoids a
 full compression pass on every build. A split build with compression reporting
 still enabled took 3.77 s in the same session, so this is a low-risk build-time
 saving, not a warning suppression.
+
+## Current state (rebuilt 2026-08-19)
+
+Rebuilt from a clean `apps/web/dist` with the same locked toolchain. The
+application entry has grown back above Vite's default 500 kB threshold, so the
+chunk-size warning is emitted again. No `chunkSizeWarningLimit` change or
+manual warning exemption has been made; reducing the entry chunk is future work
+if the warning matters.
+
+| Measurement | 2026-08-19 (single sample) |
+| --- | ---: |
+| Largest JavaScript chunk | `index-FqehP-Jw.js` 518.29 kB |
+| Vite chunk warning | emitted |
+| Vite reported build time | 3.63 s |
+| Shell elapsed time | about 5.6 s |
+| Encoder worker | 169.63 kB (lazy, unchanged) |
+
+The lazy split shape is intact: session routes, settings, export, and dialog
+chunks are still deferred (for example `SessionIndex` 16.42 kB,
+`SettingsDialog` 101.86 kB, `StoppedSession` 4.07 kB), so only the shared
+application entry is above 500 kB.
 
 ## Bundle composition
 
