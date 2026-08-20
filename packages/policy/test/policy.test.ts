@@ -38,11 +38,17 @@ describe("deterministic posture policy", () => {
 
   it.each([
     ["empty", { transcript: "" }, "empty"],
-    ["short", { transcript: "only three words" }, "too_short"],
+    ["filler", { transcript: "uh um" }, "non_substantive"],
     ["unfinished", { endpointComplete: false }, "unfinished"],
     ["invitation", { persona: { ...persona, invitation_only: true } }, "invitation_required"],
   ] as const)("silences %s input", (_name, override, reason) => {
     expect(decide(input(override))).toMatchObject({ eligible: false, posture: "silence", reasonCodes: [reason] });
+  });
+
+  it("keeps short but meaningful turns eligible", () => {
+    for (const transcript of ["ok", "no", "Thinking about you"]) {
+      expect(decide(input({ transcript }))).toMatchObject({ eligible: true, posture: expect.not.stringMatching(/^silence$/u), reasonCodes: ["selected"] });
+    }
   });
 
   it("recognizes only clearly addressee-directed invitations", () => {

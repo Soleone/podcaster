@@ -3,7 +3,7 @@ import type { PersonaInterpretation } from "@app/contracts";
 
 export const POLICY_VERSION = "v1.experimental" as const;
 export type Posture = "riff" | "question" | "challenge" | "silence";
-export type PolicyReasonCode = "empty" | "too_short" | "unfinished" | "invitation_required" | "response_budget_exhausted" | "selected";
+export type PolicyReasonCode = "empty" | "too_short" | "non_substantive" | "unfinished" | "invitation_required" | "response_budget_exhausted" | "selected";
 
 export interface PriorPolicyDecision { turnId: string; eligible: boolean; posture: Posture }
 export interface PolicyInput {
@@ -30,12 +30,20 @@ export function normalizeTranscript(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ");
 }
 
+function explicitInvitation(value: string): boolean {
+  return /\b(?:what do you think|what['’]s your take|what is your take|any thoughts|can you|could you|would you|do you agree|please (?:respond|tell me)|(?:respond|reply|answer) please)\b/iu.test(value);
+}
+
 function lexicalWords(value: string): string[] {
   return value.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? [];
 }
 
-function explicitInvitation(value: string): boolean {
-  return /\b(?:what do you think|what['’]s your take|what is your take|any thoughts|can you|could you|would you|do you agree|please (?:respond|tell me)|(?:respond|reply|answer) please)\b/iu.test(value);
+// Keep pure hesitation/noise from becoming a new turn, without rejecting
+// meaningful short replies such as "ok", "no", or "thinking about you".
+const nonSubstantiveWords = new Set(["ah", "er", "hmm", "hm", "mm", "mmm", "uh", "uhh", "um", "umm"]);
+function isNonSubstantive(value: string): boolean {
+  const words = lexicalWords(value);
+  return words.length > 0 && words.every(word => nonSubstantiveWords.has(word.toLocaleLowerCase()));
 }
 
 function canonicalize(value: unknown): string {
@@ -65,7 +73,7 @@ export function decide(input: PolicyInput): PolicyDecision {
   if (!transcript) return silence("empty");
   if (!input.endpointComplete) return silence("unfinished");
   const invited = explicitInvitation(transcript);
-  if (lexicalWords(transcript).length < 4 && !invited) return silence("too_short");
+  if (isNonSubstantive(transcript)) return silence("non_substantive");
   if (input.persona.invitation_only && !invited) return silence("invitation_required");
 
   const challengeAllowed = input.persona.challenge_enabled && input.stableUserTurnCount >= 2 && input.eligibleTurnsSinceChallenge >= 3;
