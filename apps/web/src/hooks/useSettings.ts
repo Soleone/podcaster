@@ -35,7 +35,9 @@ export interface SessionStartSettings {
 
 export interface UseSettingsOptions {
   storage: AppStorage;
-  /** Shared handle owned by App; the service-status hook writes it. */
+  /** Shared handle owned by App; the service-status hook reads it. */
+  settingsModelRef: RefObject<SettingsModel>;
+  /** Shared handle owned by the service-status hook. */
   capabilityRef: RefObject<string | undefined>;
   readinessSnapshot: ReadinessSnapshot | undefined;
 }
@@ -68,16 +70,19 @@ export interface UseSettingsResult {
  * all browser-merged custom-voice reconciliation. Reads the shared
  * capability handle for anything that talks to the host.
  */
-export function useSettings({ storage, capabilityRef, readinessSnapshot }: UseSettingsOptions): UseSettingsResult {
+export function useSettings({ storage, settingsModelRef, capabilityRef, readinessSnapshot }: UseSettingsOptions): UseSettingsResult {
   const { settingsStoreRef, customVoiceStoreRef, customVoices, customVoicesRef, setCustomVoices } = storage;
 
   const voiceCatalogRef = useRef<VoiceCatalog | undefined>(undefined);
   const ttsModelsRef = useRef<TtsModelDescriptor[]>([]);
   const [ttsModels, setTtsModels] = useState<TtsModelDescriptor[]>([]);
   const settingsFrozenRef = useRef<SettingsModel | undefined>(undefined);
-  const [settingsModel, setSettingsModel] = useState<SettingsModel>(() => defaultSettingsModel(undefined));
-  const settingsModelRef = useRef(settingsModel);
+  const [settingsModel, setSettingsModelState] = useState<SettingsModel>(() => defaultSettingsModel(undefined));
   settingsModelRef.current = settingsModel;
+  const setSettingsModel = useCallback((model: SettingsModel) => {
+    settingsModelRef.current = model;
+    setSettingsModelState(model);
+  }, [settingsModelRef]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaveError, setSettingsSaveError] = useState<string | undefined>(undefined);
@@ -125,7 +130,7 @@ export function useSettings({ storage, capabilityRef, readinessSnapshot }: UseSe
   const reconcileCurrentSettings = useCallback((models: TtsModelDescriptor[], fallbackCatalog = voiceCatalogRef.current) => {
     const merged = mergeCustomModels(models);
     const fallback = withCustomVoices(fallbackCatalog, customVoicesRef.current);
-    setSettingsModel(previous => applyReconciled(previous, reconcileSettings({ selectedModel: previous.selectedModel, voice: previous.voice, voiceProfiles: previous.voiceProfiles }, merged, fallback)));
+    setSettingsModelState(previous => applyReconciled(previous, reconcileSettings({ selectedModel: previous.selectedModel, voice: previous.voice, voiceProfiles: previous.voiceProfiles }, merged, fallback)));
   }, [customVoicesRef, mergeCustomModels]);
 
   const onCatalog = useCallback((catalog: VoiceCatalog) => {
@@ -245,7 +250,7 @@ export function useSettings({ storage, capabilityRef, readinessSnapshot }: UseSe
       if (!ok) throw new Error('Settings could not be saved on this device.');
       const next = applyReconciled({ agentName, persona, pi, selectedModel, voiceProfiles: profiles }, { voice: activeVoice, selectedModel, voiceProfiles: profiles });
       settingsModelRef.current = next;
-      setSettingsModel(next);
+      setSettingsModelState(next);
       setSettingsOpen(false);
     } catch (error) {
       setSettingsSaveError(error instanceof Error ? error.message : 'Settings could not be saved.');
@@ -275,7 +280,7 @@ export function useSettings({ storage, capabilityRef, readinessSnapshot }: UseSe
         const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, availableModels, fallbackCatalog);
         const next = applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, pi, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled);
         settingsModelRef.current = next;
-        setSettingsModel(next);
+        setSettingsModelState(next);
       } catch {
         // Keep the in-memory defaults when local settings storage is unavailable.
       } finally {
