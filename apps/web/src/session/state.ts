@@ -151,9 +151,16 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
     // Keep authoritative (finalized) text as interrupted, but drop an empty
     // placeholder or a still-tentative preview that never materialized.
-    return { ...next, conversationItems: next.conversationItems
+    const conversationItems = next.conversationItems
       .map(item => item.kind === 'assistant' && item.responseId === responseId && item.text && item.tentative !== true ? { ...item, playback: 'interrupted' as const } : item)
-      .filter(item => !(item.kind === 'assistant' && item.responseId === responseId && (!item.text || item.tentative === true))) };
+      .filter(item => !(item.kind === 'assistant' && item.responseId === responseId && (!item.text || item.tentative === true)));
+    // A response failure normally arrives alongside a generic failure event,
+    // but do not leave the speaking marker behind if that follow-up is delayed
+    // or never reaches the browser.
+    const matchingPlayback = next.conversationItems.some(item => item.kind === 'assistant' && item.responseId === responseId && item.playback === 'playing');
+    const anyPlayingPlayback = next.conversationItems.some(item => item.kind === 'assistant' && item.playback === 'playing');
+    const failedCurrentPlayback = next.dominant === 'speaking' && (matchingPlayback || !anyPlayingPlayback);
+    return failedCurrentPlayback ? dominant({ ...next, conversationItems }, 'listening') : { ...next, conversationItems };
   }
   if (event.type === 'tts.started') {
     const responseId = String(event.payload.responseId ?? '');
@@ -179,7 +186,14 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   if (event.type === 'playback.stopped') {
     const playbackId = String(event.payload.playbackId ?? '');
     const completed = event.payload.reason === 'completed';
-    return { ...next, conversationItems: next.conversationItems.map(item => item.kind === 'assistant' && item.playbackId === playbackId ? { ...item, playback: completed ? 'completed' as const : 'interrupted' as const } : item) };
+    const matchingPlayback = next.conversationItems.some(item => item.kind === 'assistant' && item.playbackId === playbackId && item.playback === 'playing');
+    const anyPlayingPlayback = next.conversationItems.some(item => item.kind === 'assistant' && item.playback === 'playing');
+    const stoppedCurrentPlayback = next.dominant === 'speaking' && (matchingPlayback || !anyPlayingPlayback);
+    const conversationItems = next.conversationItems.map(item => item.kind === 'assistant' && item.playbackId === playbackId ? { ...item, playback: completed ? 'completed' as const : 'interrupted' as const } : item);
+    // Playback termination is itself authoritative. The host normally follows
+    // it with session.state=listening, but the marker must not wait for that
+    // round trip to disappear.
+    return stoppedCurrentPlayback ? dominant({ ...next, conversationItems }, 'listening') : { ...next, conversationItems };
   }
   if (event.type === 'barge_in.confirmed') return dominant(next, 'listening');
   if (event.type === 'barge_in.rejected') {

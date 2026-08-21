@@ -280,8 +280,12 @@ export class SessionController {
     const part = this.playbackByPart.get(receipt.playbackId);
     if (part) part.terminal = true;
     if (this.active?.playbackId === receipt.playbackId && this.active.outputEpoch === receipt.cancelledEpoch) this.active.terminal = true;
+    const event = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.stopped', payload: { ...receipt } });
+    // Playback is authoritative locally. Clear the marker before waiting for
+    // storage or the host's follow-up session.state event, while retaining it
+    // when this is a queued/stale part and another output is still active.
+    this.applyLocalPlaybackTerminal(receipt, this.playbackContinuesAfter(receipt));
     const report = (async () => {
-      const event = createEnvelope({ sessionId: this.options.sessionId, epoch: this.state.epoch, type: 'playback.stopped', payload: { ...receipt } });
       const stored = await this.options.writer.apply(event);
       if (!stored.ok) { this.degrade(stored.degradedReason ?? 'The terminal playback receipt could not be saved.'); return; }
       try { await this.options.transport.sendTerminal(receipt, event); }
@@ -435,6 +439,37 @@ export class SessionController {
     this.clearProvisional();
     this.degrade(message);
   }
+  private playbackContinuesAfter(receipt: PlaybackTerminal): boolean {
+    const active = this.active;
+    // No active player means a terminal receipt can only be cleaning up stale
+    // presentation state. If another player is active, this receipt is for an
+    // older or queued part and must not hide its speaking marker.
+    if (!active) return false;
+    if (active.playbackId !== receipt.playbackId || active.outputEpoch !== receipt.cancelledEpoch) return true;
+    const group = this.groups.get(active.responseId);
+    if (!group || group.terminal) return false;
+    const index = group.parts.findIndex(part => part.playbackId === receipt.playbackId);
+    const successor = index >= 0 ? group.parts[index + 1] : undefined;
+    return successor !== undefined && !successor.terminal;
+  }
+
+  private applyLocalPlaybackTerminal(receipt: PlaybackTerminal, continues: boolean): void {
+    const completed = receipt.reason === 'completed';
+    let changed = false;
+    const conversationItems = this.state.conversationItems.map(item => {
+      if (item.kind !== 'assistant' || item.playbackId !== receipt.playbackId) return item;
+      changed = true;
+      return { ...item, playback: completed ? 'completed' as const : 'interrupted' as const };
+    });
+    const speakingEnded = !continues && this.state.dominant === 'speaking';
+    if (!changed && !speakingEnded) return;
+    this.setState({
+      ...this.state,
+      ...(speakingEnded ? { dominant: 'listening' as const, announcement: 'Listening' } : {}),
+      conversationItems,
+    });
+  }
+
   private async terminalize(reason: PlaybackStopReason): Promise<void> {
     const active = this.active;
     if (!active || active.terminal) return;

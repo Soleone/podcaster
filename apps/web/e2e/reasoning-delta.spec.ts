@@ -35,6 +35,13 @@ test('streams a dimmed assistant preview before audio and solidifies it on final
   await emit(page, 'tts.started', { responseId: 'response-1', playbackId: 'playback-1', sampleRate: 24000 });
   await expect(page.getByRole('heading', { name: 'Speaking' })).toBeVisible();
   await expect(page.locator('.assistant-bubble', { hasText: 'Perceived latency drops when text streams first.' })).toBeVisible();
+
+  // Natural browser playback completion is authoritative even before a host
+  // session.state=listening round trip arrives.
+  await emit(page, 'tts.ended', { responseId: 'response-1', playbackId: 'playback-1', generatedSamples: 480 });
+  await page.evaluate(() => window.__podcasterTest!.audio('playback-1', 0, 480));
+  await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
+  await expect(page.locator('.assistant-activity')).toHaveCount(0);
 });
 
 test('drops a streaming preview when the response fails before finalizing', async ({ page, origin }) => {

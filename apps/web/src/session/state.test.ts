@@ -86,6 +86,26 @@ describe('session presentation state', () => {
     expect(state.dominant).toBe('speaking');
   });
 
+  it('clears the speaking marker from playback termination and ignores stale terminals', () => {
+    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    state = reduceSessionState(state, event('tts.started', { responseId: 'r', playbackId: 'p1', sampleRate: 24000 }));
+    expect(state.dominant).toBe('speaking');
+    state = reduceSessionState(state, event('tts.started', { responseId: 'r', playbackId: 'p2', sampleRate: 24000 }));
+    state = reduceSessionState(state, event('playback.stopped', { playbackId: 'p1', cancelledEpoch: 0, finalPlayedSampleOffset: 10, reason: 'completed' }));
+    expect(state.dominant).toBe('speaking');
+    state = reduceSessionState(state, event('playback.stopped', { playbackId: 'p2', cancelledEpoch: 0, finalPlayedSampleOffset: 10, reason: 'completed' }));
+    expect(state.dominant).toBe('listening');
+    expect(state.conversationItems).toContainEqual(expect.objectContaining({ playbackId: 'p2', playback: 'completed' }));
+
+    let untracked = reduceSessionState(initialSessionState, event('tts.started', { responseId: 'untracked-response', playbackId: 'untracked-playback', sampleRate: 24000 }));
+    untracked = reduceSessionState(untracked, event('playback.stopped', { playbackId: 'untracked-playback', cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: 'cancelled' }));
+    expect(untracked.dominant).toBe('listening');
+
+    let failed = reduceSessionState(initialSessionState, event('tts.started', { responseId: 'failed-response', playbackId: 'failed-playback', sampleRate: 24000 }));
+    failed = reduceSessionState(failed, event('response.failed', { responseId: 'failed-response', turnId: 'turn', reasonCode: 'tts_failed' }));
+    expect(failed.dominant).toBe('listening');
+  });
+
   it('removes an empty placeholder and marks a partial response interrupted on failure', () => {
     let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
     state = reduceSessionState(state, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'tts_failed' }));
