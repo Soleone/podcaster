@@ -110,7 +110,8 @@ function SessionRow(props: { row: SessionSummary; live: boolean; buildExport: (s
             <span className="font-medium tabular-nums">{shortSessionId(session.sessionId)}</span>
             <Badge variant={props.live || (!stopped && !paused && !draft) ? 'default' : 'secondary'}>{props.live ? (paused ? 'Paused' : 'Active') : draft ? 'Not started' : stopped ? 'Ended' : paused ? 'Paused' : 'Active'}</Badge>
           </p>
-          {preview ? <p className="mt-1 truncate text-sm">{preview}</p> : null}
+          {session.title ? <p className="mt-1 truncate text-sm font-medium">{session.title}</p> : null}
+          {preview ? <p className={cn('mt-1 truncate text-sm', session.title && 'text-muted-foreground')}>{preview}</p> : null}
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span>{draft ? 'Created' : 'Started'} {formatWhen(session.startedAt)}</span>
             <span aria-hidden="true">·</span>

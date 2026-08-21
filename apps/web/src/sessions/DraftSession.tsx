@@ -6,10 +6,13 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '../components/ui/field';
+import { Input } from '../components/ui/input';
 import { Spinner } from '../components/ui/spinner';
 import { cn } from '../lib/utils';
 import { sessionStartBlocker, type ServiceStatuses } from '../services/service-status';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
+import { MAX_SESSION_TITLE_LENGTH } from '../storage/schema';
 import type { SessionPreparationDraft, StoredSession } from '../storage/schema';
 import { StoppedSession } from './StoppedSession';
 
@@ -32,6 +35,7 @@ const defaultPreparation: SessionPreparationDraft = { enabled: false, topic: '',
 
 export function DraftSession(props: DraftSessionProps) {
   const [session, setSession] = useState<StoredSession | undefined>();
+  const [title, setTitle] = useState('');
   const [preparation, setPreparation] = useState<SessionPreparationDraft>(defaultPreparation);
   const [hydrated, setHydrated] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -44,6 +48,7 @@ export function DraftSession(props: DraftSessionProps) {
     void props.writer.getSession(props.sessionId).then(value => {
       if (cancelled) return;
       setSession(value);
+      setTitle(value?.title ?? '');
       setPreparation(value?.preparation ?? defaultPreparation);
       setHydrated(true);
     });
@@ -54,12 +59,12 @@ export function DraftSession(props: DraftSessionProps) {
     if (!hydrated || session?.state !== 'draft') return;
     const timer = setTimeout(() => {
       setSaving(true);
-      void props.writer.updateDraftSession(props.sessionId, preparation).then(result => {
-        if (!result.ok) setError(result.degradedReason ?? 'The preparation choices could not be saved.');
+      void props.writer.updateDraftSession(props.sessionId, preparation, title).then(result => {
+        if (!result.ok) setError(result.degradedReason ?? 'The session details could not be saved.');
       }).finally(() => setSaving(false));
     }, 250);
     return () => clearTimeout(timer);
-  }, [hydrated, preparation, props.sessionId, props.writer, session?.state]);
+  }, [hydrated, preparation, props.sessionId, props.writer, session?.state, title]);
 
   if (!hydrated) return <main className="mx-auto mt-5 mb-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading session…</main>;
   if (!session) return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]"><Card className="mx-auto max-w-md text-center"><CardHeader><CardTitle>Session not found</CardTitle><CardDescription>This session may have been removed from this device.</CardDescription></CardHeader><CardFooter className="justify-center"><Button variant="outline" onClick={props.onBack}><ArrowLeft data-icon="inline-start" aria-hidden="true" />All sessions</Button></CardFooter></Card></main>;
@@ -98,8 +103,8 @@ export function DraftSession(props: DraftSessionProps) {
     }
     setStarting(true);
     try {
-      const saved = await props.writer.updateDraftSession(props.sessionId, preparation);
-      if (!saved.ok) throw new Error(saved.degradedReason ?? 'The preparation choices could not be saved.');
+      const saved = await props.writer.updateDraftSession(props.sessionId, preparation, title);
+      if (!saved.ok) throw new Error(saved.degradedReason ?? 'The session details could not be saved.');
       const planning = preparation.enabled ? { topic, depth: preparation.depth } : undefined;
       await props.onStart(planning);
     } catch (cause) {
@@ -119,6 +124,22 @@ export function DraftSession(props: DraftSessionProps) {
       <Badge variant="secondary"><Clock3 aria-hidden="true" />Not started</Badge>
     </header>
 
+    <FieldGroup className="mt-6">
+      <Field>
+        <FieldLabel htmlFor="session-title">Session title</FieldLabel>
+        <Input
+          id="session-title"
+          value={title}
+          onChange={event => setTitle(event.target.value)}
+          maxLength={MAX_SESSION_TITLE_LENGTH}
+          placeholder="What should you remember this session by?"
+          autoComplete="off"
+          disabled={starting}
+        />
+        <FieldDescription>Give this session a name so it is easy to spot in your archive.</FieldDescription>
+      </Field>
+    </FieldGroup>
+
     <Card className="mt-6">
       <CardHeader>
         <CardTitle>Prepare the conversation</CardTitle>
@@ -133,7 +154,7 @@ export function DraftSession(props: DraftSessionProps) {
           <label className="grid gap-1.5 text-sm"><span className="font-medium">Rough topic</span><textarea className={cn('min-h-24 resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', topicInvalid && 'border-destructive')} value={preparation.topic} onChange={event => setPreparation(value => ({ ...value, topic: event.target.value }))} maxLength={2048} placeholder="What do you want to explore?" aria-invalid={topicInvalid} disabled={starting} /><span className="text-xs text-muted-foreground">Keep it brief. This is sent to the configured research provider.</span></label>
           <label className="grid gap-1.5 text-sm"><span className="font-medium">Preparation depth</span><select className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" value={preparation.depth} onChange={event => setPreparation(value => ({ ...value, depth: event.target.value as PlanningDepth }))} disabled={starting}>{PLANNING_DEPTHS.map(value => <option key={value} value={value}>{value[0]!.toUpperCase() + value.slice(1)}</option>)}</select></label>
         </div> : null}
-        {saving ? <p className="text-xs text-muted-foreground" role="status">Saving preparation…</p> : null}
+        {saving ? <p className="text-xs text-muted-foreground" role="status">Saving session details…</p> : null}
       </CardContent>
     </Card>
 

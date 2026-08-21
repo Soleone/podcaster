@@ -1,6 +1,6 @@
 import type { HostEvent, PlaybackPausedEvent, PlaybackProgressEvent, PlaybackStoppedEvent } from '@app/contracts';
 import { MAX_PLANNING_NOTES_BYTES, MAX_PLANNING_TOPIC_BYTES, type PlanningDepth, type PlanningStatus } from '@app/contracts/settings';
-import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory, type SessionPreparationDraft, type StoredSession, type StoredTurn } from './schema';
+import { MAX_SESSION_TITLE_LENGTH, openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory, type SessionPreparationDraft, type StoredSession, type StoredTurn } from './schema';
 
 export type PersistedSessionEvent = HostEvent | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent;
 export type StableEvent = PersistedSessionEvent;
@@ -83,6 +83,13 @@ function preparationDraft(value: SessionPreparationDraft): SessionPreparationDra
   return { enabled: Boolean(value.enabled), topic, depth: value.depth };
 }
 
+function sessionTitle(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const title = value.trim();
+  if (Array.from(title).length > MAX_SESSION_TITLE_LENGTH) throw new DraftRejected('The session title is too long.');
+  return title || undefined;
+}
+
 export class StableTurnWriter {
   constructor(private readonly db: IDBDatabase) {}
 
@@ -92,13 +99,14 @@ export class StableTurnWriter {
 
   close(): void { this.db.close(); }
 
-  async createDraftSession(input: { sessionId: string; sessionSeed: string; startedAt?: string; preparation?: SessionPreparationDraft }): Promise<StorageResult> {
+  async createDraftSession(input: { sessionId: string; sessionSeed: string; startedAt?: string; title?: string; preparation?: SessionPreparationDraft }): Promise<StorageResult> {
     return this.guard(async () => {
       const transaction = this.db.transaction(STORES.sessions, 'readwrite');
       const sessions = transaction.objectStore(STORES.sessions);
       const existing = await requestResult(sessions.get(input.sessionId)) as StoredSession | undefined;
       if (existing) { transaction.abort(); throw new DraftRejected('The session already exists.'); }
       const now = input.startedAt ?? isoNow();
+      const title = sessionTitle(input.title);
       sessions.put({
         sessionId: input.sessionId,
         sessionSeed: input.sessionSeed,
@@ -110,6 +118,7 @@ export class StableTurnWriter {
         activeDurationMs: 0,
         runningSince: null,
         pausedAt: null,
+        ...(title ? { title } : {}),
         ...(input.preparation ? { preparation: preparationDraft(input.preparation) } : {}),
         failures: [],
       } satisfies StoredSession);
@@ -117,13 +126,19 @@ export class StableTurnWriter {
     });
   }
 
-  async updateDraftSession(sessionId: string, preparation: SessionPreparationDraft): Promise<StorageResult> {
+  async updateDraftSession(sessionId: string, preparation: SessionPreparationDraft, title?: string): Promise<StorageResult> {
     return this.guard(async () => {
       const transaction = this.db.transaction(STORES.sessions, 'readwrite');
       const sessions = transaction.objectStore(STORES.sessions);
       const session = await requestResult(sessions.get(sessionId)) as StoredSession | undefined;
       if (!session || session.state !== 'draft') { transaction.abort(); throw new DraftRejected('Only a not-started session can be edited.'); }
-      sessions.put({ ...session, preparation: preparationDraft(preparation), updatedAt: isoNow() });
+      const next: StoredSession = { ...session, preparation: preparationDraft(preparation), updatedAt: isoNow() };
+      if (title !== undefined) {
+        const normalizedTitle = sessionTitle(title);
+        if (normalizedTitle) next.title = normalizedTitle;
+        else delete next.title;
+      }
+      sessions.put(next);
       await transactionDone(transaction);
     });
   }

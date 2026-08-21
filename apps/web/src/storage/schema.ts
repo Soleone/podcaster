@@ -2,6 +2,7 @@ import type { CustomVoiceMetadata, PlanningDepth, SessionPlanningSnapshot, Sessi
 
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
 export const PODCASTER_DB_VERSION = 5;
+export const MAX_SESSION_TITLE_LENGTH = 120;
 
 export const STORES = {
   sessions: 'sessions',
@@ -23,6 +24,8 @@ export interface StoredSession {
   sessionId: string;
   sessionSeed: string;
   personaDigest: string;
+  /** Optional user-facing name shown in the local session archive. */
+  title?: string;
   /** Frozen TTS/persona settings used by the active session, when recorded. */
   settings?: SessionSettingsSnapshot;
   /** Editable preparation choices while a session is still a draft. */

@@ -29,6 +29,16 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  it('persists and carries a draft title through the session lifecycle', async () => {
+    const { writer } = await open();
+    await writer.createDraftSession({ sessionId: 'draft', sessionSeed: 'seed-draft' });
+    await writer.updateDraftSession('draft', { enabled: false, topic: '', depth: 'standard' }, '  Standout conversation  ');
+    expect(await writer.getSession('draft')).toMatchObject({ title: 'Standout conversation' });
+    await writer.beginSession({ sessionId: 'draft', sessionSeed: 'ignored', personaDigest: 'digest' });
+    expect(await writer.getSession('draft')).toMatchObject({ state: 'active', title: 'Standout conversation' });
+    writer.close();
+  });
+
   it('persists the frozen session voice/backend snapshot for active-session recovery', async () => {
     const { name, writer } = await open();
     const settings = { version: 1 as const, persona: 'persona', voice: { backendId: 'qwen3', modelId: 'qwen-model', catalogId: 'qwen-catalog', voiceId: 'Ryan', speedModifier: 1 } };

@@ -1,6 +1,19 @@
 import { expect, test } from './support/dev-server';
 import { emit, enterFakeSession } from './support/fake-browser-services';
 
+test('a draft title is saved and shown in the session archive', async ({ page, origin }) => {
+  await page.goto(origin);
+  await page.getByRole('button', { name: 'New session' }).click();
+  await expect(page.getByRole('heading', { name: 'New session' })).toBeVisible();
+  await page.getByLabel('Session title').fill('A standout conversation');
+  await page.waitForTimeout(350);
+  await page.getByRole('button', { name: 'All sessions' }).click();
+  const row = page.getByRole('listitem').filter({ hasText: 'A standout conversation' });
+  await expect(row).toHaveCount(1);
+  await row.getByRole('link', { name: 'Open draft' }).click();
+  await expect(page.getByLabel('Session title')).toHaveValue('A standout conversation');
+});
+
 test('the shared app header returns home from a session and stays anchored across routes', async ({ page, origin }) => {
   await enterFakeSession(page, origin);
   const header = page.locator('[data-slot="app-header"]');
