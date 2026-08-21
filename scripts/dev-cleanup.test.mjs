@@ -28,8 +28,8 @@ async function assertProcessesGone(recorded) {
   }
 }
 
-async function runDev(hostEntry, trigger, timeout = '50', extraEnv = {}) {
-  const child = spawn(process.execPath, ['scripts/dev.mjs'], {
+async function runDev(hostEntry, trigger, timeout = '50', extraEnv = {}, launcher = 'scripts/dev.mjs') {
+  const child = spawn(process.execPath, [launcher], {
     cwd: new URL('..', import.meta.url),
     env: { ...process.env, PODCASTER_HOST_ENTRY: hostEntry, PODCASTER_SHUTDOWN_TIMEOUT_MS: timeout, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -62,6 +62,12 @@ assert.equal(host.code, 143);
 assert.match(host.stderr, /escalating to SIGKILL/);
 assert.equal(host.pids.length, 2);
 await assertProcessesGone(host.pids);
+
+const hmrHost = await runDev('scripts/fixtures/wedged-descendants.mjs', stdout => stdout.includes('[backend] internal host:'), '50', {}, 'scripts/dev-hmr.mjs');
+assert.equal(hmrHost.code, 143);
+assert.match(hmrHost.stderr, /escalating to SIGKILL/);
+assert.equal(hmrHost.pids.length, 2);
+await assertProcessesGone(hmrHost.pids);
 
 const build = await runDev('unused', stdout => stdout.includes('BUILD_WEDGED'), '50', {
   PODCASTER_WEB_BUILD_ENTRY: 'scripts/fixtures/wedged-descendants.mjs', FIXTURE_MODE: 'build',

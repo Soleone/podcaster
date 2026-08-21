@@ -1,43 +1,10 @@
-import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createProcessGroupManager } from './process-group.mjs';
 
 const root = new URL('..', import.meta.url);
 const shutdownTimeoutMs = Number(process.env.PODCASTER_SHUTDOWN_TIMEOUT_MS ?? 3_000);
-let active;
+const { spawnGroup, terminateActive, finishGroup } = createProcessGroupManager({ cwd: root, shutdownTimeoutMs });
 let shuttingDown = false;
-
-function groupExists(pgid) {
-  try { process.kill(-pgid, 0); return true; }
-  catch (error) { if (error?.code === 'ESRCH') return false; if (error?.code === 'EPERM') return true; throw error; }
-}
-
-function signalGroup(pgid, signal) {
-  try { process.kill(-pgid, signal); }
-  catch (error) { if (error?.code !== 'ESRCH') throw error; }
-}
-
-async function waitForGroupExit(pgid, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (groupExists(pgid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-  return !groupExists(pgid);
-}
-
-async function terminateGroup(pgid, initialSignal = 'SIGTERM') {
-  if (!groupExists(pgid)) return;
-  signalGroup(pgid, initialSignal);
-  if (!await waitForGroupExit(pgid, shutdownTimeoutMs)) {
-    process.stderr.write('dev: process group did not stop in time; escalating to SIGKILL\n');
-    signalGroup(pgid, 'SIGKILL');
-    await waitForGroupExit(pgid, shutdownTimeoutMs);
-  }
-}
-
-async function terminateActive(initialSignal = 'SIGTERM') {
-  if (!active) return;
-  const { pgid } = active;
-  await terminateGroup(pgid, initialSignal);
-  if (active?.pgid === pgid) active = undefined;
-}
 
 async function handleSignal(signal) {
   if (shuttingDown) return;
@@ -47,18 +14,6 @@ async function handleSignal(signal) {
 }
 process.once('SIGINT', () => void handleSignal('SIGINT'));
 process.once('SIGTERM', () => void handleSignal('SIGTERM'));
-
-function spawnGroup(command, args) {
-  const child = spawn(command, args, { cwd: root, stdio: 'inherit', shell: false, detached: true });
-  active = { child, pgid: child.pid };
-  return child;
-}
-
-async function finishGroup(child) {
-  const pgid = child.pid;
-  await terminateGroup(pgid);
-  if (active?.pgid === pgid) active = undefined;
-}
 
 async function run(command, args) {
   const child = spawnGroup(command, args);

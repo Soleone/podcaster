@@ -1,48 +1,14 @@
-import { spawn } from 'node:child_process';
+import { createProcessGroupManager } from './process-group.mjs';
 
 const root = new URL('..', import.meta.url);
 const shutdownTimeoutMs = Number(process.env.PODCASTER_SHUTDOWN_TIMEOUT_MS ?? 3_000);
 const webPort = Number(process.env.PODCASTER_WEB_PORT ?? 5_173);
 const webOrigin = `http://127.0.0.1:${webPort}`;
-const active = new Map();
+const { spawnGroup, terminateActive, finishGroup } = createProcessGroupManager({ cwd: root, shutdownTimeoutMs });
 let shuttingDown = false;
 
 if (!Number.isInteger(webPort) || webPort < 1_024 || webPort > 65_535) {
   throw new Error('PODCASTER_WEB_PORT must be an integer from 1024 through 65535');
-}
-
-function groupExists(pgid) {
-  try { process.kill(-pgid, 0); return true; }
-  catch (error) { if (error?.code === 'ESRCH') return false; if (error?.code === 'EPERM') return true; throw error; }
-}
-
-function signalGroup(pgid, signal) {
-  try { process.kill(-pgid, signal); }
-  catch (error) { if (error?.code !== 'ESRCH') throw error; }
-}
-
-async function waitForGroupExit(pgid, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (groupExists(pgid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-  return !groupExists(pgid);
-}
-
-async function terminateGroup(pgid, initialSignal = 'SIGTERM') {
-  if (!groupExists(pgid)) return;
-  signalGroup(pgid, initialSignal);
-  if (!await waitForGroupExit(pgid, shutdownTimeoutMs)) {
-    process.stderr.write('dev: process group did not stop in time; escalating to SIGKILL\n');
-    signalGroup(pgid, 'SIGKILL');
-    await waitForGroupExit(pgid, shutdownTimeoutMs);
-  }
-}
-
-async function terminateActive(initialSignal = 'SIGTERM') {
-  const groups = [...active.values()];
-  await Promise.all(groups.map(async ({ pgid }) => {
-    await terminateGroup(pgid, initialSignal);
-    active.delete(pgid);
-  }));
 }
 
 async function handleSignal(signal) {
@@ -53,24 +19,6 @@ async function handleSignal(signal) {
 }
 process.once('SIGINT', () => void handleSignal('SIGINT'));
 process.once('SIGTERM', () => void handleSignal('SIGTERM'));
-
-function spawnGroup(command, args, { env = process.env, pipeStdout = false, onStdout } = {}) {
-  const child = spawn(command, args, {
-    cwd: root,
-    stdio: ['ignore', pipeStdout ? 'pipe' : 'inherit', 'inherit'],
-    shell: false,
-    detached: true,
-    env,
-  });
-  const pgid = child.pid;
-  if (pgid === undefined) throw new Error(`${command} did not provide a process id`);
-  active.set(pgid, { child, pgid });
-  if (pipeStdout) {
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', chunk => onStdout?.(String(chunk)));
-  }
-  return child;
-}
 
 function observeExit(child) {
   return new Promise(resolve => {
@@ -85,14 +33,7 @@ function observeExit(child) {
   });
 }
 
-async function finishGroup(child) {
-  const pgid = child.pid;
-  if (pgid === undefined) return;
-  await terminateGroup(pgid);
-  active.delete(pgid);
-}
-
-async function run(command, args, options = {}) {
+async function run(command, args, options = { stdio: ['ignore', 'inherit', 'inherit'] }) {
   const child = spawnGroup(command, args, options);
   const result = await observeExit(child);
   await finishGroup(child);
