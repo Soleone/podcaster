@@ -374,11 +374,14 @@ def run_stt(
 ) -> Path:
     if candidate not in {"nemotron", "parakeet"}:
         raise ValueError("unsupported STT candidate")
-    config_path = (config_path or ROOT / "benchmarks/configs/stt/nemotron-320ms.yaml").resolve()
+    config_path = (config_path or ROOT / "services/audio/config/nemotron-320ms.yaml").resolve()
     try:
         config_path.relative_to(ROOT / "benchmarks/configs/stt")
-    except ValueError as error:
-        raise ValueError("STT config must be tracked under benchmarks/configs/stt") from error
+    except ValueError:
+        try:
+            config_path.relative_to(ROOT / "services/audio/config")
+        except ValueError as error:
+            raise ValueError("STT config must be tracked under benchmarks/configs/stt or services/audio/config") from error
     config = load_yaml_subset(config_path)
     if config.get("candidate", {}).get("id") != candidate:
         raise ValueError("candidate/config mismatch")
@@ -391,7 +394,7 @@ def run_stt(
     dataset_path = dataset_path.resolve()
     dataset, dataset_hash = verify_dataset(dataset_path, ROOT)
     model_entries = verify_models(
-        ROOT / "docs/model-manifest.json",
+        ROOT / "services/audio/config/model-manifest.json",
         ROOT,
         model_ids={config["candidate"]["modelId"]},
     )

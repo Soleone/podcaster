@@ -20,9 +20,9 @@ from benchmarks.harness.tts_runner import (
 )
 from services.audio.src.tts.base import AudioChunk, SynthesisResult
 
-CONFIG = ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml"
+CONFIG = ROOT / "services/audio/config/kokoro-cuda.yaml"
 CPU_CONFIG = ROOT / "benchmarks/configs/tts/kokoro.yaml"
-QWEN_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-1.7b.yaml"
+QWEN_CONFIG = ROOT / "services/audio/config/qwen3-1.7b.yaml"
 PROMPTS = ROOT / "benchmarks/datasets/tts-prompts-v1.manifest.json"
 
 

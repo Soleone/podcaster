@@ -27,7 +27,9 @@ requires the measured tuple set to equal the committed set, so removing a comple
 source cannot pass validation.
 When a runtime or GPU query is unavailable its value is literally `unavailable`;
 the harness never invents a version. Synthetic timing uses a virtual monotonic
-clock so tests do not claim real model latency.
+clock so tests do not claim real model latency. Current source identities include
+service-owned selected audio config and manifest paths; moving ownership changes
+only the source snapshot path identity, not selected bytes or model hashes.
 
 Run twice and compare deterministic normalized summaries (actual VRAM use is
 machine state and is removed only by the explicit normalization command):
@@ -165,7 +167,7 @@ uv run hf download nvidia/nemotron-3.5-asr-streaming-0.6b \
   tokenizer.json tokenizer_config.json \
   --revision 1c8deaecc64b91f034d73e08dd8b64625eb3395d \
   --local-dir models/nemotron-3.5-asr-streaming-0.6b
-uv run python scripts/verify-models.py docs/model-manifest.json
+uv run python scripts/verify-models.py services/audio/config/model-manifest.json
 uv run python - <<'PY'
 import torch
 assert torch.cuda.is_available()
@@ -193,7 +195,7 @@ Run and validate the selected pinned 320 ms English configuration with real-time
 ```sh
 run_dir=$(uv run python -m benchmarks.harness run --kind stt \
   --candidate nemotron \
-  --config benchmarks/configs/stt/nemotron-320ms.yaml \
+  --config services/audio/config/nemotron-320ms.yaml \
   --dataset benchmarks/datasets/librispeech-t3.manifest.json | tail -1)
 uv run python -m benchmarks.harness validate "$run_dir"
 ```
@@ -208,7 +210,7 @@ soak:
 ```sh
 soak_dir=$(uv run python -m benchmarks.harness run --kind stt \
   --candidate nemotron \
-  --config benchmarks/configs/stt/nemotron-320ms.yaml \
+  --config services/audio/config/nemotron-320ms.yaml \
   --dataset benchmarks/datasets/librispeech-t3.manifest.json \
   --soak-minutes 30 | tail -1)
 uv run python -m benchmarks.harness validate "$soak_dir"
@@ -246,7 +248,7 @@ The canonical model is `nvidia/parakeet-unified-en-0.6b` at immutable revision
 `fe53cd885760c96b6a5f51a0bfd362cb4584a98b`, under the NVIDIA Open Model License.
 Its verified `.nemo` payload SHA-256 is
 `ec23ed9150c8fde49072c3e2d61678ab903dbcef389d658db833420cbc1da35b`.
-Acquire it exactly as recorded in `docs/model-manifest.json`.
+Acquire it exactly as recorded in `services/audio/config/model-manifest.json`.
 
 NVIDIA's current model card names NeMo 2.7.3, but the published PyPI 2.7.3 runtime
 cannot instantiate this pinned artifact (`att_chunk_context_size` is rejected).
@@ -331,7 +333,7 @@ The primary Nemotron environment remains unchanged. Kokoro runs in ignored
 uv venv .venv-kokoro --python 3.12
 uv pip sync --python .venv-kokoro/bin/python services/audio/kokoro-requirements.lock
 uv run python scripts/acquire-kokoro.py
-uv run python scripts/verify-models.py docs/model-manifest.json
+uv run python scripts/verify-models.py services/audio/config/model-manifest.json
 ```
 
 The runtime freeze was checked against the pinned repository README, source
@@ -411,7 +413,7 @@ The admitted Qwen candidate is `qwen3-1.7b`, the official
 `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` snapshot at immutable revision
 `85e237c12c027371202489a0ec509ded67b5e4b5`. Its benchmark config binds the
 faster-Qwen streaming runtime, lockfile, CUDA device, bfloat16 precision, `Ryan`
-voice, and every model asset hash recorded in `docs/model-manifest.json`. The
+voice, and every model asset hash recorded in `services/audio/config/model-manifest.json`. The
 harness verifies the selected model and all attested files before preparing the
 adapter; it does not accept a config or model path that merely has the right
 primary filename.
@@ -439,7 +441,7 @@ Run and validate one candidate before comparison:
 ```sh
 run_dir=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
   --candidate qwen3-1.7b \
-  --config benchmarks/configs/tts/qwen3-1.7b.yaml \
+  --config services/audio/config/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
 uv run python -m benchmarks.harness validate "$run_dir"
 ```
@@ -452,7 +454,7 @@ fails closed on a mismatched run/config/model/prompt identity:
 ```sh
 /tmp/qwen-env/bin/python -m benchmarks.harness probe-cancel \
   --candidate qwen3-1.7b \
-  --config benchmarks/configs/tts/qwen3-1.7b.yaml \
+  --config services/audio/config/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json \
   --run "$run_dir"
 ```
@@ -466,7 +468,7 @@ and worker cleanup from raw events rather than trusting the submitted summary:
 ```sh
 soak_dir=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
   --candidate qwen3-1.7b \
-  --config benchmarks/configs/tts/qwen3-1.7b.yaml \
+  --config services/audio/config/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json \
   --soak-minutes 5 | tail -1)
 uv run python -m benchmarks.harness validate "$soak_dir"
@@ -518,7 +520,7 @@ cpu_run=$(/tmp/kokoro-cpu-env/bin/python -m benchmarks.harness run --kind tts \
   --candidate kokoro --config benchmarks/configs/tts/kokoro.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
 qwen_run=$(/tmp/qwen-env/bin/python -m benchmarks.harness run --kind tts \
-  --candidate qwen3-1.7b --config benchmarks/configs/tts/qwen3-1.7b.yaml \
+  --candidate qwen3-1.7b --config services/audio/config/qwen3-1.7b.yaml \
   --prompts benchmarks/datasets/tts-prompts-v1.manifest.json | tail -1)
 /tmp/kokoro-cpu-env/bin/python -m benchmarks.harness validate "$cpu_run"
 /tmp/qwen-env/bin/python -m benchmarks.harness validate "$qwen_run"
@@ -532,7 +534,7 @@ identity is retained as machine context; candidate execution provider and
 process-attributed counters are the evidence.
 
 After KOK-1, the optional GPU-versus-GPU comparison is run by replacing the CPU
-config with `benchmarks/configs/tts/kokoro-cuda.yaml` and retaining the same Qwen
+config with `services/audio/config/kokoro-cuda.yaml` and retaining the same Qwen
 run. It is a separate labeled result, not a replacement for the primary
 production-shape comparison. A failed prompt remains in `items.jsonl` and
 `summary.json`; no aggregate is presented as passed when either terminal run is
@@ -543,11 +545,11 @@ failed.
 The evaluation-only Base candidate is the official
 `Qwen/Qwen3-TTS-12Hz-0.6B-Base` snapshot at immutable revision
 `5d83992436eae1d760afd27aff78a71d676296fc` under Apache-2.0. All 13 snapshot file
-hashes are recorded in `docs/model-manifest.json` and acquired with:
+hashes are recorded in `services/audio/config/model-manifest.json` and acquired with:
 
 ```sh
 uv run python scripts/acquire-qwen3-tts-base.py
-uv run python scripts/verify-models.py docs/model-manifest.json
+uv run python scripts/verify-models.py services/audio/config/model-manifest.json
 ```
 
 The Torch backend is `andimarafioti/faster-qwen3-tts` at commit

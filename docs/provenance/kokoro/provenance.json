@@ -13,7 +13,7 @@
     "revision": "6843c53fc280ab130b7a8d206ebd3407e094efdc",
     "sourceUrl": "https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0",
     "license": "no separate converted-asset license published",
-    "note": "Do not conflate the canonical model's Apache-2.0 declaration with the runtime code's MIT license. The release publishes no checksums; local asset SHA-256 values are pinned in docs/model-manifest.json."
+    "note": "Do not conflate the canonical model's Apache-2.0 declaration with the runtime code's MIT license. The release publishes no checksums; local asset SHA-256 values are pinned in services/audio/config/model-manifest.json."
   },
   "runtime": {
     "repository": "https://github.com/thewh1teagle/kokoro-onnx.git",

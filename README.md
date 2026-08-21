@@ -28,10 +28,10 @@ conversation intelligence comes from the `pi` command-line agent you configure.
 
 Local speech models are required for voice features and are **not** part of
 `pnpm install`: they are downloaded and verified against
-`docs/model-manifest.json` as described in `docs/benchmarking.md`. Checklist:
+`services/audio/config/model-manifest.json` as described in `docs/benchmarking.md`. Checklist:
 
 - STT model (Nemotron 3.5 ASR streaming 0.6B) and TTS model (Kokoro-82M ONNX)
-  under `models/`, matching `docs/model-manifest.json`.
+  under `models/`, matching `services/audio/config/model-manifest.json`.
 - Optional: Qwen evaluation runtimes, including the custom-voice clone route
   (see `scripts/setup-qwen-runtime.sh`).
 - Optional: the Parakeet challenger and the benchmark corpus, for the
@@ -59,7 +59,7 @@ Then acquire and verify the local speech models per `docs/benchmarking.md` and
 confirm the manifest checks out:
 
 ```bash
-uv run python scripts/verify-models.py docs/model-manifest.json
+uv run python scripts/verify-models.py services/audio/config/model-manifest.json
 ```
 
 Optional Qwen runtime (isolated, pinned Transformers 4.57.3; does not touch the

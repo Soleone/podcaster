@@ -6,7 +6,6 @@ capture state and keeps STT utterance cancellation separate from TTS cancellatio
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import secrets
 import sys
@@ -20,6 +19,7 @@ from typing import Callable
 from uuid import UUID
 
 from .binary_framing import BinaryAudioFrame, encode_frame
+from .config_verifier import AudioConfigVerifier
 from .stt.base import TranscriptUpdate
 from .stt.nemotron import NemotronStreamingAdapter
 from .tts.base import AudioChunk, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER
@@ -29,14 +29,14 @@ from .tts.qwen3 import QWEN_SUPPORTED_LANGUAGES
 from .vad.endpointer import DeterministicEndpointer, EndpointerConfig
 
 ROOT = Path(__file__).resolve().parents[3]
-STT_CONFIG = ROOT / "benchmarks/configs/stt/nemotron-320ms.yaml"
-TTS_CONFIG = ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml"
-MODEL_MANIFEST = ROOT / "docs/model-manifest.json"
+STT_CONFIG = ROOT / "services/audio/config/nemotron-320ms.yaml"
+TTS_CONFIG = ROOT / "services/audio/config/kokoro-cuda.yaml"
+MODEL_MANIFEST = ROOT / "services/audio/config/model-manifest.json"
 STT_CONFIG_ID = "nemotron-3.5-transformers-fp32-320ms-paced-v1"
 STT_CONFIG_SHA256 = "140151ebb3d74b09a25fd0ebb4016aee2392f93f9410d87f015378b548b8660e"
 TTS_CONFIG_ID = "kokoro-82m-onnx-fp32-af-heart-cuda-v1"
 TTS_CONFIG_SHA256 = "64de64feba08bcb97efc4e148c30e342a800dae847768929f4c93d6c161af9a5"
-QWEN_TTS_CONFIG = ROOT / "benchmarks/configs/tts/qwen3-1.7b.yaml"
+QWEN_TTS_CONFIG = ROOT / "services/audio/config/qwen3-1.7b.yaml"
 QWEN_TTS_CONFIG_ID = "qwen3-tts-1.7b-customvoice-cuda-v1"
 QWEN_TTS_CONFIG_SHA256 = "7ab59620186c724b052eb02cb0594a9761d6b217045529c3c13a99098715e4ed"
 KOKORO_BACKEND_ID = "kokoro"
@@ -1098,96 +1098,47 @@ class SelectedAudioRuntime:
             utterance.condition.notify_all()
 
     def _verified_stt_config(self) -> dict[str, object]:
-        config_bytes = self.stt_config_path.read_bytes()
-        if hashlib.sha256(config_bytes).hexdigest() != self.expected_stt_config_sha256:
-            raise RuntimeError("selected STT config checksum mismatch")
-        config = json.loads(config_bytes)
-        if config.get("id") != STT_CONFIG_ID or config.get("schemaVersion") != 1:
-            raise RuntimeError("selected STT config identity mismatch")
+        verifier = AudioConfigVerifier(self.root, self.model_manifest_path)
+        config = verifier.config(self.stt_config_path, self.expected_stt_config_sha256, STT_CONFIG_ID, "selected STT")
         candidate = config.get("candidate")
         if not isinstance(candidate, dict):
             raise RuntimeError("selected STT candidate config is invalid")
-        manifest = json.loads(self.model_manifest_path.read_text())
-        models = manifest.get("models") if manifest.get("schemaVersion") == 1 else None
-        if not isinstance(models, list):
-            raise RuntimeError("selected model manifest is invalid")
-        matches = [entry for entry in models if isinstance(entry, dict) and entry.get("id") == candidate.get("modelId")]
-        if len(matches) != 1:
-            raise RuntimeError("selected STT model manifest identity mismatch")
-        model = matches[0]
+        model = verifier.model(candidate.get("modelId"), "selected STT")
         if model.get("revision") != candidate.get("revision") or model.get("sha256") != candidate.get("sha256"):
             raise RuntimeError("selected STT model manifest revision or digest mismatch")
-        runtime_path = self._safe_model_path(str(model.get("runtimePath", "")))
-        configured_path = self._safe_model_path(str(config.get("modelPath", "")))
+        runtime_path = verifier.safe_path(str(model.get("runtimePath", "")))
+        configured_path = verifier.safe_path(str(config.get("modelPath", "")))
         if runtime_path != configured_path:
             raise RuntimeError("selected STT configured path does not match manifest")
-        files = model.get("files")
-        if not isinstance(files, list) or not files:
-            raise RuntimeError("selected STT model manifest has no files")
-        for entry in files:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not isinstance(entry.get("sha256"), str):
-                raise RuntimeError("selected STT model manifest file is invalid")
-            path = self._safe_model_path(entry["path"])
-            if not path.is_file() or _sha256_file(path) != entry["sha256"]:
-                raise RuntimeError("selected STT model file checksum mismatch")
+        verifier.verify_files(model, "selected STT")
         config["modelPath"] = str(runtime_path)
         return config
 
     def _verified_qwen_config(self) -> dict[str, object]:
-        config_bytes = self.qwen_config_path.read_bytes()
-        if hashlib.sha256(config_bytes).hexdigest() != self.expected_qwen_config_sha256:
-            raise RuntimeError("optional Qwen config checksum mismatch")
-        config = json.loads(config_bytes)
-        if config.get("id") != QWEN_TTS_CONFIG_ID or config.get("schemaVersion") != 1:
-            raise RuntimeError("optional Qwen config identity mismatch")
+        verifier = AudioConfigVerifier(self.root, self.model_manifest_path)
+        config = verifier.config(self.qwen_config_path, self.expected_qwen_config_sha256, QWEN_TTS_CONFIG_ID, "optional Qwen")
         candidate = config.get("candidate")
         if not isinstance(candidate, dict):
             raise RuntimeError("optional Qwen candidate config is invalid")
-        manifest = json.loads(self.model_manifest_path.read_text())
-        models = manifest.get("models") if manifest.get("schemaVersion") == 1 else None
-        if not isinstance(models, list):
-            raise RuntimeError("selected model manifest is invalid")
-        matches = [entry for entry in models if isinstance(entry, dict) and entry.get("id") == candidate.get("modelId")]
-        if len(matches) != 1:
-            raise RuntimeError("optional Qwen model manifest identity mismatch")
-        model = matches[0]
+        model = verifier.model(candidate.get("modelId"), "optional Qwen")
         for candidate_key, manifest_key in (("revision", "revision"), ("modelSha256", "sha256"), ("runtimeRevision", "streamingRuntimeRevision")):
             if candidate.get(candidate_key) != model.get(manifest_key):
                 raise RuntimeError("optional Qwen manifest identity or digest mismatch")
-        configured_path = self._safe_model_path(str(config.get("modelPath", "")))
-        runtime_path = self._safe_model_path(str(model.get("runtimePath", "")))
+        configured_path = verifier.safe_path(str(config.get("modelPath", "")))
+        runtime_path = verifier.safe_path(str(model.get("runtimePath", "")))
         if configured_path != runtime_path:
             raise RuntimeError("optional Qwen configured path does not match manifest")
-        files = model.get("files")
-        if not isinstance(files, list) or not files:
-            raise RuntimeError("optional Qwen model manifest has no files")
-        for entry in files:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not isinstance(entry.get("sha256"), str):
-                raise RuntimeError("optional Qwen model manifest file is invalid")
-            path = self._safe_model_path(entry["path"])
-            if not path.is_file() or _sha256_file(path) != entry["sha256"]:
-                raise RuntimeError("optional Qwen model file checksum mismatch")
+        verifier.verify_files(model, "optional Qwen")
         config["modelPath"] = str(runtime_path)
         return config
 
     def _verified_tts_config(self) -> dict[str, object]:
-        config_bytes = self.tts_config_path.read_bytes()
-        if hashlib.sha256(config_bytes).hexdigest() != self.expected_tts_config_sha256:
-            raise RuntimeError("selected TTS config checksum mismatch")
-        config = json.loads(config_bytes)
-        if config.get("id") != TTS_CONFIG_ID or config.get("schemaVersion") != 1:
-            raise RuntimeError("selected TTS config identity mismatch")
+        verifier = AudioConfigVerifier(self.root, self.model_manifest_path)
+        config = verifier.config(self.tts_config_path, self.expected_tts_config_sha256, TTS_CONFIG_ID, "selected TTS")
         candidate = config.get("candidate")
         if not isinstance(candidate, dict):
             raise RuntimeError("selected TTS candidate config is invalid")
-        manifest = json.loads(self.model_manifest_path.read_text())
-        models = manifest.get("models") if manifest.get("schemaVersion") == 1 else None
-        if not isinstance(models, list):
-            raise RuntimeError("selected model manifest is invalid")
-        matches = [entry for entry in models if isinstance(entry, dict) and entry.get("id") == candidate.get("modelId")]
-        if len(matches) != 1:
-            raise RuntimeError("selected TTS model manifest identity mismatch")
-        model = matches[0]
+        model = verifier.model(candidate.get("modelId"), "selected TTS")
         required_matches = {
             "revision": "revision",
             "onnxReleaseRevision": "onnxReleaseRevision",
@@ -1205,21 +1156,11 @@ class SelectedAudioRuntime:
             raise RuntimeError("selected TTS language or sample rate mismatch")
         if config.get("nativeSampleRate") != 24_000 or config.get("comparisonSampleRate") != 24_000:
             raise RuntimeError("selected TTS runtime must produce 24 kHz audio")
-        model_path = self._safe_model_path(str(config.get("modelPath", "")))
-        voices_path = self._safe_model_path(str(config.get("voicesPath", "")))
-        if model_path != self._safe_model_path(str(model.get("runtimePath", ""))) or voices_path != self._safe_model_path(str(model.get("voicesPath", ""))):
+        model_path = verifier.safe_path(str(config.get("modelPath", "")))
+        voices_path = verifier.safe_path(str(config.get("voicesPath", "")))
+        if model_path != verifier.safe_path(str(model.get("runtimePath", ""))) or voices_path != verifier.safe_path(str(model.get("voicesPath", ""))):
             raise RuntimeError("selected TTS configured paths do not match manifest")
-        files = model.get("files")
-        if not isinstance(files, list) or len(files) < 2:
-            raise RuntimeError("selected TTS model manifest has incomplete files")
-        verified_paths: set[Path] = set()
-        for entry in files:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not isinstance(entry.get("sha256"), str):
-                raise RuntimeError("selected TTS model manifest file is invalid")
-            path = self._safe_model_path(entry["path"])
-            if not path.is_file() or _sha256_file(path) != entry["sha256"]:
-                raise RuntimeError("selected TTS model file checksum mismatch")
-            verified_paths.add(path)
+        verified_paths = verifier.verify_files(model, "selected TTS", minimum=2)
         if model_path not in verified_paths or voices_path not in verified_paths:
             raise RuntimeError("selected TTS files are not attested by manifest")
         if candidate.get("voicesSha256") != _sha256_file(voices_path):
@@ -1227,12 +1168,6 @@ class SelectedAudioRuntime:
         config["modelPath"] = str(model_path)
         config["voicesPath"] = str(voices_path)
         return config
-
-    def _safe_model_path(self, relative: str) -> Path:
-        path = (self.root / relative).resolve()
-        if self.root.resolve() not in path.parents:
-            raise RuntimeError("selected model path is unsafe")
-        return path
 
     def _degrade_optional_tts(self, state: StreamState, error: BaseException) -> None:
         """Retire an optional model without taking Kokoro or capture down."""

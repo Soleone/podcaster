@@ -199,10 +199,13 @@ def _verified_tts_config(
         raise ValueError("unsupported TTS candidate")
     config_path = config_path.resolve()
     prompts_path = prompts_path.resolve()
-    configs_root = (ROOT / "benchmarks/configs/tts").resolve()
+    configs_roots = (
+        (ROOT / "benchmarks/configs/tts").resolve(),
+        (ROOT / "services/audio/config").resolve(),
+    )
     datasets_root = (ROOT / "benchmarks/datasets").resolve()
-    if configs_root not in config_path.parents:
-        raise ValueError("TTS config must be tracked under benchmarks/configs/tts")
+    if not any(root in config_path.parents for root in configs_roots):
+        raise ValueError("TTS config must be tracked under benchmarks/configs/tts or services/audio/config")
     if datasets_root not in prompts_path.parents:
         raise ValueError("TTS prompts must be tracked under benchmarks/datasets")
     config = load_yaml_subset(config_path)
@@ -252,7 +255,7 @@ def _verified_tts_config(
         raise ValueError("TTS prompt manifest lacks required coverage categories")
 
     models = verify_models(
-        ROOT / "docs/model-manifest.json",
+        ROOT / "services/audio/config/model-manifest.json",
         ROOT,
         model_ids={candidate_config.get("modelId")},
     )
@@ -757,8 +760,8 @@ def run_tts(
             "peakVramBytes": None,
         },
         "provenance": {
-            "modelManifestPath": "docs/model-manifest.json",
-            "modelManifestSha256": sha256_file(ROOT / "docs/model-manifest.json"),
+            "modelManifestPath": "services/audio/config/model-manifest.json",
+            "modelManifestSha256": sha256_file(ROOT / "services/audio/config/model-manifest.json"),
             "modelManifestId": model["id"],
             "configPath": str(config_path.relative_to(ROOT)),
             "datasetPath": str(prompts_path.relative_to(ROOT)),

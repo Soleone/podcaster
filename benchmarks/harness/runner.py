@@ -1098,23 +1098,42 @@ def _validate_tts_provenance(run: dict[str, Any]) -> None:
             raise ValidationError(f"TTS {label} provenance path is unsafe")
         return path
 
+    config_path_value = provenance.get("configPath")
+    if not isinstance(config_path_value, str):
+        raise ValidationError("TTS config provenance path is invalid")
     config_path = tracked_path(
-        provenance.get("configPath"), (ROOT / "benchmarks/configs/tts").resolve(), "config"
+        config_path_value, ROOT, "config"
     )
+    config_roots = {
+        (ROOT / "benchmarks/configs/tts").resolve(),
+        (ROOT / "services/audio/config").resolve(),
+    }
+    if not any(root in config_path.parents for root in config_roots):
+        raise ValidationError("TTS config provenance path is not tracked")
+    config_file_path = config_path
+    legacy_configs = {
+        (ROOT / "benchmarks/configs/tts/kokoro-cuda.yaml").resolve(): ROOT / "services/audio/config/kokoro-cuda.yaml",
+        (ROOT / "benchmarks/configs/tts/qwen3-1.7b.yaml").resolve(): ROOT / "services/audio/config/qwen3-1.7b.yaml",
+    }
+    if not config_file_path.is_file() and config_path in legacy_configs:
+        config_file_path = legacy_configs[config_path].resolve()
     prompts_path = tracked_path(
         provenance.get("datasetPath"), (ROOT / "benchmarks/datasets").resolve(), "dataset"
     )
     manifest_path = tracked_path(
         provenance.get("modelManifestPath"), ROOT, "model manifest"
     )
-    if manifest_path != (ROOT / "docs/model-manifest.json").resolve():
+    canonical_manifest = (ROOT / "services/audio/config/model-manifest.json").resolve()
+    legacy_manifest = (ROOT / "docs/model-manifest.json").resolve()
+    if manifest_path not in {canonical_manifest, legacy_manifest}:
         raise ValidationError("TTS model manifest provenance path is not canonical")
-    if not config_path.is_file() or sha256_file(config_path) != run.get("configSha256"):
+    manifest_file_path = manifest_path if manifest_path.is_file() else canonical_manifest
+    if not config_file_path.is_file() or sha256_file(config_file_path) != run.get("configSha256"):
         raise ValidationError("TTS config provenance hash does not match run identity")
-    if not manifest_path.is_file() or sha256_file(manifest_path) != provenance.get("modelManifestSha256"):
+    if not manifest_file_path.is_file() or sha256_file(manifest_file_path) != provenance.get("modelManifestSha256"):
         raise ValidationError("TTS model manifest provenance hash does not match run identity")
 
-    config = load_yaml_subset(config_path)
+    config = load_yaml_subset(config_file_path)
     candidate = config.get("candidate")
     if (
         config.get("schemaVersion") != 1
@@ -1124,7 +1143,7 @@ def _validate_tts_provenance(run: dict[str, Any]) -> None:
         or candidate.get("id") != model_record.get("id")
     ):
         raise ValidationError("TTS config provenance does not match run identity")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_file_path.read_text(encoding="utf-8"))
     manifest_models = manifest.get("models")
     if not isinstance(manifest_models, list):
         raise ValidationError("TTS model manifest provenance is not a model manifest")

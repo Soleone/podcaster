@@ -101,6 +101,7 @@ def deterministic_source_manifest(root: Path) -> list[dict[str, str]]:
     roots = [
         root / "benchmarks/harness",
         root / "benchmarks/configs",
+        root / "services/audio/config",
         root / "benchmarks/datasets",
         root / "benchmarks/results/schema",
         root / "packages/test-fixtures/audio",
@@ -112,7 +113,7 @@ def deterministic_source_manifest(root: Path) -> list[dict[str, str]]:
         root / "pyproject.toml",
         root / "uv.lock",
         root / "docs/benchmarking.md",
-        root / "docs/model-manifest.json",
+        root / "services/audio/config/model-manifest.json",
         root / "scripts/verify-models.py",
         root / "scripts/acquire-librispeech-benchmark.py",
         root / "scripts/acquire-kokoro.py",
