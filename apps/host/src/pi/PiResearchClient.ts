@@ -18,6 +18,8 @@ const STARTUP_DEADLINE_MS = 8_000;
 const REQUEST_DEADLINE_MS = 180_000;
 const PLANNING_DEADLINE_MS = 60_000;
 const DEFAULT_MAX_WORDS = 600;
+// Keep quick postures quick while allowing a challenge to earn a 2-3-part answer.
+export const RESEARCH_BODY_MAX_WORDS: Readonly<Record<PiPosture, number>> = { riff: 120, question: 150, challenge: 360 };
 const PLAN_MAX_WORDS: Record<PlanningDepth, number> = { light: 220, standard: 360, deep: 520 };
 const WEBFETCH_EXTENSION_PATH = fileURLToPath(new URL("../../pi-extensions/webfetch.mjs", import.meta.url));
 
@@ -136,7 +138,9 @@ export class StdioPiResearchClient implements PiResearchClient {
     const prior = this.ownership; this.ownership = prior.then(() => next); await prior; return release;
   }
   requestBody(input: PiResearchRequestInput, signal: AbortSignal): AsyncIterableIterator<PiEvent> {
-    return this.request(input, signal, value => promptForBody(value as PiResearchRequestInput, this.maxWords), this.maxWords, MAX_RESPONSE_BYTES, this.requestDeadlineMs);
+    const requestedMaxWords = input.maxWords ?? this.maxWords;
+    const maxWords = Math.max(1, Math.min(this.maxWords, requestedMaxWords, RESEARCH_BODY_MAX_WORDS[input.posture]));
+    return this.request(input, signal, value => promptForBody(value as PiResearchRequestInput, maxWords), maxWords, MAX_RESPONSE_BYTES, this.requestDeadlineMs);
   }
   requestPlan(input: PiPlanningRequestInput, signal: AbortSignal): AsyncIterableIterator<PiEvent> {
     const maxWords = this.planMaxWords[input.depth] ?? PLAN_MAX_WORDS.standard;

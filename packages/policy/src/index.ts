@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { PersonaInterpretation } from "@app/contracts";
 
 export const POLICY_VERSION = "v1.experimental" as const;
+// Require a few eligible turns between challenges so deeper responses feel earned.
+export const CHALLENGE_COOLDOWN_TURNS = 3;
 export type Posture = "riff" | "question" | "challenge" | "silence";
 export type PolicyReasonCode = "empty" | "too_short" | "non_substantive" | "unfinished" | "invitation_required" | "response_budget_exhausted" | "selected";
 
@@ -76,7 +78,7 @@ export function decide(input: PolicyInput): PolicyDecision {
   if (isNonSubstantive(transcript)) return silence("non_substantive");
   if (input.persona.invitation_only && !invited) return silence("invitation_required");
 
-  const challengeAllowed = input.persona.challenge_enabled && input.stableUserTurnCount >= 2 && input.eligibleTurnsSinceChallenge >= 3;
+  const challengeAllowed = input.persona.challenge_enabled && input.stableUserTurnCount >= 2 && input.eligibleTurnsSinceChallenge >= CHALLENGE_COOLDOWN_TURNS;
   const weighted: Array<{ posture: Exclude<Posture, "silence">; weight: number }> = [
     { posture: "riff", weight: input.persona.posture_weights.riff },
     { posture: "question", weight: input.persona.posture_weights.question },

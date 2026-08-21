@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InvalidPartError, ResearchPartAssembler } from "../../src/session/ResearchPartAssembler.js";
+import { InvalidPartError, RESEARCH_PART_LIMITS, ResearchPartAssembler } from "../../src/session/ResearchPartAssembler.js";
 
 function assembleAppendThenFinal(deltas: string[], options?: { maxPartWords?: number; maxPartSentences?: number; maxParts?: number }) {
   const assembler = new ResearchPartAssembler(options?.maxPartWords, 4096, options?.maxPartSentences, options?.maxParts);
@@ -10,6 +10,12 @@ function assembleAppendThenFinal(deltas: string[], options?: { maxPartWords?: nu
 }
 
 describe("ResearchPartAssembler", () => {
+  it("keeps quick postures short and allows challenges three bounded parts", () => {
+    expect(RESEARCH_PART_LIMITS.riff.maxPartWords).toBeLessThan(RESEARCH_PART_LIMITS.challenge.maxPartWords);
+    expect(RESEARCH_PART_LIMITS.question.maxPartWords).toBeLessThan(RESEARCH_PART_LIMITS.challenge.maxPartWords);
+    expect(RESEARCH_PART_LIMITS.challenge.maxPartWords).toBe(120);
+  });
+
   it("releases incomplete trailing sentences only on final", () => {
     const { released, final } = assembleAppendThenFinal(["This is the first sentence. This is the second sen"]);
     expect(released).toEqual([]);

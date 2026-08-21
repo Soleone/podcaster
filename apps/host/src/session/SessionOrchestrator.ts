@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { DEFAULT_PERSONA_MARKDOWN, parsePersona, type HostEvent, type PersonaInterpretation, type PlaybackPausedEvent, type PlaybackProgressEvent, type PlaybackStoppedEvent, type SessionStateEvent } from "@app/contracts";
-import { decide, POLICY_VERSION, type PolicyDecision, type PolicyInput, type Posture } from "@app/policy";
+import { CHALLENGE_COOLDOWN_TURNS, decide, POLICY_VERSION, type PolicyDecision, type PolicyInput, type Posture } from "@app/policy";
 import type { PiClient, PiPosture } from "../pi/PiClient.js";
 import type { PiResearchClient } from "../pi/PiResearchClient.js";
 import { fallbackInterruptionDecision, hasCorrectionIntent, hasLexicalContent, isBareRedirection, PiInterruptionIntentClassifier, type InterruptionIntentClassifier, type InterruptionIntentDecision } from "./InterruptionIntentClassifier.js";
 import { ReasoningSpeechAssembler } from "./ReasoningSpeechAssembler.js";
-import { ResearchPartAssembler } from "./ResearchPartAssembler.js";
+import { ResearchPartAssembler, researchPartLimits } from "./ResearchPartAssembler.js";
 import { log } from "../logger.js";
 
 export type SessionPhase = "idle" | "planning" | "ready" | "listening" | "deciding" | "reasoning" | "synthesizing" | "playing" | "echo_provisional" | "interruption_deciding" | "acceptance_pending_terminal" | "stopped";
@@ -177,7 +177,7 @@ export class SessionOrchestrator {
   // user has already started talking is paused before it can overlap them.
   private userSpeaking = false;
   private stableUserTurnCount = 0;
-  private eligibleTurnsSinceChallenge = 3;
+  private eligibleTurnsSinceChallenge = CHALLENGE_COOLDOWN_TURNS;
   private readonly emitFn: (event: HostEvent) => void;
   private readonly now: () => number;
   private readonly idFactory: () => string;
@@ -494,7 +494,8 @@ export class SessionOrchestrator {
       if (!this.isCurrentMultiPart(state)) return;
 
       // ---- Body parts from the research Pi child ----
-      const bodyAssembler = new ResearchPartAssembler();
+      const bodyLimits = researchPartLimits(state.posture);
+      const bodyAssembler = new ResearchPartAssembler(bodyLimits.maxPartWords, bodyLimits.maxPartChars, bodyLimits.maxPartSentences, bodyLimits.maxParts);
       for await (const event of researchPi.requestBody({ posture: state.posture, transcript: truncateUtf8(turn.text, 16 * 1024), boundedContext, stallText }, controller.signal)) {
         if (!this.isCurrentMultiPart(state)) return;
         if (event.type === "final") {
@@ -828,7 +829,7 @@ export class SessionOrchestrator {
     this.recentDecisions.length = 0;
     this.seenTurns.clear();
     this.stableUserTurnCount = 0;
-    this.eligibleTurnsSinceChallenge = 3;
+    this.eligibleTurnsSinceChallenge = CHALLENGE_COOLDOWN_TURNS;
     this.phase = "stopped";
     this.emitState();
   }

@@ -20,6 +20,23 @@ export interface PartChunk {
   partIndex: number;
 }
 
+export type ResearchPartPosture = "riff" | "question" | "challenge";
+
+export interface ResearchPartLimits {
+  maxPartWords: number;
+  maxPartChars: number;
+  maxPartSentences: number;
+  maxParts: number;
+}
+
+// Short riffs and questions should stay quick; a respectful challenge earns a
+// deeper 2-3-part answer without permitting a rambling research monologue.
+export const RESEARCH_PART_LIMITS: Readonly<Record<ResearchPartPosture, ResearchPartLimits>> = {
+  riff: { maxPartWords: 90, maxPartChars: 4_096, maxPartSentences: 3, maxParts: 7 },
+  question: { maxPartWords: 90, maxPartChars: 4_096, maxPartSentences: 3, maxParts: 7 },
+  challenge: { maxPartWords: 120, maxPartChars: 4_096, maxPartSentences: 3, maxParts: 7 },
+};
+
 export interface ResearchAssemblerResult {
   /** Exact concatenation of all delta texts. */
   raw: string;
@@ -27,6 +44,10 @@ export interface ResearchAssemblerResult {
   canonical: string;
   /** Every released part in index order. */
   parts: PartChunk[];
+}
+
+export function researchPartLimits(posture: ResearchPartPosture): ResearchPartLimits {
+  return RESEARCH_PART_LIMITS[posture];
 }
 
 export class ResearchPartAssembler {
