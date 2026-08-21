@@ -400,7 +400,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       if (!session.conversation || session.conversation.isStopped()) {
         session.stopPromise = undefined;
         session.conversation = new BrowserSession(socket, options.sidecar, {
-          multiPartEnabled: options.multiPartEnabled === true,
+          multiPartEnabled: options.multiPartEnabled !== false,
           createResponseClient,
           createResearchClient,
           createClassifierClient,

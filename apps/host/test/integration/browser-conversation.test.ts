@@ -219,7 +219,7 @@ describe('browser conversation routing', () => {
     second.close();
   });
 
-  it('completes fake Pi through streaming TTS and authoritative browser terminal accounting', async () => {
+  it('explicitly opts out of multipart and uses single-part TTS accounting', async () => {
     const sidecar = await fakeAudio({ tts: true });
     const app = await buildApp({ sidecar, createProbeClient: () => pi, multiPartEnabled: false, createResponseClient: () => pi, createResearchClient: () => pi, createClassifierClient: () => pi });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 }); app.setCanonicalOrigin(origin);
@@ -251,16 +251,18 @@ describe('browser conversation routing', () => {
     expect(listening.epoch).toBe(0);
     expect(messages.filter(message => message.type === 'policy.decision')).toHaveLength(1);
     expect(messages.filter(message => message.type === 'reasoning.final')).toHaveLength(1);
+    expect(messages.filter(message => message.type === 'response.part_started' || message.type === 'response.part_final')).toHaveLength(0);
     socket.close();
   });
 
-  it('uses the single-part path by default without invoking multipart research', async () => {
-    const sidecar = await fakeAudio({ tts: true });
+  it('uses multipart research by default and emits per-part events', async () => {
+    const sidecar = await fakeAudio({ multipart: true });
     const researchCalls: unknown[] = [];
     const researchPi: PiResearchClient = {
       async *requestBody(input) {
         researchCalls.push(input);
-        yield { type: 'final' as const, text: 'Unexpected research response.' };
+        yield { type: 'delta' as const, text: 'Research-backed response.' };
+        yield { type: 'final' as const, text: 'Research-backed response.' };
       },
       async shutdown() {},
     };
@@ -278,19 +280,23 @@ describe('browser conversation routing', () => {
     const final = await waitFor(messages, 'transcript.final');
     const finalPayload = final.payload as Record<string, unknown>;
     socket.send(JSON.stringify(command('turn.persisted', { turnId: finalPayload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch })));
-    const reasoningStarted = await waitFor(messages, 'reasoning.started');
-    const ttsStarted = await waitFor(messages, 'tts.started');
-    const reasoningFinal = await waitFor(messages, 'reasoning.final');
-    await waitFor(messages, 'tts.ended');
+    const stallStarted = await waitForWhere(messages, message => message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 0);
+    const stallTts = await waitForWhere(messages, message => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 0);
+    const bodyStarted = await waitForWhere(messages, message => message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 1);
+    const bodyTts = await waitForWhere(messages, message => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 1);
 
-    expect(researchCalls).toHaveLength(0);
-    expect(messages.filter(message => message.type === 'response.part_started' || message.type === 'response.part_final')).toHaveLength(0);
-    expect(messages.filter(message => message.type === 'reasoning.started')).toHaveLength(1);
-    expect(messages.filter(message => message.type === 'reasoning.final')).toHaveLength(1);
-    expect(messages.filter(message => message.type === 'tts.started')).toHaveLength(1);
-    expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe((reasoningFinal.payload as Record<string, unknown>).responseId);
-    expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe((ttsStarted.payload as Record<string, unknown>).responseId);
-    expect((ttsStarted.payload as Record<string, unknown>).partIndex).toBeUndefined();
+    expect(researchCalls).toHaveLength(1);
+    expect(messages.filter(message => message.type === 'response.part_started')).toHaveLength(2);
+    expect(messages.filter(message => message.type === 'response.part_final')).toHaveLength(2);
+    expect(messages.filter(message => message.type === 'reasoning.final')).toHaveLength(2);
+    expect((stallStarted.payload as Record<string, unknown>).kind).toBe('stall');
+    expect((bodyStarted.payload as Record<string, unknown>).kind).toBe('body');
+    expect((stallTts.payload as Record<string, unknown>).responseId).toBe((bodyTts.payload as Record<string, unknown>).responseId);
+    for (const started of [stallTts, bodyTts]) {
+      const payload = started.payload as Record<string, unknown>;
+      socket.send(JSON.stringify(command('playback.stopped', { playbackId: payload.playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 960, reason: 'completed' })));
+    }
+    await waitForWhere(messages, message => message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening');
     socket.close();
   });
 
