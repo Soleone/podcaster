@@ -13,7 +13,7 @@ A solo thinker needs a conversational partner while working ideas aloud, but ord
 ## Scope (in)
 ### MVP
 - A single-user web UI with an explicit, user-started and user-stopped listening session.
-- Near-realtime two-way voice interaction: hear the user, retain local transcript/history, and produce concise spoken responses.
+- Near-realtime two-way voice interaction: hear the user, retain local transcript/history, and produce a mix of short spoken riffs/questions plus occasional longer monologues when the topic earns it, always with quick first audio.
 - Natural barge-in is core: detected user speech stops current/queued assistant audio and returns the floor to the user.
 - Per eligible turn, select exactly one observable posture: **riff** (briefly extend/reframe), **question** (one consequential question), **challenge** (specific, respectful pressure-test), or **silence** (no spoken reply). Silence is intentional, not a failure.
 - A user-owned, local AGENTS.md-like persona configuration controlling personality, tastes/interests, and posture tendencies. Provide a supported default and validation; conversation does not autonomously rewrite it.
@@ -29,7 +29,7 @@ Evaluate TTS in sequence: Kokoro ONNX as fast baseline, then Qwen3-TTS 0.6B Cust
 
 ## Non-goals (explicitly out)
 - Ambient/background listening, multi-user sessions, accounts, sync, shared memory, or an app-hosted history store.
-- Native mobile/desktop apps, autonomous follow-ups, tasks, search, long-term profiling, or productivity-suite features.
+- Native mobile/desktop apps, autonomous follow-ups, tasks, long-term profiling, or productivity-suite features. Live web grounding is in scope through the multipart research path.
 - Persona marketplace, custom-voice productization, free-form executable configuration, or autonomous persona editing.
 - Claims of fully local inference, production privacy/compliance certification, or provider portability.
 - Ordinary OpenAI API-key billing or silent fallback to any metered API.
