@@ -1,18 +1,10 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, lstat, realpath } from "node:fs/promises";
-import { constants } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { PI_MODEL, type PiEvent, type PiPosture } from "./PiClient.js";
-import { PiExecutableConfigurationError, resolvePiExecutable } from "./config.js";
+import { AsyncQueue, PiRpcProcess, resolvePiExecutableConfiguration, type ActiveRequest, type Lifecycle, type ObjectValue } from "./pi-process.js";
 import { MAX_PLANNING_NOTES_BYTES, MAX_PLANNING_TOPIC_BYTES, PODCASTER_SYSTEM_PROMPT, type PlanningDepth, type PiThinkingLevel } from "@app/contracts";
 import { log } from "../logger.js";
 
-const MAX_RECORD_BYTES = 256 * 1024;
-const MAX_BUFFER_BYTES = 1024 * 1024;
-const MAX_STDERR_BYTES = 64 * 1024;
-const MAX_QUEUE_EVENTS = 128;
-const MAX_QUEUE_BYTES = 256 * 1024;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const STARTUP_DEADLINE_MS = 8_000;
 const REQUEST_DEADLINE_MS = 180_000;
@@ -22,8 +14,6 @@ const DEFAULT_MAX_WORDS = 600;
 export const RESEARCH_BODY_MAX_WORDS: Readonly<Record<PiPosture, number>> = { riff: 120, question: 150, challenge: 360 };
 const PLAN_MAX_WORDS: Record<PlanningDepth, number> = { light: 220, standard: 360, deep: 520 };
 const WEBFETCH_EXTENSION_PATH = fileURLToPath(new URL("../../pi-extensions/webfetch.mjs", import.meta.url));
-
-type ObjectValue = Record<string, unknown>;
 
 export interface PiResearchRequestInput {
   posture: PiPosture;
@@ -45,50 +35,8 @@ export interface PiResearchClient {
 
 export interface PiResearchClientOptions { executable?: string; model?: string; thinkingLevel?: PiThinkingLevel; systemPrompt?: string; personaAppend?: string; startupDeadlineMs?: number; requestDeadlineMs?: number; planningDeadlineMs?: number; maxWords?: number; maxPlanWords?: Partial<Record<PlanningDepth, number>> }
 
-interface Pending { resolve(value: ObjectValue): void; reject(error: Error): void; timer: NodeJS.Timeout }
-interface Lifecycle { messageEnded: boolean; stopReason: string | undefined; providerError: string | undefined; settled: boolean; assistantText: string; responseBytes: number; textExceeded: boolean }
-interface ActiveRequest extends Lifecycle {
-  queue: AsyncQueue<PiEvent>; cutoff: boolean; completed: boolean; maxWords: number; maxResponseBytes: number; deadlineMs: number;
-  timer: NodeJS.Timeout; abortListener: () => void; signal: AbortSignal; release: () => void;
-}
+type ResearchActiveRequest = ActiveRequest<PiEvent> & { maxWords: number; maxResponseBytes: number; deadlineMs: number };
 
-class AsyncQueue<T> implements AsyncIterableIterator<T> {
-  private values: Array<{ value: T; bytes: number }> = [];
-  private waiters: Array<{ resolve: (value: IteratorResult<T>) => void; reject: (error: Error) => void }> = [];
-  private ended = false;
-  private queuedBytes = 0;
-  constructor(private readonly onCancel: () => void, private readonly onOverflow: (error: Error) => void) {}
-  push(value: T): void {
-    if (this.ended) return;
-    const waiter = this.waiters.shift();
-    if (waiter) return waiter.resolve({ value, done: false });
-    const bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
-    if (this.values.length >= MAX_QUEUE_EVENTS || this.queuedBytes + bytes > MAX_QUEUE_BYTES) {
-      this.values = []; this.queuedBytes = 0;
-      this.onOverflow(new Error("Pi event queue exceeded bound")); return;
-    }
-    this.values.push({ value, bytes }); this.queuedBytes += bytes;
-  }
-  end(): void { if (this.ended) return; this.ended = true; for (const waiter of this.waiters.splice(0)) waiter.resolve({ value: undefined, done: true }); }
-  clearAndEnd(): void { this.values = []; this.queuedBytes = 0; this.end(); }
-  fail(error: Error): void { if (this.ended) return; this.ended = true; this.values = []; this.queuedBytes = 0; for (const waiter of this.waiters.splice(0)) waiter.reject(error); }
-  next(): Promise<IteratorResult<T>> {
-    const item = this.values.shift();
-    if (item) { this.queuedBytes -= item.bytes; return Promise.resolve({ value: item.value, done: false }); }
-    if (this.ended) return Promise.resolve({ value: undefined, done: true });
-    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
-  }
-  return(): Promise<IteratorResult<T>> { this.onCancel(); this.end(); return Promise.resolve({ value: undefined, done: true }); }
-  throw(error?: unknown): Promise<IteratorResult<T>> { this.onCancel(); const value = error instanceof Error ? error : new Error("Pi iterator aborted"); this.fail(value); return Promise.reject(value); }
-  [Symbol.asyncIterator](): AsyncIterableIterator<T> { return this; }
-}
-
-function safeEnvironment(): NodeJS.ProcessEnv {
-  const allowed = ["HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"] as const;
-  const env: NodeJS.ProcessEnv = { PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0" };
-  for (const key of allowed) if (process.env[key] !== undefined) env[key] = process.env[key];
-  return env;
-}
 function errorEvent(error: Error): PiEvent {
   return { type: "error", state: "unavailable", detail: error.message, correctiveAction: "Retry, or continue transcript-only." };
 }
@@ -104,26 +52,15 @@ function promptForPlan(input: PiPlanningRequestInput, maxWords: number): string 
 }
 
 export class StdioPiResearchClient implements PiResearchClient {
-  private readonly executable: string | undefined; private readonly executableError: Error | undefined; private readonly model: string; private readonly thinkingLevel: PiThinkingLevel | undefined;
+  private readonly model: string; private readonly thinkingLevel: PiThinkingLevel | undefined;
   private readonly systemPrompt: string; private readonly personaAppend: string;
   private readonly startupDeadlineMs: number; private readonly requestDeadlineMs: number; private readonly planningDeadlineMs: number; private readonly maxWords: number; private readonly planMaxWords: Record<PlanningDepth, number>;
-  private child: ChildProcessWithoutNullStreams | undefined; private buffer = Buffer.alloc(0); private stderrBytes = 0;
-  private pending = new Map<string, Pending>(); private sequence = 0; private active: ActiveRequest | undefined;
+  private readonly process: PiRpcProcess;
+  private active: ResearchActiveRequest | undefined;
   private readonly activeToolStarts = new Map<string, number>();
   private starting: Promise<void> | undefined; private ownership: Promise<void> = Promise.resolve(); private closed = false;
   constructor(options: PiResearchClientOptions = {}) {
-    if (options.executable !== undefined) {
-      this.executable = options.executable;
-      this.executableError = undefined;
-    } else {
-      try {
-        this.executable = resolvePiExecutable();
-        this.executableError = undefined;
-      } catch (error) {
-        this.executable = undefined;
-        this.executableError = error instanceof PiExecutableConfigurationError ? error : new PiExecutableConfigurationError("could not resolve the executable");
-      }
-    }
+    const executableConfiguration = resolvePiExecutableConfiguration(options.executable);
     this.model = options.model ?? PI_MODEL; this.thinkingLevel = options.thinkingLevel;
     this.systemPrompt = options.systemPrompt ?? PODCASTER_SYSTEM_PROMPT; this.personaAppend = options.personaAppend ?? "";
     this.startupDeadlineMs = options.startupDeadlineMs ?? STARTUP_DEADLINE_MS; this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
@@ -131,6 +68,12 @@ export class StdioPiResearchClient implements PiResearchClient {
     this.maxWords = options.maxWords ?? DEFAULT_MAX_WORDS;
     this.planMaxWords = { ...PLAN_MAX_WORDS, ...(options.maxPlanWords ?? {}) };
     for (const depth of Object.keys(PLAN_MAX_WORDS) as PlanningDepth[]) this.planMaxWords[depth] = Math.max(1, Math.min(PLAN_MAX_WORDS[depth]!, this.planMaxWords[depth]!));
+    this.process = new PiRpcProcess({
+      ...executableConfiguration,
+      args: ["--mode", "rpc", "--no-session", "--tools", "read,grep,find,ls,webfetch", "--extension", WEBFETCH_EXTENSION_PATH, "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, ...(this.thinkingLevel ? ["--thinking", this.thinkingLevel] : []), "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])],
+      onMessage: value => this.handle(value),
+      onFailure: (error, shouldTerminate) => this.processFailed(error, shouldTerminate),
+    });
   }
 
   private async acquire(): Promise<() => void> {
@@ -166,7 +109,7 @@ export class StdioPiResearchClient implements PiResearchClient {
       if (signal.aborted || isCancelled()) { queue.end(); release(); return; }
       const message = prompt(input); await this.ensureStarted();
       if (signal.aborted || isCancelled()) { queue.end(); release(); return; }
-      const active: ActiveRequest = { queue, cutoff: false, assistantText: "", responseBytes: 0, textExceeded: false, messageEnded: false, stopReason: undefined, providerError: undefined, settled: false, completed: false, maxWords, maxResponseBytes, deadlineMs,
+      const active: ResearchActiveRequest = { queue, cutoff: false, assistantText: "", responseBytes: 0, textExceeded: false, messageEnded: false, stopReason: undefined, providerError: undefined, settled: false, completed: false, maxWords, maxResponseBytes, deadlineMs,
         timer: setTimeout(() => this.failActive(new Error("Pi research request timed out")), deadlineMs), abortListener: () => {}, signal, release };
       active.abortListener = () => this.cancelActive(active);
       this.active = active;
@@ -182,7 +125,7 @@ export class StdioPiResearchClient implements PiResearchClient {
     }
   }
 
-  private cancelActive(active: ActiveRequest): void {
+  private cancelActive(active: ResearchActiveRequest): void {
     if (active.cutoff || active.completed) return;
     active.cutoff = true; active.queue.clearAndEnd();
     void (async () => {
@@ -199,39 +142,12 @@ export class StdioPiResearchClient implements PiResearchClient {
 
   private async ensureStarted(): Promise<void> {
     if (this.closed) throw new Error("Pi research client is shut down");
-    if (this.child && this.child.exitCode === null) return;
+    if (this.process.isRunning()) return;
     if (this.starting) return this.starting;
-    this.starting = this.start().finally(() => { this.starting = undefined; }); return this.starting;
-  }
-  private async start(): Promise<void> {
-    if (this.executableError) throw this.executableError;
-    const executable = this.executable;
-    if (!executable) throw new Error("Pi executable is unavailable");
-    const info = await lstat(executable); if (!info.isFile()) throw new Error("incompatible pinned Pi executable");
-    const canonical = await realpath(executable); if (canonical !== executable) throw new Error("incompatible non-canonical Pi executable path");
-    await access(canonical, constants.X_OK);
-    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--tools", "read,grep,find,ls,webfetch", "--extension", WEBFETCH_EXTENSION_PATH, "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, ...(this.thinkingLevel ? ["--thinking", this.thinkingLevel] : []), "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
-    this.child = child; this.buffer = Buffer.alloc(0); this.stderrBytes = 0;
-    child.stdout.on("data", (chunk: Buffer) => this.consume(chunk));
-    child.stderr.on("data", (chunk: Buffer) => { this.stderrBytes += chunk.length; if (this.stderrBytes > MAX_STDERR_BYTES) this.protocolFailure("Pi stderr exceeded bound"); });
-    child.once("error", () => this.childFailed(new Error("Pi child failed")));
-    child.once("exit", () => this.childFailed(new Error("Pi child exited")));
-  }
-  private consume(chunk: Buffer): void {
-    if (chunk.length > MAX_BUFFER_BYTES || this.buffer.length + chunk.length > MAX_BUFFER_BYTES) return this.protocolFailure("Pi RPC buffer exceeded bound");
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-    while (true) {
-      const lf = this.buffer.indexOf(0x0a); if (lf < 0) break;
-      const record = this.buffer.subarray(0, lf); this.buffer = this.buffer.subarray(lf + 1); if (!record.length) continue;
-      if (record.length > MAX_RECORD_BYTES || record[record.length - 1] === 0x0d) return this.protocolFailure("Pi RPC requires bounded strict LF framing");
-      try { const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(record)) as ObjectValue; if (!value || Array.isArray(value) || typeof value !== "object") throw new Error(); this.handle(value); }
-      catch { return this.protocolFailure("Pi emitted malformed JSONL"); }
-    }
+    this.starting = this.process.start().finally(() => { this.starting = undefined; });
+    return this.starting;
   }
   private handle(value: ObjectValue): void {
-    if (value.type === "response" && typeof value.id === "string") {
-      const pending = this.pending.get(value.id); if (pending) { clearTimeout(pending.timer); this.pending.delete(value.id); value.success === false ? pending.reject(new Error(String(value.error ?? "Pi RPC command failed"))) : pending.resolve(value); } return;
-    }
     const active = this.active;
     if (!active) return;
     if (value.type === "tool_execution_start") {
@@ -272,28 +188,21 @@ export class StdioPiResearchClient implements PiResearchClient {
       else { active.queue.push({ type: "final", text: active.assistantText }); active.queue.end(); this.finishActive(active); }
     }
   }
-  private finishActive(active: ActiveRequest, release = true): void { if (active.completed) return; active.completed = true; clearTimeout(active.timer); active.signal.removeEventListener("abort", active.abortListener); if (this.active === active) this.active = undefined; this.activeToolStarts.clear(); if (release) active.release(); }
+  private finishActive(active: ResearchActiveRequest, release = true): void { if (active.completed) return; active.completed = true; clearTimeout(active.timer); active.signal.removeEventListener("abort", active.abortListener); if (this.active === active) this.active = undefined; this.activeToolStarts.clear(); if (release) active.release(); }
   private failActive(error: Error): void {
     const active = this.active; if (!active) return;
     active.cutoff = true; active.queue.push(errorEvent(error)); active.queue.end(); this.finishActive(active, false);
     void this.terminateOwnedChild().catch(() => { this.closed = true; }).finally(active.release);
   }
-  private protocolFailure(detail: string): void { this.childFailed(new Error(detail)); void this.terminateOwnedChild().catch(() => { this.closed = true; }); }
-  private childFailed(error: Error): void { for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); } this.pending.clear(); if (this.active) this.failActive(error); }
+  private processFailed(error: Error, shouldTerminate: boolean): void {
+    if (this.active) { this.failActive(error); return; }
+    if (shouldTerminate) void this.terminateOwnedChild().catch(() => { this.closed = true; });
+  }
   private send(type: string, fields: ObjectValue = {}, timeoutMs = this.startupDeadlineMs): Promise<ObjectValue> {
-    const child = this.child; if (!child || child.exitCode !== null) return Promise.reject(new Error("Pi child is unavailable"));
-    const id = `cmd-${++this.sequence}`; const bytes = Buffer.from(`${JSON.stringify({ id, type, ...fields })}\n`, "utf8"); if (bytes.length > MAX_RECORD_BYTES) return Promise.reject(new Error("Pi RPC command exceeded bound"));
-    return new Promise((resolve, reject) => { const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${type} response timed out`)); }, timeoutMs); this.pending.set(id, { resolve, reject, timer }); child.stdin.write(bytes, error => { if (error) { clearTimeout(timer); this.pending.delete(id); reject(new Error("Pi RPC write failed")); } }); });
+    return this.process.send(type, fields, timeoutMs);
   }
   private waitUntil(predicate: () => boolean, timeoutMs: number, detail: string): Promise<void> { if (predicate()) return Promise.resolve(); return new Promise((resolve, reject) => { const started = Date.now(); const timer = setInterval(() => { if (predicate()) { clearInterval(timer); resolve(); } else if (Date.now() - started >= timeoutMs) { clearInterval(timer); reject(new Error(detail)); } }, 2); }); }
   async shutdown(): Promise<void> { this.closed = true; await this.starting?.catch(() => {}); await this.terminateOwnedChild(); }
-  private async terminateOwnedChild(): Promise<void> {
-    const child = this.child; this.child = undefined; if (!child?.pid) return; const pid = child.pid;
-    const groupAlive = () => { try { process.kill(process.platform !== "win32" ? -pid : pid, 0); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; } };
-    const signal = (name: NodeJS.Signals) => { try { if (process.platform !== "win32") process.kill(-pid, name); else child.kill(name); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; } };
-    if (groupAlive()) { signal("SIGTERM"); await new Promise(resolve => setTimeout(resolve, 100)); }
-    if (groupAlive()) { signal("SIGKILL"); await new Promise(resolve => setTimeout(resolve, 100)); }
-    if (groupAlive()) throw new Error("owned Pi process group survived SIGKILL");
-  }
+  private async terminateOwnedChild(): Promise<void> { await this.process.terminate(); }
 }
 export function createPiResearchClient(options: PiResearchClientOptions = {}): PiResearchClient { return new StdioPiResearchClient(options); }
