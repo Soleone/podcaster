@@ -4,7 +4,7 @@ import { createLiveSessionRuntime, type LiveRuntimeTestApi, type LiveSessionRunt
 import { uuidV7 } from './session/envelope';
 import { sessionViewStateFromTurns } from './sessions/session-archive';
 import { initialSessionState, type SessionViewState } from './session/state';
-import { CustomVoiceStore, type CustomVoiceRecord } from './storage/custom-voice-store';
+import { type CustomVoiceRecord } from './storage/custom-voice-store';
 import { enrollCustomVoice as enrollCustomVoiceApi, enrollStoredCustomVoice, deleteCustomVoice as deleteCustomVoiceApi } from './voice-enrollment/api';
 import type { ReferenceTake } from './voice-enrollment/recorder';
 import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn-writer';
@@ -13,8 +13,7 @@ import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionV
 import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type SessionPlanningRequest, type SessionPlanningSnapshot, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
 import type { ExportOnProgress } from './recording/splice';
 import type { RecordingItemSummary } from './storage/recording-store';
-import { SettingsStore } from './settings/settings-store';
-import { createResourceOwner } from './storage/resource-lifecycle';
+import { useAppStorage } from './hooks/useAppStorage';
 import { startVoicePreview } from './settings/voice-preview';
 import { applyReconciled, defaultSettingsModel, reconcileSettings, settingsDigest, type SettingsModel } from './settings/settings-model';
 import { AppHeader } from './components/AppHeader';
@@ -56,26 +55,6 @@ function planningViewForStart(planning: SessionPlanningRequest | undefined): Ses
 
 declare global { interface Window { __podcasterTest?: LiveRuntimeTestApi } }
 
-interface AppStorageResources {
-  settings: SettingsStore;
-  customVoices: CustomVoiceStore;
-}
-
-async function openAppStorageResources(): Promise<AppStorageResources> {
-  const settings = await SettingsStore.open();
-  try {
-    return { settings, customVoices: await CustomVoiceStore.open() };
-  } catch (error) {
-    settings.close();
-    throw error;
-  }
-}
-
-function closeAppStorageResources(resources: AppStorageResources): void {
-  try { resources.settings.close(); }
-  finally { resources.customVoices.close(); }
-}
-
 export function App() {
   const location = useLocation();
   const locationRef = useRef(location);
@@ -106,13 +85,12 @@ export function App() {
   recordingSessionRef.current = sessionId;
   const recordingGenRef = useRef(0);
   const lastCheapRef = useRef<{ enabled: boolean; signature: string } | null>(null);
-  const settingsStoreRef = useRef<SettingsStore | undefined>(undefined);
-  const customVoiceStoreRef = useRef<CustomVoiceStore | undefined>(undefined);
-  const appStorageOwnerRef = useRef<ReturnType<typeof createResourceOwner<AppStorageResources>> | undefined>(undefined);
-  if (!appStorageOwnerRef.current) appStorageOwnerRef.current = createResourceOwner(openAppStorageResources, closeAppStorageResources);
-  const [customVoices, setCustomVoices] = useState<CustomVoiceRecord[]>([]);
-  const customVoicesRef = useRef(customVoices);
-  customVoicesRef.current = customVoices;
+  const appStorage = useAppStorage();
+  const settingsStoreRef = appStorage.settingsStoreRef;
+  const customVoiceStoreRef = appStorage.customVoiceStoreRef;
+  const customVoices = appStorage.customVoices;
+  const customVoicesRef = appStorage.customVoicesRef;
+  const setCustomVoices = appStorage.setCustomVoices;
   const settingsReadyPromiseRef = useRef<Promise<void> | undefined>(undefined);
   const resolveSettingsReadyRef = useRef<(() => void) | undefined>(undefined);
   if (!settingsReadyPromiseRef.current) {
@@ -770,29 +748,21 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const lease = appStorageOwnerRef.current!.acquire();
-    const opening = lease.promise;
-    let owned: AppStorageResources | undefined;
+    let cancelled = false;
     void (async () => {
       try {
-        const resources = await opening;
-        if (!lease.isActive()) return;
-        owned = resources;
-        settingsStoreRef.current = resources.settings;
-        customVoiceStoreRef.current = resources.customVoices;
-        const stored = await resources.settings.load();
-        if (!lease.isActive()) return;
-        const storedCustomVoices = await resources.customVoices.list();
-        if (!lease.isActive()) return;
-        customVoicesRef.current = storedCustomVoices;
-        setCustomVoices(storedCustomVoices);
+        await appStorage.ready;
+        if (cancelled) return;
+        const store = settingsStoreRef.current;
+        const stored = store ? await store.load() : undefined;
+        if (cancelled) return;
         const pi = stored?.pi ?? DEFAULT_PI_SETTINGS;
         const selectedModel = stored?.selectedModel ?? {
           backendId: stored?.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
           modelId: stored?.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
         };
         const availableModels = mergeCustomModels(ttsModelsRef.current);
-        const fallbackCatalog = withCustomVoices(voiceCatalogRef.current, storedCustomVoices);
+        const fallbackCatalog = withCustomVoices(voiceCatalogRef.current, customVoicesRef.current);
         const reconciled = reconcileSettings({ selectedModel, ...(stored?.voice ? { voice: stored.voice } : {}), ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, availableModels, fallbackCatalog);
         const next = applyReconciled({ agentName: stored?.agentName ?? DEFAULT_AGENT_NAME, persona: stored?.persona ?? DEFAULT_AGENT_PERSONA, pi, selectedModel, ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}) }, reconciled);
         settingsModelRef.current = next;
@@ -800,21 +770,15 @@ export function App() {
       } catch {
         // Keep the in-memory defaults when local settings storage is unavailable.
       } finally {
-        if (lease.isActive()) {
+        if (!cancelled) {
           resolveSettingsReadyRef.current?.();
           resolveSettingsReadyRef.current = undefined;
         }
       }
     })();
-    return () => {
-      const last = lease.release();
-      if (!last) return;
-      // A newer effect generation still owns shared handles when release()
-      // returns false. Only the last generation may clear these references.
-      if (!owned || settingsStoreRef.current === owned.settings) settingsStoreRef.current = undefined;
-      if (!owned || customVoiceStoreRef.current === owned.customVoices) customVoiceStoreRef.current = undefined;
-    };
-  }, [mergeCustomModels]);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appStorage.ready, settingsStoreRef]);
 
   const deleteRecording = useCallback(async () => {
     const current = recordingSessionRef.current;
