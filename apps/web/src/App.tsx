@@ -87,7 +87,7 @@ export function App() {
   } = services;
   const settings = useSettings({ storage: appStorage, settingsModelRef, capabilityRef, readinessSnapshot: latestReadinessSnapshot });
   const {
-    settingsModel, setSettingsModel, settingsReady, currentStartSettings, settingsFrozenRef,
+    settingsModel, setSettingsModel, settingsReady, currentStartSettings,
     ttsModels, ttsModelsRef, voiceCatalogRef, rawTtsModelsRef,
     settingsOpen, setSettingsOpen, settingsSaving, settingsSaveError,
     saveSettings, previewVoice, enrollVoice, deleteVoice, renameVoice,
@@ -281,7 +281,6 @@ export function App() {
           },
         }
       : current;
-    settingsFrozenRef.current = frozen;
     const personaDigest = preserveIdentity && storedSettings
       ? (existing!.personaDigest || settingsDigest(frozen))
       : settingsDigest(frozen);

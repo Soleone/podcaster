@@ -49,7 +49,6 @@ export interface UseSettingsResult {
   /** Resolves once the stored settings row has been applied (or defaulted). */
   settingsReady: Promise<void>;
   currentStartSettings: () => SessionStartSettings;
-  settingsFrozenRef: RefObject<SettingsModel | undefined>;
   ttsModels: TtsModelDescriptor[];
   ttsModelsRef: RefObject<TtsModelDescriptor[]>;
   voiceCatalogRef: RefObject<VoiceCatalog | undefined>;
@@ -76,7 +75,6 @@ export function useSettings({ storage, settingsModelRef, capabilityRef, readines
   const voiceCatalogRef = useRef<VoiceCatalog | undefined>(undefined);
   const ttsModelsRef = useRef<TtsModelDescriptor[]>([]);
   const [ttsModels, setTtsModels] = useState<TtsModelDescriptor[]>([]);
-  const settingsFrozenRef = useRef<SettingsModel | undefined>(undefined);
   const [settingsModel, setSettingsModelState] = useState<SettingsModel>(() => defaultSettingsModel(undefined));
   settingsModelRef.current = settingsModel;
   const setSettingsModel = useCallback((model: SettingsModel) => {
@@ -299,7 +297,6 @@ export function useSettings({ storage, settingsModelRef, capabilityRef, readines
     setSettingsModel,
     settingsReady: settingsReadyRef.current!,
     currentStartSettings,
-    settingsFrozenRef,
     ttsModels,
     ttsModelsRef,
     voiceCatalogRef,
