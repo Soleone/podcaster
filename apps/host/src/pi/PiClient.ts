@@ -14,6 +14,7 @@ const MAX_QUEUE_BYTES = 256 * 1024;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_PROBE_RESPONSE_BYTES = 1024;
 const PROBE_MARKER = "RPC_READY";
+const RESPONSE_ONLY_SYSTEM_INSTRUCTION = "Do not use tools or attempt to read files.";
 const STARTUP_DEADLINE_MS = 8_000;
 const REQUEST_DEADLINE_MS = 60_000;
 export const PI_PROBE_DEADLINE_MS = 10_000;
@@ -208,7 +209,8 @@ export class StdioPiClient implements PiClient {
     const info = await lstat(executable); if (!info.isFile()) throw new Error("incompatible pinned Pi executable");
     const canonical = await realpath(executable); if (canonical !== executable) throw new Error("incompatible non-canonical Pi executable path");
     await access(canonical, constants.X_OK);
-    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, ...(this.thinkingLevel ? ["--thinking", this.thinkingLevel] : []), "--system-prompt", this.systemPrompt, ...(this.personaAppend ? ["--append-system-prompt", this.personaAppend] : [])], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
+    const appendSystemPrompt = [this.personaAppend, RESPONSE_ONLY_SYSTEM_INSTRUCTION].filter(Boolean).join("\n\n");
+    const child = spawn(canonical, ["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", this.model, ...(this.thinkingLevel ? ["--thinking", this.thinkingLevel] : []), "--system-prompt", this.systemPrompt, "--append-system-prompt", appendSystemPrompt], { shell: false, detached: process.platform !== "win32", env: safeEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
     this.child = child; this.buffer = Buffer.alloc(0); this.stderrBytes = 0;
     child.stdout.on("data", (chunk: Buffer) => this.consume(chunk));
     child.stderr.on("data", (chunk: Buffer) => { this.stderrBytes += chunk.length; if (this.stderrBytes > MAX_STDERR_BYTES) this.protocolFailure("Pi stderr exceeded bound"); });

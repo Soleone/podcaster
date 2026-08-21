@@ -36,7 +36,7 @@ describe("production Pi RPC boundary", () => {
     expect(await value.probe()).toMatchObject({ status: "ready", correctiveAction: "None." });
     await value.shutdown();
     const calls = (await readFile(fake.log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    expect(calls[0].argv).toEqual(["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", PI_MODEL, "--system-prompt", PODCASTER_SYSTEM_PROMPT]);
+    expect(calls[0].argv).toEqual(["--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--model", PI_MODEL, "--system-prompt", PODCASTER_SYSTEM_PROMPT, "--append-system-prompt", "Do not use tools or attempt to read files."]);
     expect(calls[0].env).not.toContain("OPENAI_API_KEY");
   });
 
