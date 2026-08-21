@@ -162,6 +162,398 @@ class StreamState:
     closed: bool = False
 
 
+class TtsOrchestrator:
+    """Progressive TTS admission, synthesis workers, and cancellation bookkeeping.
+
+    Owns the TTS half of a stream lifecycle while collaborating with the owning
+    SelectedAudioRuntime for shared locking, worker spawning, and failure
+    escalation (optional-model degradation or full poisoning).
+    """
+
+    def __init__(self, runtime: SelectedAudioRuntime) -> None:
+        self.runtime = runtime
+
+    def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str, *, voice_id: str | None = None, speed_modifier: object = None, tone_prompt: object = None, language: object = None) -> None:
+        """Compatibility wrapper: one-shot TTS through the progressive path."""
+        self.open_tts(stream_id, response_id, epoch, voice_id=voice_id, speed_modifier=speed_modifier, tone_prompt=tone_prompt, language=language)
+        self.append_tts(stream_id, response_id, epoch, 0, text)
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        try:
+            self.commit_tts(stream_id, response_id, epoch, 1, text_hash)
+        except (RuntimeError, ValueError):
+            # The worker can poison the runtime immediately after the first
+            # append. In that race the sidecar failure is already authoritative;
+            # the one-shot compatibility wrapper must not surface a second,
+            # timing-dependent commit exception to its caller.
+            if self.runtime.status == "failed":
+                return
+            raise
+
+    def open_tts(
+        self,
+        stream_id: str,
+        response_id: str,
+        epoch: int,
+        part_index: int | None = None,
+        part_id: str | None = None,
+        *,
+        voice_id: str | None = None,
+        speed_modifier: object = None,
+        tone_prompt: object = None,
+        language: object = None,
+    ) -> None:
+        state = self.runtime._state(stream_id)
+        adapter = state.tts_adapter
+        voice_catalog = state.tts_catalog
+        if adapter is None or voice_catalog is None:
+            raise RuntimeError("selected TTS model is not prepared")
+        voices = {str(item["id"]): item for item in voice_catalog.get("voices", [])} if isinstance(voice_catalog.get("voices"), list) else {}
+        if voice_id is None:
+            voice_id = str(voice_catalog.get("defaultVoiceId", ""))
+        if voice_id not in voices:
+            raise ValueError("requested voice is absent from the selected model catalog")
+        capability = self.runtime._catalog_speed(voice_catalog)
+        minimum = float(capability["min"])
+        maximum = float(capability["max"])
+        default_speed = float(capability["default"])
+        if speed_modifier is None:
+            speed = default_speed
+        elif isinstance(speed_modifier, bool) or not isinstance(speed_modifier, (int, float)):
+            raise ValueError("invalid TTS speed modifier")
+        else:
+            speed = float(speed_modifier)
+            if (
+                not math.isfinite(speed)
+                or speed < minimum
+                or speed > maximum
+                or (not bool(capability["supported"]) and speed != default_speed)
+            ):
+                raise ValueError("TTS speed is unsupported or outside the selected model range")
+        if tone_prompt is not None and (not isinstance(tone_prompt, str) or len(tone_prompt.encode("utf-8")) > MAX_VOICE_TONE_PROMPT_BYTES):
+            raise ValueError("invalid Qwen tone prompt")
+        normalized_tone_prompt = tone_prompt.strip() if isinstance(tone_prompt, str) and tone_prompt.strip() else None
+        backend_id = str(voice_catalog.get("backendId"))
+        if normalized_tone_prompt is not None and backend_id != "qwen3":
+            raise ValueError("tone prompt is only supported by Qwen")
+        if language is None:
+            normalized_language = "English"
+        elif not isinstance(language, str) or language not in QWEN_SUPPORTED_LANGUAGES:
+            raise ValueError("requested Qwen language is not supported")
+        else:
+            normalized_language = language
+        if language is not None and backend_id != "qwen3":
+            raise ValueError("language is only supported by Qwen")
+        tts_key = _tts_key(response_id, part_index)
+        # Admission is deliberately bounded, but a replacement must not turn a
+        # short terminalization race into a session-fatal protocol error. Wait
+        # outside self.runtime._lock so the retiring worker can remove itself and signal
+        # its fence. The deadline keeps an adapter stall fail-closed rather than
+        # allowing an unbounded request to block the sidecar.
+        deadline = time.monotonic() + TTS_TERMINALIZATION_TIMEOUT_SECONDS
+        while True:
+            with self.runtime._lock:
+                if self.runtime.status != "ready":
+                    raise RuntimeError("selected runtime requires restart")
+                if state.closed:
+                    raise RuntimeError("audio stream is closing")
+                existing = state.tts_stream
+                if existing is not None and not existing.token.cancelled:
+                    raise RuntimeError("a progressive TTS stream is already open")
+                if tts_key in state.tts:
+                    raise ValueError("duplicate TTS response")
+                if len(state.tts) < 2:
+                    prior_fences = tuple(state.tts_done.values())
+                    playback_id = _uuid7()
+                    output_stream_id = secrets.randbelow(2**32)
+                    while output_stream_id in state.used_output_stream_ids:
+                        output_stream_id = secrets.randbelow(2**32)
+                    state.used_output_stream_ids.add(output_stream_id)
+                    token = CancellationToken()
+                    done = threading.Event()
+                    state.tts[tts_key] = token
+                    state.tts_done[tts_key] = done
+                    text_stream = TtsTextStream(
+                        response_id=response_id,
+                        epoch=epoch,
+                        token=token,
+                        condition=threading.Condition(),
+                        chunks=deque(),
+                        playback_id=playback_id,
+                        output_stream_id=output_stream_id,
+                        done=done,
+                        part_index=part_index,
+                        part_id=part_id,
+                        voice_id=voice_id,
+                        speed_modifier=speed,
+                        tone_prompt=normalized_tone_prompt,
+                        language=normalized_language,
+                    )
+                    state.tts_stream = text_stream
+                    break
+                # Dict insertion order is admission order, so the first fence is
+                # the oldest nonterminal worker. The worker's finally block pops
+                # its state before setting this event.
+                oldest_fence = next(iter(state.tts_done.values()), None)
+
+            remaining = deadline - time.monotonic()
+            if oldest_fence is None or remaining <= 0 or not oldest_fence.wait(timeout=remaining):
+                raise RuntimeError("TTS request queue exceeded bound: prior worker did not terminalize")
+
+        def work() -> None:
+            try:
+                for fence in prior_fences:
+                    if not fence.wait(timeout=10):
+                        raise RuntimeError("prior TTS worker did not terminalize")
+                text_stream.token.raise_if_cancelled()
+                with self.runtime._lock:
+                    if self.runtime.status != "ready" or state.closed:
+                        text_stream.token.cancel()
+                text_stream.token.raise_if_cancelled()
+
+                # Wait for the first chunk or commit/cancellation
+                with text_stream.condition:
+                    while not text_stream.chunks and not text_stream.committed and not text_stream.token.cancelled:
+                        text_stream.condition.wait(timeout=0.25)
+                text_stream.token.raise_if_cancelled()
+
+                if not text_stream.started and text_stream.chunks:
+                    # Emit tts.started only when first nonempty chunk is ready
+                    text_stream.started = True
+                    started_payload: dict[str, object] = {
+                        "streamId": stream_id,
+                        "responseId": response_id,
+                        "epoch": epoch,
+                        "playbackId": text_stream.playback_id,
+                        "outputStreamId": text_stream.output_stream_id,
+                        "sampleRate": 24_000,
+                        "voiceId": text_stream.voice_id,
+                    }
+                    if state.announce_model:
+                        started_payload["backendId"] = state.tts_model.get("backendId", "")
+                        started_payload["modelId"] = state.tts_model.get("modelId", "")
+                    if text_stream.part_index is not None:
+                        started_payload["partIndex"] = text_stream.part_index
+                    if text_stream.part_id is not None:
+                        started_payload["partId"] = text_stream.part_id
+                    state.emit_json({"type": "tts.started", "payload": started_payload})
+
+                # Synthesize chunks sequentially
+                while True:
+                    with text_stream.condition:
+                        while not text_stream.chunks and not text_stream.committed and not text_stream.token.cancelled:
+                            text_stream.condition.wait(timeout=0.25)
+                        text_stream.token.raise_if_cancelled()
+                        if text_stream.chunks:
+                            chunk_text = text_stream.chunks.popleft()
+                        elif text_stream.committed:
+                            break
+                        else:
+                            continue
+
+                    # Synthesize this chunk
+                    local_sequence = 0
+
+                    def audio(chunk: AudioChunk) -> None:
+                        nonlocal local_sequence
+                        encoded = encode_frame(
+                            BinaryAudioFrame(
+                                2,
+                                text_stream.output_stream_id,
+                                text_stream.output_sequence,
+                                max(0, int(__import__("time").monotonic_ns() // 1000)),
+                                chunk.pcm16,
+                            ),
+                            MAX_BINARY_PAYLOAD,
+                        )
+                        text_stream.token.accept_unless_cancelled(lambda: state.emit_binary(encoded))
+                        text_stream.output_sequence += 1
+                        text_stream.generated_samples += len(chunk.pcm16) // 2
+                        local_sequence += 1
+
+                    # A preview can be opened while a session is capturing.
+                    # Wait for the adapter rather than failing with its
+                    # single-active-synthesis guard.
+                    while not self.runtime._tts_lock.acquire(timeout=0.05):
+                        text_stream.token.raise_if_cancelled()
+                    previous_speed = getattr(adapter, "speed", None)
+                    previous_language = getattr(adapter, "language", None)
+                    if previous_speed is not None:
+                        adapter.speed = text_stream.speed_modifier
+                    if backend_id == QWEN_BACKEND_ID and previous_language is not None:
+                        adapter.language = text_stream.language
+                    try:
+                        if text_stream.tone_prompt is None:
+                            adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
+                        else:
+                            adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id, tone_prompt=text_stream.tone_prompt)
+                    finally:
+                        if previous_speed is not None:
+                            adapter.speed = previous_speed
+                        if backend_id == QWEN_BACKEND_ID and previous_language is not None:
+                            adapter.language = previous_language
+                        self.runtime._tts_lock.release()
+                    text_stream.token.raise_if_cancelled()
+
+                # All chunks synthesized, emit tts.ended
+                text_stream.token.raise_if_cancelled()
+                ended_payload: dict[str, object] = {
+                    "streamId": stream_id,
+                    "responseId": response_id,
+                    "epoch": epoch,
+                    "playbackId": text_stream.playback_id,
+                    "generatedSamples": text_stream.generated_samples,
+                }
+                if text_stream.part_index is not None:
+                    ended_payload["partIndex"] = text_stream.part_index
+                if text_stream.part_id is not None:
+                    ended_payload["partId"] = text_stream.part_id
+                state.emit_json({"type": "tts.ended", "payload": ended_payload})
+            except BaseException as error:
+                if text_stream.token.cancelled:
+                    cancelled_payload: dict[str, object] = {
+                        "streamId": stream_id,
+                        "responseId": response_id,
+                        "epoch": epoch,
+                    }
+                    if text_stream.part_index is not None:
+                        cancelled_payload["partIndex"] = text_stream.part_index
+                    if text_stream.part_id is not None:
+                        cancelled_payload["partId"] = text_stream.part_id
+                    state.emit_json({"type": "tts.cancelled", "payload": cancelled_payload})
+                else:
+                    # Keep the wire-level failure intentionally generic, but log
+                    # the sanitized exception class/message locally. Without this
+                    # the host only sees runtime_poisoned, while the cleanup race
+                    # below can obscure the actual TTS failure entirely.
+                    print(
+                        "TTS worker failed "
+                        f"backend={state.tts_model.get('backendId', '')} "
+                        f"model={state.tts_model.get('modelId', '')} "
+                        f"error={type(error).__name__}: {error}",
+                        file=sys.stderr,
+                    )
+                    if state.tts_adapter is not self.runtime.tts and state.tts_model.get("backendId") != KOKORO_BACKEND_ID:
+                        self.runtime._degrade_optional_tts(state, error)
+                    else:
+                        self.runtime._poison()
+            finally:
+                with self.runtime._lock:
+                    state.tts.pop(tts_key, None)
+                    state.tts_done.pop(tts_key, None)
+                    if state.tts_stream is text_stream:
+                        state.tts_stream = None
+                    text_stream.done.set()
+                self.runtime._drop_worker(threading.current_thread())
+
+        self.runtime._spawn("selected-tts", work)
+
+    def _progressive_stream(
+        self,
+        state: StreamState,
+        response_id: str,
+        epoch: int,
+        part_index: int | None,
+        part_id: str | None,
+    ) -> TtsTextStream:
+        text_stream = state.tts_stream
+        if text_stream is None:
+            raise ValueError("no progressive TTS stream is open")
+        if (
+            text_stream.response_id != response_id
+            or text_stream.epoch != epoch
+            or text_stream.part_index != part_index
+            or (part_id is not None and text_stream.part_id != part_id)
+        ):
+            raise ValueError("response, epoch, or part identity mismatch")
+        return text_stream
+
+    def append_tts(
+        self,
+        stream_id: str,
+        response_id: str,
+        epoch: int,
+        sequence: int,
+        text: str,
+        part_index: int | None = None,
+        part_id: str | None = None,
+    ) -> None:
+        state = self.runtime._state(stream_id)
+        with self.runtime._lock:
+            if self.runtime.status != "ready":
+                raise RuntimeError("selected runtime requires restart")
+            if state.closed:
+                raise RuntimeError("audio stream is closing")
+            text_stream = self._progressive_stream(state, response_id, epoch, part_index, part_id)
+            if text_stream.committed:
+                raise ValueError("TTS stream is already committed")
+            if sequence != text_stream.next_sequence:
+                raise ValueError("append sequence gap or duplicate")
+            if not text or not text.strip():
+                raise ValueError("empty or whitespace-only append")
+            total = text_stream.total_characters + len(text)
+            if total > 4000:
+                raise ValueError("TTS text exceeds 4000 characters")
+            text_stream.next_sequence += 1
+            text_stream.total_characters = total
+            text_stream.exact_text_hasher.update(text.encode("utf-8"))
+            text_stream.chunks.append(text)
+            with text_stream.condition:
+                text_stream.condition.notify_all()
+
+    def commit_tts(
+        self,
+        stream_id: str,
+        response_id: str,
+        epoch: int,
+        next_sequence: int,
+        text_sha256: str,
+        part_index: int | None = None,
+        part_id: str | None = None,
+    ) -> None:
+        state = self.runtime._state(stream_id)
+        with self.runtime._lock:
+            if self.runtime.status != "ready":
+                raise RuntimeError("selected runtime requires restart")
+            text_stream = self._progressive_stream(state, response_id, epoch, part_index, part_id)
+            if text_stream.committed:
+                raise ValueError("TTS stream is already committed")
+            if next_sequence != text_stream.next_sequence:
+                raise ValueError("commit next_sequence does not match")
+            expected_hash = text_stream.exact_text_hasher.hexdigest()
+            if text_sha256 != expected_hash:
+                raise ValueError("commit text SHA-256 mismatch")
+            text_stream.committed = True
+            # Detach the committed stream from the singleton progressive slot so a
+            # prefetched successor can open while this worker finishes synthesis.
+            # The committed stream stays in state.tts/tts_done until the worker
+            # terminalizes; the successor's worker waits on its fence. This is the
+            # decision-007 two-nonterminal-stream design; a further open waits on
+            # the oldest fence before admitting another bounded stream.
+            if state.tts_stream is text_stream:
+                state.tts_stream = None
+            with text_stream.condition:
+                text_stream.condition.notify_all()
+
+    def cancel_tts(
+        self,
+        stream_id: str,
+        response_id: str,
+        part_index: int | None = None,
+    ) -> None:
+        state = self.runtime._state(stream_id)
+        with self.runtime._lock:
+            if part_index is None:
+                # A parent cancellation may arrive without a part selector. It
+                # must cut off every admitted sibling, not just the legacy key.
+                tokens = [token for (parent, _), token in state.tts.items() if parent == response_id]
+            else:
+                token = state.tts.get(_tts_key(response_id, part_index))
+                tokens = [token] if token is not None else []
+            for token in tokens:
+                token.cancel()  # local no-more-audio cutoff precedes acknowledgement
+
+
+
 class SelectedAudioRuntime:
     """One prepared selected STT and TTS composition with bounded stream ownership."""
 
@@ -220,6 +612,7 @@ class SelectedAudioRuntime:
         self._tts_lock = threading.Lock()
         self._workers: set[threading.Thread] = set()
         self.last_stt_audio_samples = 0
+        self.tts_orchestrator = TtsOrchestrator(self)
 
     def _model_key(self, backend_id: str, model_id: str) -> str:
         return f"{backend_id}:{model_id}"
@@ -562,19 +955,7 @@ class SelectedAudioRuntime:
 
     def request_tts(self, stream_id: str, response_id: str, epoch: int, text: str, *, voice_id: str | None = None, speed_modifier: object = None, tone_prompt: object = None, language: object = None) -> None:
         """Compatibility wrapper: one-shot TTS through the progressive path."""
-        self.open_tts(stream_id, response_id, epoch, voice_id=voice_id, speed_modifier=speed_modifier, tone_prompt=tone_prompt, language=language)
-        self.append_tts(stream_id, response_id, epoch, 0, text)
-        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        try:
-            self.commit_tts(stream_id, response_id, epoch, 1, text_hash)
-        except (RuntimeError, ValueError):
-            # The worker can poison the runtime immediately after the first
-            # append. In that race the sidecar failure is already authoritative;
-            # the one-shot compatibility wrapper must not surface a second,
-            # timing-dependent commit exception to its caller.
-            if self.status == "failed":
-                return
-            raise
+        self.tts_orchestrator.request_tts(stream_id, response_id, epoch, text, voice_id=voice_id, speed_modifier=speed_modifier, tone_prompt=tone_prompt, language=language)
 
     def open_tts(
         self,
@@ -589,270 +970,7 @@ class SelectedAudioRuntime:
         tone_prompt: object = None,
         language: object = None,
     ) -> None:
-        state = self._state(stream_id)
-        adapter = state.tts_adapter
-        voice_catalog = state.tts_catalog
-        if adapter is None or voice_catalog is None:
-            raise RuntimeError("selected TTS model is not prepared")
-        voices = {str(item["id"]): item for item in voice_catalog.get("voices", [])} if isinstance(voice_catalog.get("voices"), list) else {}
-        if voice_id is None:
-            voice_id = str(voice_catalog.get("defaultVoiceId", ""))
-        if voice_id not in voices:
-            raise ValueError("requested voice is absent from the selected model catalog")
-        capability = self._catalog_speed(voice_catalog)
-        minimum = float(capability["min"])
-        maximum = float(capability["max"])
-        default_speed = float(capability["default"])
-        if speed_modifier is None:
-            speed = default_speed
-        elif isinstance(speed_modifier, bool) or not isinstance(speed_modifier, (int, float)):
-            raise ValueError("invalid TTS speed modifier")
-        else:
-            speed = float(speed_modifier)
-            if (
-                not math.isfinite(speed)
-                or speed < minimum
-                or speed > maximum
-                or (not bool(capability["supported"]) and speed != default_speed)
-            ):
-                raise ValueError("TTS speed is unsupported or outside the selected model range")
-        if tone_prompt is not None and (not isinstance(tone_prompt, str) or len(tone_prompt.encode("utf-8")) > MAX_VOICE_TONE_PROMPT_BYTES):
-            raise ValueError("invalid Qwen tone prompt")
-        normalized_tone_prompt = tone_prompt.strip() if isinstance(tone_prompt, str) and tone_prompt.strip() else None
-        backend_id = str(voice_catalog.get("backendId"))
-        if normalized_tone_prompt is not None and backend_id != "qwen3":
-            raise ValueError("tone prompt is only supported by Qwen")
-        if language is None:
-            normalized_language = "English"
-        elif not isinstance(language, str) or language not in QWEN_SUPPORTED_LANGUAGES:
-            raise ValueError("requested Qwen language is not supported")
-        else:
-            normalized_language = language
-        if language is not None and backend_id != "qwen3":
-            raise ValueError("language is only supported by Qwen")
-        tts_key = _tts_key(response_id, part_index)
-        # Admission is deliberately bounded, but a replacement must not turn a
-        # short terminalization race into a session-fatal protocol error. Wait
-        # outside self._lock so the retiring worker can remove itself and signal
-        # its fence. The deadline keeps an adapter stall fail-closed rather than
-        # allowing an unbounded request to block the sidecar.
-        deadline = time.monotonic() + TTS_TERMINALIZATION_TIMEOUT_SECONDS
-        while True:
-            with self._lock:
-                if self.status != "ready":
-                    raise RuntimeError("selected runtime requires restart")
-                if state.closed:
-                    raise RuntimeError("audio stream is closing")
-                existing = state.tts_stream
-                if existing is not None and not existing.token.cancelled:
-                    raise RuntimeError("a progressive TTS stream is already open")
-                if tts_key in state.tts:
-                    raise ValueError("duplicate TTS response")
-                if len(state.tts) < 2:
-                    prior_fences = tuple(state.tts_done.values())
-                    playback_id = _uuid7()
-                    output_stream_id = secrets.randbelow(2**32)
-                    while output_stream_id in state.used_output_stream_ids:
-                        output_stream_id = secrets.randbelow(2**32)
-                    state.used_output_stream_ids.add(output_stream_id)
-                    token = CancellationToken()
-                    done = threading.Event()
-                    state.tts[tts_key] = token
-                    state.tts_done[tts_key] = done
-                    text_stream = TtsTextStream(
-                        response_id=response_id,
-                        epoch=epoch,
-                        token=token,
-                        condition=threading.Condition(),
-                        chunks=deque(),
-                        playback_id=playback_id,
-                        output_stream_id=output_stream_id,
-                        done=done,
-                        part_index=part_index,
-                        part_id=part_id,
-                        voice_id=voice_id,
-                        speed_modifier=speed,
-                        tone_prompt=normalized_tone_prompt,
-                        language=normalized_language,
-                    )
-                    state.tts_stream = text_stream
-                    break
-                # Dict insertion order is admission order, so the first fence is
-                # the oldest nonterminal worker. The worker's finally block pops
-                # its state before setting this event.
-                oldest_fence = next(iter(state.tts_done.values()), None)
-
-            remaining = deadline - time.monotonic()
-            if oldest_fence is None or remaining <= 0 or not oldest_fence.wait(timeout=remaining):
-                raise RuntimeError("TTS request queue exceeded bound: prior worker did not terminalize")
-
-        def work() -> None:
-            try:
-                for fence in prior_fences:
-                    if not fence.wait(timeout=10):
-                        raise RuntimeError("prior TTS worker did not terminalize")
-                text_stream.token.raise_if_cancelled()
-                with self._lock:
-                    if self.status != "ready" or state.closed:
-                        text_stream.token.cancel()
-                text_stream.token.raise_if_cancelled()
-
-                # Wait for the first chunk or commit/cancellation
-                with text_stream.condition:
-                    while not text_stream.chunks and not text_stream.committed and not text_stream.token.cancelled:
-                        text_stream.condition.wait(timeout=0.25)
-                text_stream.token.raise_if_cancelled()
-
-                if not text_stream.started and text_stream.chunks:
-                    # Emit tts.started only when first nonempty chunk is ready
-                    text_stream.started = True
-                    started_payload: dict[str, object] = {
-                        "streamId": stream_id,
-                        "responseId": response_id,
-                        "epoch": epoch,
-                        "playbackId": text_stream.playback_id,
-                        "outputStreamId": text_stream.output_stream_id,
-                        "sampleRate": 24_000,
-                        "voiceId": text_stream.voice_id,
-                    }
-                    if state.announce_model:
-                        started_payload["backendId"] = state.tts_model.get("backendId", "")
-                        started_payload["modelId"] = state.tts_model.get("modelId", "")
-                    if text_stream.part_index is not None:
-                        started_payload["partIndex"] = text_stream.part_index
-                    if text_stream.part_id is not None:
-                        started_payload["partId"] = text_stream.part_id
-                    state.emit_json({"type": "tts.started", "payload": started_payload})
-
-                # Synthesize chunks sequentially
-                while True:
-                    with text_stream.condition:
-                        while not text_stream.chunks and not text_stream.committed and not text_stream.token.cancelled:
-                            text_stream.condition.wait(timeout=0.25)
-                        text_stream.token.raise_if_cancelled()
-                        if text_stream.chunks:
-                            chunk_text = text_stream.chunks.popleft()
-                        elif text_stream.committed:
-                            break
-                        else:
-                            continue
-
-                    # Synthesize this chunk
-                    local_sequence = 0
-
-                    def audio(chunk: AudioChunk) -> None:
-                        nonlocal local_sequence
-                        encoded = encode_frame(
-                            BinaryAudioFrame(
-                                2,
-                                text_stream.output_stream_id,
-                                text_stream.output_sequence,
-                                max(0, int(__import__("time").monotonic_ns() // 1000)),
-                                chunk.pcm16,
-                            ),
-                            MAX_BINARY_PAYLOAD,
-                        )
-                        text_stream.token.accept_unless_cancelled(lambda: state.emit_binary(encoded))
-                        text_stream.output_sequence += 1
-                        text_stream.generated_samples += len(chunk.pcm16) // 2
-                        local_sequence += 1
-
-                    # A preview can be opened while a session is capturing.
-                    # Wait for the adapter rather than failing with its
-                    # single-active-synthesis guard.
-                    while not self._tts_lock.acquire(timeout=0.05):
-                        text_stream.token.raise_if_cancelled()
-                    previous_speed = getattr(adapter, "speed", None)
-                    previous_language = getattr(adapter, "language", None)
-                    if previous_speed is not None:
-                        adapter.speed = text_stream.speed_modifier
-                    if backend_id == QWEN_BACKEND_ID and previous_language is not None:
-                        adapter.language = text_stream.language
-                    try:
-                        if text_stream.tone_prompt is None:
-                            adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id)
-                        else:
-                            adapter.synthesize_stream(chunk_text, text_stream.token, audio, voice=text_stream.voice_id, tone_prompt=text_stream.tone_prompt)
-                    finally:
-                        if previous_speed is not None:
-                            adapter.speed = previous_speed
-                        if backend_id == QWEN_BACKEND_ID and previous_language is not None:
-                            adapter.language = previous_language
-                        self._tts_lock.release()
-                    text_stream.token.raise_if_cancelled()
-
-                # All chunks synthesized, emit tts.ended
-                text_stream.token.raise_if_cancelled()
-                ended_payload: dict[str, object] = {
-                    "streamId": stream_id,
-                    "responseId": response_id,
-                    "epoch": epoch,
-                    "playbackId": text_stream.playback_id,
-                    "generatedSamples": text_stream.generated_samples,
-                }
-                if text_stream.part_index is not None:
-                    ended_payload["partIndex"] = text_stream.part_index
-                if text_stream.part_id is not None:
-                    ended_payload["partId"] = text_stream.part_id
-                state.emit_json({"type": "tts.ended", "payload": ended_payload})
-            except BaseException as error:
-                if text_stream.token.cancelled:
-                    cancelled_payload: dict[str, object] = {
-                        "streamId": stream_id,
-                        "responseId": response_id,
-                        "epoch": epoch,
-                    }
-                    if text_stream.part_index is not None:
-                        cancelled_payload["partIndex"] = text_stream.part_index
-                    if text_stream.part_id is not None:
-                        cancelled_payload["partId"] = text_stream.part_id
-                    state.emit_json({"type": "tts.cancelled", "payload": cancelled_payload})
-                else:
-                    # Keep the wire-level failure intentionally generic, but log
-                    # the sanitized exception class/message locally. Without this
-                    # the host only sees runtime_poisoned, while the cleanup race
-                    # below can obscure the actual TTS failure entirely.
-                    print(
-                        "TTS worker failed "
-                        f"backend={state.tts_model.get('backendId', '')} "
-                        f"model={state.tts_model.get('modelId', '')} "
-                        f"error={type(error).__name__}: {error}",
-                        file=sys.stderr,
-                    )
-                    if state.tts_adapter is not self.tts and state.tts_model.get("backendId") != KOKORO_BACKEND_ID:
-                        self._degrade_optional_tts(state, error)
-                    else:
-                        self._poison()
-            finally:
-                with self._lock:
-                    state.tts.pop(tts_key, None)
-                    state.tts_done.pop(tts_key, None)
-                    if state.tts_stream is text_stream:
-                        state.tts_stream = None
-                    text_stream.done.set()
-                self._drop_worker(threading.current_thread())
-
-        self._spawn("selected-tts", work)
-
-    def _progressive_stream(
-        self,
-        state: StreamState,
-        response_id: str,
-        epoch: int,
-        part_index: int | None,
-        part_id: str | None,
-    ) -> TtsTextStream:
-        text_stream = state.tts_stream
-        if text_stream is None:
-            raise ValueError("no progressive TTS stream is open")
-        if (
-            text_stream.response_id != response_id
-            or text_stream.epoch != epoch
-            or text_stream.part_index != part_index
-            or (part_id is not None and text_stream.part_id != part_id)
-        ):
-            raise ValueError("response, epoch, or part identity mismatch")
-        return text_stream
+        self.tts_orchestrator.open_tts(stream_id, response_id, epoch, part_index, part_id, voice_id=voice_id, speed_modifier=speed_modifier, tone_prompt=tone_prompt, language=language)
 
     def append_tts(
         self,
@@ -864,28 +982,7 @@ class SelectedAudioRuntime:
         part_index: int | None = None,
         part_id: str | None = None,
     ) -> None:
-        state = self._state(stream_id)
-        with self._lock:
-            if self.status != "ready":
-                raise RuntimeError("selected runtime requires restart")
-            if state.closed:
-                raise RuntimeError("audio stream is closing")
-            text_stream = self._progressive_stream(state, response_id, epoch, part_index, part_id)
-            if text_stream.committed:
-                raise ValueError("TTS stream is already committed")
-            if sequence != text_stream.next_sequence:
-                raise ValueError("append sequence gap or duplicate")
-            if not text or not text.strip():
-                raise ValueError("empty or whitespace-only append")
-            total = text_stream.total_characters + len(text)
-            if total > 4000:
-                raise ValueError("TTS text exceeds 4000 characters")
-            text_stream.next_sequence += 1
-            text_stream.total_characters = total
-            text_stream.exact_text_hasher.update(text.encode("utf-8"))
-            text_stream.chunks.append(text)
-            with text_stream.condition:
-                text_stream.condition.notify_all()
+        self.tts_orchestrator.append_tts(stream_id, response_id, epoch, sequence, text, part_index, part_id)
 
     def commit_tts(
         self,
@@ -897,29 +994,7 @@ class SelectedAudioRuntime:
         part_index: int | None = None,
         part_id: str | None = None,
     ) -> None:
-        state = self._state(stream_id)
-        with self._lock:
-            if self.status != "ready":
-                raise RuntimeError("selected runtime requires restart")
-            text_stream = self._progressive_stream(state, response_id, epoch, part_index, part_id)
-            if text_stream.committed:
-                raise ValueError("TTS stream is already committed")
-            if next_sequence != text_stream.next_sequence:
-                raise ValueError("commit next_sequence does not match")
-            expected_hash = text_stream.exact_text_hasher.hexdigest()
-            if text_sha256 != expected_hash:
-                raise ValueError("commit text SHA-256 mismatch")
-            text_stream.committed = True
-            # Detach the committed stream from the singleton progressive slot so a
-            # prefetched successor can open while this worker finishes synthesis.
-            # The committed stream stays in state.tts/tts_done until the worker
-            # terminalizes; the successor's worker waits on its fence. This is the
-            # decision-007 two-nonterminal-stream design; a further open waits on
-            # the oldest fence before admitting another bounded stream.
-            if state.tts_stream is text_stream:
-                state.tts_stream = None
-            with text_stream.condition:
-                text_stream.condition.notify_all()
+        self.tts_orchestrator.commit_tts(stream_id, response_id, epoch, next_sequence, text_sha256, part_index, part_id)
 
     def cancel_tts(
         self,
@@ -927,17 +1002,7 @@ class SelectedAudioRuntime:
         response_id: str,
         part_index: int | None = None,
     ) -> None:
-        state = self._state(stream_id)
-        with self._lock:
-            if part_index is None:
-                # A parent cancellation may arrive without a part selector. It
-                # must cut off every admitted sibling, not just the legacy key.
-                tokens = [token for (parent, _), token in state.tts.items() if parent == response_id]
-            else:
-                token = state.tts.get(_tts_key(response_id, part_index))
-                tokens = [token] if token is not None else []
-            for token in tokens:
-                token.cancel()  # local no-more-audio cutoff precedes acknowledgement
+        self.tts_orchestrator.cancel_tts(stream_id, response_id, part_index)
 
     def reset_stream(self, stream_id: str) -> None:
         state = self._state(stream_id)
