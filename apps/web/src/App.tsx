@@ -1,29 +1,18 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { BrowserCapture, type CaptureHandle } from './audio/capture';
-import { BrowserPlayback } from './audio/playback';
-import type { PlaybackStopReason } from './audio/playback-ledger';
-import { createEncoderClient } from './recording/encoder-client';
-import { RecordingRecorder } from './recording/recorder';
-import { offlineResample } from './recording/resample';
-import { buildRecording, createBrowserDecoder, type ExportOnProgress } from './recording/splice';
 import { activityLog } from './session/activity-log';
-import { SessionController, type ControlledPlayback } from './session/controller';
+import { createLiveSessionRuntime, type LiveRuntimeTestApi, type LiveSessionRuntime } from './session/live-runtime';
+import { uuidV7 } from './session/envelope';
 import { sessionViewStateFromTurns } from './sessions/session-archive';
-import { createEnvelope, type HostEventPayload, uuidV7 } from './session/envelope';
-import { FakeSessionTransport } from './session/fake-transport';
-import type { SessionTransport } from './session/transport';
-import { WebSocketSessionTransport } from './session/websocket-transport';
 import { initialSessionState, type SessionViewState } from './session/state';
-import { RecordingStore, type RecordingItemSummary } from './storage/recording-store';
 import { CustomVoiceStore, type CustomVoiceRecord } from './storage/custom-voice-store';
 import { enrollCustomVoice as enrollCustomVoiceApi, enrollStoredCustomVoice, deleteCustomVoice as deleteCustomVoiceApi } from './voice-enrollment/api';
 import type { ReferenceTake } from './voice-enrollment/recorder';
 import { sessionActiveDurationMs, StableTurnWriter } from './storage/stable-turn-writer';
 import type { StoredSession } from './storage/schema';
-import { deleteSessionRecording } from './recording/export';
 import { emptyRecordingSessionView, projectRecordingTrim, type RecordingSessionViewState, type RecordingTrimTargetId } from './recording/trim-state';
 import { CUSTOM_VOICE_PREFIX, DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, customVoiceId, customVoicesMissingFromCatalog, isValidSessionSettingsSnapshot, ttsModelKey, withCustomVoices, type PiSettings, type QwenVoiceLanguage, type SessionPlanningRequest, type SessionPlanningSnapshot, type SessionSettingsSnapshot, type TtsModelDescriptor, type TtsModelSelection, type VoiceCatalog, type VoicePreference } from '@app/contracts/settings';
-import type { HostEvent } from '@app/contracts';
+import type { ExportOnProgress } from './recording/splice';
+import type { RecordingItemSummary } from './storage/recording-store';
 import { SettingsStore } from './settings/settings-store';
 import { createResourceOwner } from './storage/resource-lifecycle';
 import { startVoicePreview } from './settings/voice-preview';
@@ -65,37 +54,7 @@ function planningViewForStart(planning: SessionPlanningRequest | undefined): Ses
   return { status: planning.reuse ? 'ready' : 'planning', topic: planning.topic, depth: planning.depth, progress: planning.reuse ? 100 : 0, ...(planning.notes ? { notes: planning.notes } : {}) };
 }
 
-interface FakeRuntimeStats {
-  captureStarts: number;
-  captureStops: number;
-  captureRunning: boolean;
-  playbackPauses: number;
-  playbackResumes: number;
-  playbackStops: PlaybackStopReason[];
-}
-class InstrumentedPlayback implements ControlledPlayback {
-  constructor(private readonly playback: BrowserPlayback, private readonly stats: FakeRuntimeStats) {}
-  setGeneratedSamples(samples: number): void { this.playback.setGeneratedSamples(samples); }
-  append(offset: number, pcm16: Int16Array): void { this.playback.append(offset, pcm16); }
-  async pause() { this.stats.playbackPauses++; return this.playback.pause(); }
-  async resume(rewindMs?: number): Promise<void> { this.stats.playbackResumes++; await this.playback.resume(rewindMs); }
-  stop(reason: PlaybackStopReason) { return this.playback.stop(reason); }
-}
-
-interface TestApi {
-  emit<T extends HostEvent['type']>(type: T, payload: HostEventPayload<T>, epoch?: number): Promise<void>;
-  partial(text: string): Promise<void>;
-  audio(playbackId: string, sampleOffset: number, samples: number): Promise<void>;
-  capture(): void;
-  degrade(message: string): void;
-  stats(): FakeRuntimeStats & { captureFrames: number; progressReports: number; terminalReceipts: number; commands: string[] };
-}
-
-declare global { interface Window { __podcasterTest?: TestApi } }
-
-function createFakeHostEvent<T extends HostEvent['type'],>(sessionId: string, epoch: number, type: T, payload: HostEventPayload<T>): HostEvent {
-  return createEnvelope({ sessionId, epoch, type, payload }) as HostEvent;
-}
+declare global { interface Window { __podcasterTest?: LiveRuntimeTestApi } }
 
 interface AppStorageResources {
   settings: SettingsStore;
@@ -138,20 +97,7 @@ export function App() {
   const [resuming, setResuming] = useState(false);
   const stoppedRef = useRef(false);
   const writerRef = useRef<StableTurnWriter | undefined>(undefined);
-  const controllerRef = useRef<SessionController | undefined>(undefined);
-  const transportRef = useRef<SessionTransport | undefined>(undefined);
-  const fakeTransportRef = useRef<FakeSessionTransport | undefined>(undefined);
-  const captureRef = useRef<CaptureHandle | undefined>(undefined);
-  const captureStreamIdRef = useRef<number | undefined>(undefined);
-  const captureRecoveryRef = useRef<Promise<void> | undefined>(undefined);
-  const captureGenerationRef = useRef(0);
-  const reconnectUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
-  const transportFailureUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
-  const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
-  const recordingStoreRef = useRef<RecordingStore | undefined>(undefined);
-  const recordingRecorderRef = useRef<RecordingRecorder | undefined>(undefined);
-  const recordingUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
-  const statsRef = useRef<FakeRuntimeStats>({ captureStarts: 0, captureStops: 0, captureRunning: false, playbackPauses: 0, playbackResumes: 0, playbackStops: [] });
+  const runtimeRef = useRef<LiveSessionRuntime | undefined>(undefined);
   const sessionClockRef = useRef<{ activeDurationMs: number; runningSinceMs: number | undefined }>({ activeDurationMs: 0, runningSinceMs: undefined });
   const [recordingView, setRecordingView] = useState<RecordingSessionViewState>(emptyRecordingSessionView);
   const recordingViewRef = useRef(recordingView);
@@ -302,215 +248,14 @@ export function App() {
     };
   }, []);
 
-  const composeFakeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, planning: SessionPlanningRequest | undefined, activate: () => Promise<void>) => {
-    reconnectUnsubscribeRef.current?.();
-    reconnectUnsubscribeRef.current = undefined;
-    transportFailureUnsubscribeRef.current?.();
-    transportFailureUnsubscribeRef.current = undefined;
-    captureGenerationRef.current++;
-    captureRecoveryRef.current = undefined;
-    const transport = new FakeSessionTransport();
-    await transport.connect(cap);
-    recordingStoreRef.current?.close();
-    const recordingStore = await RecordingStore.open();
-    recordingStoreRef.current = recordingStore;
-    const recorder = new RecordingRecorder({ sessionId: id, store: recordingStore, encode: createEncoderClient() });
-    await recorder.start();
-    recordingRecorderRef.current = recorder;
-    recordingSessionRef.current = id;
-    await fetchRecordingSummaries(id);
-    recordingUnsubscribeRef.current = transport.onEvent(event => recorder.onSessionEvent(event));
-    let controller!: SessionController;
-    controller = new SessionController({
-      sessionId: id,
-      transport,
-      writer: opened,
-      initialState: { ...initial, audioEngine: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' } },
-      playbackFactory: input => new InstrumentedPlayback(new BrowserPlayback(
-        input.playbackId,
-        input.outputEpoch,
-        input.sampleRate,
-        {
-          progress: progress => controller.reportPlaybackProgress(progress),
-          terminal: receipt => {
-            recorder.onSessionEvent(createEnvelope({ sessionId: id, epoch: controller.snapshot().epoch, type: 'playback.stopped', payload: { ...receipt } }));
-            statsRef.current.playbackStops.push(receipt.reason);
-            return controller.reportPlaybackTerminal(receipt);
-          },
-          degraded: message => controller.degrade(message),
-        },
-        undefined,
-        audio => recorder.onPlaybackAudio(audio),
-      ), statsRef.current),
-    });
-    unsubscribeRef.current?.();
-    controllerRef.current = controller;
-    transportRef.current = transport;
-    fakeTransportRef.current = transport;
-    unsubscribeRef.current = controller.subscribe(next => {
-      setView(next);
-      setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(next.audioEngine) }));
-    });
-    if (planning) await transport.emit(createFakeHostEvent(id, controller.snapshot().epoch, 'session.state', { phase: 'ready', personaDigest: '0'.repeat(64), planning: { status: 'ready', topic: planning.topic, depth: planning.depth, progress: 100, detail: 'Fake services are ready to go live.' } }));
-    await activate();
-    statsRef.current.captureStarts++;
-    const capture = await new BrowserCapture({ onAudio: capture => recorder.onCaptureAudio(capture) }).start({
-      send: frame => transport.sendCapture(frame),
-      degraded: message => controller.degrade(message),
-    });
-    statsRef.current.captureRunning = true;
-    captureRef.current = {
-      stop: async () => {
-        if (!statsRef.current.captureRunning) return;
-        await capture.stop();
-        statsRef.current.captureStops++;
-        statsRef.current.captureRunning = false;
-      },
-    };
-    if (planning) await transport.emit(createFakeHostEvent(id, controller.snapshot().epoch, 'session.state', { phase: 'listening', personaDigest: '0'.repeat(64) }));
-    capabilityRef.current = cap;
-    setCapability(cap);
-    setSessionId(id);
-    stoppedRef.current = false;
-  }, []);
-
-  const composeRealSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings, planning: SessionPlanningRequest | undefined, activate: () => Promise<void>) => {
-    reconnectUnsubscribeRef.current?.();
-    reconnectUnsubscribeRef.current = undefined;
-    transportFailureUnsubscribeRef.current?.();
-    transportFailureUnsubscribeRef.current = undefined;
-    captureGenerationRef.current++;
-    captureRecoveryRef.current = undefined;
-    recordingStoreRef.current?.close();
-    const recordingStore = await RecordingStore.open();
-    recordingStoreRef.current = recordingStore;
-    const recorder = new RecordingRecorder({ sessionId: id, store: recordingStore, encode: createEncoderClient() });
-    await recorder.start();
-    recordingRecorderRef.current = recorder;
-    recordingSessionRef.current = id;
-    await fetchRecordingSummaries(id);
-    let controller!: SessionController;
-    const transport = new WebSocketSessionTransport(id, () => controller?.snapshot().epoch ?? 0);
-    await transport.connect(cap);
-    recordingUnsubscribeRef.current = transport.onEvent(event => recorder.onSessionEvent(event));
-    controller = new SessionController({
-      sessionId: id,
-      transport,
-      writer: opened,
-      initialState: initial,
-      playbackFactory: input => new BrowserPlayback(input.playbackId, input.outputEpoch, input.sampleRate, {
-        progress: progress => controller.reportPlaybackProgress(progress),
-        terminal: receipt => {
-          recorder.onSessionEvent(createEnvelope({ sessionId: id, epoch: controller.snapshot().epoch, type: 'playback.stopped', payload: { ...receipt } }));
-          return controller.reportPlaybackTerminal(receipt);
-        },
-        degraded: message => controller.degrade(message),
-      }, undefined, audio => recorder.onPlaybackAudio(audio)),
-    });
-    unsubscribeRef.current?.();
-    unsubscribeRef.current = controller.subscribe(next => {
-      setView(next);
-      setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(next.audioEngine) }));
-    });
-    controllerRef.current = controller;
-    transportRef.current = transport;
-    transportFailureUnsubscribeRef.current = transport.onFailure(() => {
-      captureGenerationRef.current++;
-      const capture = captureRef.current;
-      captureRef.current = undefined;
-      captureStreamIdRef.current = undefined;
-      void capture?.stop().catch(() => undefined);
-    });
-    reconnectUnsubscribeRef.current = transport.onReconnect(() => {
-      if (captureRecoveryRef.current) return captureRecoveryRef.current;
-      let recovery!: Promise<void>;
-      recovery = (async () => {
-        if (stoppedRef.current || sessionPausedRef.current || lifecycleActionRef.current !== 'idle') return;
-        const generation = ++captureGenerationRef.current;
-        const capture = captureRef.current;
-        const oldStreamId = captureStreamIdRef.current;
-        captureRef.current = undefined;
-        captureStreamIdRef.current = undefined;
-        await capture?.stop().catch(() => undefined);
-        if (oldStreamId !== undefined) {
-          try { await transport.stopAudio(oldStreamId); } catch { /* reconnect may have failed again */ }
-        }
-        if (stoppedRef.current || sessionPausedRef.current || lifecycleActionRef.current !== 'idle') return;
-        const random = new Uint32Array(1);
-        crypto.getRandomValues(random);
-        const streamId = random[0] ?? 0;
-        try {
-          await transport.startAudio(streamId);
-          captureStreamIdRef.current = streamId;
-          const recovered = await new BrowserCapture({ streamId: () => streamId, onAudio: audio => recorder.onCaptureAudio(audio) }).start({
-            send: frame => transport.sendCapture(frame),
-            degraded: message => controller.degrade(message),
-          });
-          if (generation !== captureGenerationRef.current || stoppedRef.current || sessionPausedRef.current || lifecycleActionRef.current !== 'idle') {
-            await recovered.stop();
-            try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
-            if (generation === captureGenerationRef.current) captureStreamIdRef.current = undefined;
-            return;
-          }
-          captureRef.current = recovered;
-          activityLog.append({ level: 'info', source: 'app', message: 'microphone capture recovered after transport reconnect' });
-        } catch (error) {
-          try { await transport.stopAudio(streamId); } catch { /* session teardown may have won the race */ }
-          if (generation !== captureGenerationRef.current || stoppedRef.current) return;
-          captureStreamIdRef.current = undefined;
-          controller.degrade(error instanceof Error ? error.message : 'The microphone could not be recovered after reconnecting.');
-        }
-      })().finally(() => { if (captureRecoveryRef.current === recovery) captureRecoveryRef.current = undefined; });
-      captureRecoveryRef.current = recovery;
-      return recovery;
-    });
-    // The draft remains Not started while optional preparation runs. The
-    // durable active state is committed only after the host has finished its
-    // preparation handshake and is ready to open live capture.
-    await transport.startSession({ sessionSeed: seed, reasoningMode, ...(planning ? { planning } : {}), settings });
-    await activate();
-    const random = new Uint32Array(1); crypto.getRandomValues(random);
-    const streamId = random[0] ?? 0;
-    captureStreamIdRef.current = streamId;
-    let audioReady = false;
-    const pendingCapture: Uint8Array[] = [];
-    try {
-      // Open the browser microphone first, then wait for the host's explicit
-      // audio-ready acknowledgement. Capture frames are held briefly during
-      // that handshake so no speech can race stream.open or model warmup.
-      captureRef.current = await new BrowserCapture({ streamId: () => streamId, onAudio: capture => recorder.onCaptureAudio(capture) }).start({
-        send: frame => {
-          if (audioReady) transport.sendCapture(frame);
-          else if (pendingCapture.length < 128) pendingCapture.push(frame);
-          else controller.degrade('Microphone audio arrived before the audio engine was ready.');
-        },
-        degraded: message => controller.degrade(message),
-      });
-      await transport.startAudio(streamId);
-      audioReady = true;
-      for (const frame of pendingCapture.splice(0)) transport.sendCapture(frame);
-    } catch (error) {
-      try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
-      captureRef.current = undefined;
-      try { await transport.stopAudio(streamId); } catch { /* teardown is best effort */ }
-      captureStreamIdRef.current = undefined;
-      await controller.pause();
-      throw error;
-    }
-    capabilityRef.current = cap;
-    setCapability(cap);
-    setSessionId(id);
-    stoppedRef.current = false;
-  }, []);
-
   const fetchRecordingSummaries = useCallback(async (targetSession: string): Promise<void> => {
-    const store = recordingStoreRef.current;
-    if (!store) return;
+    const runtime = runtimeRef.current;
+    if (!runtime || runtime.sessionId !== targetSession) return;
     const gen = ++recordingGenRef.current;
     let enabled: boolean;
-    let summaries: RecordingItemSummary[];
+    let summaries: Awaited<ReturnType<LiveSessionRuntime['recordingSummaries']>>['summaries'];
     try {
-      [enabled, summaries] = await Promise.all([store.getRecordingEnabled(), store.getSessionItemSummaries(targetSession)]);
+      ({ enabled, summaries } = await runtime.recordingSummaries());
     } catch (error) {
       if (gen !== recordingGenRef.current || recordingSessionRef.current !== targetSession) return;
       setRecordingView(prev => ({ ...prev, error: error instanceof Error ? error.message : 'Recording state could not be read.' }));
@@ -520,6 +265,24 @@ export function App() {
     lastCheapRef.current = { enabled, signature: recordingSummarySignature(summaries) };
     setRecordingView(prev => ({ ...projectRecordingTrim(summaries, enabled), pendingTargetId: prev.pendingTargetId, notice: prev.notice, error: '' }));
   }, []);
+
+  const composeSession = useCallback(async (opened: StableTurnWriter, id: string, initial: SessionViewState, cap: string, seed: string, reasoningMode: 'full' | 'transcript_only', settings: SessionStartSettings, planning: SessionPlanningRequest | undefined, activate: () => Promise<void>): Promise<void> => {
+    const runtime = await createLiveSessionRuntime({
+      sessionId: id, capability: cap, writer: opened, initialState: initial, seed, reasoningMode, settings, ...(planning ? { planning } : {}), activate,
+      fake: fakeServices,
+      callbacks: {
+        onView: next => { setView(next); setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(next.audioEngine) })); },
+        onTransportFailure: () => undefined,
+        onRecordingChanged: () => { void fetchRecordingSummaries(id); },
+      },
+    });
+    runtimeRef.current = runtime;
+    capabilityRef.current = cap;
+    setCapability(cap);
+    setSessionId(id);
+    stoppedRef.current = false;
+    await fetchRecordingSummaries(id);
+  }, [fetchRecordingSummaries]);
 
   // Open the shared session store once. If the initial URL targets a session
   // that was still active, resume it right away (like the readiness flow, but
@@ -564,16 +327,11 @@ export function App() {
               if (!reopened.ok) throw new Error(reopened.degradedReason);
               configureSessionClock(await candidate.getSession(target));
             };
-            if (fakeServices) await composeFakeSession(candidate, target, restored, 'fake-recovered', planningForResume(stored.planning), activate);
-            else await composeRealSession(candidate, target, restored, await bootstrapCapability(), stored.sessionSeed, 'full', settings, planningForResume(stored.planning), activate);
+            await composeSession(candidate, target, restored, fakeServices ? 'fake-recovered' : await bootstrapCapability(), stored.sessionSeed, 'full', settings, planningForResume(stored.planning), activate);
             if (!cancelled) navigate(`/session/${target}`);
           } catch (error) {
-            try { await controllerRef.current?.pause(); } catch { /* best-effort rollback */ }
-            try { await releaseRecorder(target); } catch { /* best-effort rollback */ }
-            transportRef.current?.disconnect();
-            controllerRef.current = undefined;
-            transportRef.current = undefined;
-            fakeTransportRef.current = undefined;
+            try { await runtimeRef.current?.dispose(); } catch { /* best-effort rollback */ }
+            runtimeRef.current = undefined;
             await candidate.pauseSession(target);
             configureSessionClock(await candidate.getSession(target));
             activityLog.append({ level: 'error', source: 'app', message: 'active session could not be resumed; it is paused locally', ...(error instanceof Error ? { detail: error.message } : {}) });
@@ -605,20 +363,10 @@ export function App() {
   }, [sessionId, sessionPaused, refreshElapsed]);
 
   useEffect(() => {
-    if (!fakeServices || !view || !sessionId || !fakeTransportRef.current || !controllerRef.current) { delete window.__podcasterTest; return; }
-    const transport = fakeTransportRef.current;
-    const controller = controllerRef.current;
-    window.__podcasterTest = {
-      emit: (type, payload, epoch = controller.snapshot().epoch) => transport.emit(createFakeHostEvent(sessionId, epoch, type, payload)),
-      partial: text => transport.emit(createEnvelope({ sessionId, epoch: controller.snapshot().epoch, type: 'transcript.partial', payload: { utteranceId: uuidV7(), sequence: 0, text, replacedCharacters: 0 } })),
-      audio: async (playbackId, sampleOffset, samples) => {
-        transport.emitAudio({ playbackId, sequence: 0, sampleOffset, pcm16: new Int16Array(samples) });
-        await new Promise(resolve => setTimeout(resolve, 0));
-      },
-      capture: () => { (window as unknown as { __podcasterFakeWorkletNode?: { port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } } }).__podcasterFakeWorkletNode?.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>); },
-      degrade: message => controller.degrade(message),
-      stats: () => ({ ...statsRef.current, playbackStops: [...statsRef.current.playbackStops], captureFrames: transport.captureFrames.length, progressReports: transport.progressReports.length, terminalReceipts: transport.terminalReceipts.size, commands: [...transport.commands] }),
-    };
+    if (!fakeServices || !view || !sessionId) { delete window.__podcasterTest; return; }
+    const api = runtimeRef.current?.testApi();
+    if (!api) { delete window.__podcasterTest; return; }
+    window.__podcasterTest = api;
     return () => { delete window.__podcasterTest; };
   }, [sessionId, view]);
 
@@ -679,33 +427,13 @@ export function App() {
         if (!persisted.ok) throw new Error(persisted.degradedReason);
         configureSessionClock(await opened.getSession(id));
       };
-      if (fakeServices) await composeFakeSession(opened, id, initial, cap, planning, activate);
-      else await composeRealSession(opened, id, initial, cap, seed, reasoningMode, settings, planning, activate);
+      await composeSession(opened, id, initial, cap, seed, reasoningMode, settings, planning, activate);
     } catch (error) {
       // A failed composition must release the partially-created runtime before
-      // returning to the durable paused state. This is also the stale-event
-      // barrier for a failed resume.
-      captureGenerationRef.current++;
-      captureRecoveryRef.current = undefined;
+      // returning to the durable paused state.
       stoppedRef.current = true;
-      const failedTransport = transportRef.current;
-      reconnectUnsubscribeRef.current?.();
-      reconnectUnsubscribeRef.current = undefined;
-      transportFailureUnsubscribeRef.current?.();
-      transportFailureUnsubscribeRef.current = undefined;
-      try { await captureRef.current?.stop(); } catch { /* best effort */ }
-      captureRef.current = undefined;
-      const streamId = captureStreamIdRef.current;
-      captureStreamIdRef.current = undefined;
-      if (streamId !== undefined) try { await failedTransport?.stopAudio(streamId); } catch { /* best effort */ }
-      try { await controllerRef.current?.pause(); } catch { /* best effort */ }
-      await releaseRecorder(id);
-      failedTransport?.disconnect();
-      controllerRef.current = undefined;
-      transportRef.current = undefined;
-      fakeTransportRef.current = undefined;
-      unsubscribeRef.current?.();
-      unsubscribeRef.current = undefined;
+      try { await runtimeRef.current?.dispose(); } catch { /* best effort */ }
+      runtimeRef.current = undefined;
       const afterFailure = await opened.getSession(id);
       const rolledBack = afterFailure?.state === 'active' ? await opened.pauseSession(id) : { ok: true };
       if (!rolledBack.ok) {
@@ -741,49 +469,19 @@ export function App() {
     }
   }, [creatingDraft, navigate]);
 
-  const releaseRecorder = useCallback(async (targetSession?: string) => {
-    recordingUnsubscribeRef.current?.();
-    recordingUnsubscribeRef.current = undefined;
-    const recorder = recordingRecorderRef.current;
-    const store = recordingStoreRef.current;
-    if (recorder) {
-      try { await recorder.stop(true); }
-      catch (error) { activityLog.append({ level: 'warn', source: 'app', message: 'recording cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) }); }
-    }
-    if (targetSession && store) await fetchRecordingSummaries(targetSession);
-    recordingRecorderRef.current = undefined;
-    recordingStoreRef.current?.close();
-    recordingStoreRef.current = undefined;
-  }, [fetchRecordingSummaries]);
-
   const stop = useCallback(async () => {
     if (lifecycleActionRef.current !== 'idle') return;
     const targetSession = recordingSessionRef.current ?? sessionId;
     if (!targetSession) return;
     lifecycleActionRef.current = 'ending';
     setLifecycleAction('ending');
-    const controller = controllerRef.current;
-    captureGenerationRef.current++;
-    captureRecoveryRef.current = undefined;
     stoppedRef.current = true;
     sessionPausedRef.current = false;
-    activityLog.append({ level: 'info', source: 'app', message: 'session stopped for navigation' });
-    reconnectUnsubscribeRef.current?.();
-    reconnectUnsubscribeRef.current = undefined;
-    transportFailureUnsubscribeRef.current?.();
-    transportFailureUnsubscribeRef.current = undefined;
     setSessionPaused(false);
-    try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
-    captureRef.current = undefined;
-    const streamId = captureStreamIdRef.current;
-    captureStreamIdRef.current = undefined;
-    if (streamId !== undefined) {
-      try { await transportRef.current?.stopAudio(streamId); } catch { /* the transport may already be gone */ }
-    }
+    activityLog.append({ level: 'info', source: 'app', message: 'session stopped for navigation' });
     let ended = true;
-    try { await controller?.stop(); }
+    try { await runtimeRef.current?.stop(); }
     catch (error) { ended = false; activityLog.append({ level: 'warn', source: 'app', message: 'live session cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) }); }
-    await releaseRecorder(targetSession);
     const opened = writerRef.current;
     if (opened) {
       const persisted = await opened.endSession(targetSession);
@@ -791,11 +489,7 @@ export function App() {
       if (!persisted.ok) activityLog.append({ level: 'error', source: 'app', message: 'session end could not be saved', ...(persisted.degradedReason ? { detail: persisted.degradedReason } : {}) });
     }
     if (ended && capability && capability !== 'fake-recovered' && capability !== 'fake') await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).catch(() => undefined);
-    controllerRef.current = undefined;
-    transportRef.current = undefined;
-    fakeTransportRef.current = undefined;
-    unsubscribeRef.current?.();
-    unsubscribeRef.current = undefined;
+    runtimeRef.current = undefined;
     if (ended) {
       configureSessionClock(await opened?.getSession(targetSession));
       capabilityRef.current = undefined;
@@ -803,8 +497,6 @@ export function App() {
       setSessionId(undefined);
       setView(undefined);
     } else {
-      // Resources are gone, but the local row remains resumable so a failed
-      // end write cannot silently discard the conversation.
       if (opened) await opened.pauseSession(targetSession);
       stoppedRef.current = true;
       sessionPausedRef.current = true;
@@ -813,7 +505,7 @@ export function App() {
     }
     lifecycleActionRef.current = 'idle';
     setLifecycleAction('idle');
-  }, [capability, configureSessionClock, fetchRecordingSummaries, releaseRecorder, sessionId]);
+  }, [capability, configureSessionClock, sessionId]);
   const stopRef = useRef(stop);
   stopRef.current = stop;
 
@@ -858,54 +550,28 @@ export function App() {
     if (lifecycleActionRef.current !== 'idle') return;
     const targetSession = recordingSessionRef.current ?? sessionId;
     if (!targetSession) return;
-    if (sessionPausedRef.current) {
-      await continueSession(targetSession);
-      return;
-    }
-    const controller = controllerRef.current;
-    if (!controller || !recordingRecorderRef.current) return;
+    if (sessionPausedRef.current) { await continueSession(targetSession); return; }
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
     lifecycleActionRef.current = 'pausing';
     setLifecycleAction('pausing');
-    captureGenerationRef.current++;
     try {
-      // The controller persists the pause barrier before disconnecting the
-      // host. If that write fails, all live resources remain available.
-      const paused = await controller.pause();
+      const paused = await runtime.pause();
       if (!paused) return;
       stoppedRef.current = true;
       sessionPausedRef.current = true;
       setSessionPaused(true);
-      reconnectUnsubscribeRef.current?.();
-      reconnectUnsubscribeRef.current = undefined;
-      transportFailureUnsubscribeRef.current?.();
-      transportFailureUnsubscribeRef.current = undefined;
-      try { await captureRef.current?.stop(); } catch { /* teardown is best effort */ }
-      captureRef.current = undefined;
-      const streamId = captureStreamIdRef.current;
-      captureStreamIdRef.current = undefined;
-      if (streamId !== undefined) {
-        try { await transportRef.current?.stopAudio(streamId); } catch { /* controller already disconnected the transport */ }
-      }
-      await releaseRecorder(targetSession);
       if (capability && capability !== 'fake-recovered' && capability !== 'fake') {
         const released = await fetch('/api/stop', { method: 'POST', credentials: 'same-origin', headers: { 'x-podcaster-capability': capability } }).then(response => response.ok).catch(() => false);
         if (!released) activityLog.append({ level: 'warn', source: 'app', message: 'session paused locally; host cleanup is pending' });
       }
       capabilityRef.current = undefined;
       setCapability(undefined);
-      unsubscribeRef.current?.();
-      unsubscribeRef.current = undefined;
-      // Keep the inert controller/fake transport references until the next
-      // runtime is composed so test diagnostics can verify the released
-      // resources. They have already unsubscribed and cannot process events.
-      transportRef.current = undefined;
       configureSessionClock(await writerRef.current?.getSession(targetSession));
-      setView(previous => pausedSessionView(previous ?? controller.snapshot()));
+      setView(previous => previous ? pausedSessionView(previous) : runtime.snapshot());
       activityLog.append({ level: 'info', source: 'app', message: 'session paused by user' });
     } catch (error) {
       activityLog.append({ level: 'error', source: 'app', message: 'session pause cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) });
-      // The durable pause barrier succeeded, so expose the paused state even if
-      // an individual browser resource refused to close.
       sessionPausedRef.current = true;
       setSessionPaused(true);
       stoppedRef.current = true;
@@ -914,32 +580,19 @@ export function App() {
       lifecycleActionRef.current = 'idle';
       setLifecycleAction('idle');
     }
-  }, [capability, configureSessionClock, continueSession, releaseRecorder, sessionId]);
+  }, [capability, configureSessionClock, continueSession, sessionId]);
 
   const buildExport = useCallback(async (onProgress?: ExportOnProgress) => {
-    const store = recordingStoreRef.current;
-    const writer = writerRef.current;
-    const current = recordingSessionRef.current;
-    if (!store || !writer || !current) return null;
-    const deps: Parameters<typeof buildRecording>[1] = {
-      store,
-      turns: writer,
-      decode: createBrowserDecoder(),
-      resample: offlineResample,
-      encode: createEncoderClient(),
-    };
-    if (onProgress) deps.onProgress = onProgress;
-    return buildRecording(current, deps);
+    return runtimeRef.current?.buildRecording(onProgress) ?? null;
   }, []);
 
   const pollRecording = useCallback(async (targetSession: string): Promise<void> => {
-    const store = recordingStoreRef.current;
-    if (!store) return;
+    const runtime = runtimeRef.current;
+    if (!runtime || runtime.sessionId !== targetSession) return;
     let enabled: boolean;
-    let summaries: RecordingItemSummary[];
-    try {
-      [enabled, summaries] = await Promise.all([store.getRecordingEnabled(), store.getSessionItemSummaries(targetSession)]);
-    } catch { return; }
+    let summaries: Awaited<ReturnType<LiveSessionRuntime['recordingSummaries']>>['summaries'];
+    try { ({ enabled, summaries } = await runtime.recordingSummaries()); }
+    catch { return; }
     if (recordingSessionRef.current !== targetSession) return;
     const last = lastCheapRef.current;
     if (!last || last.enabled !== enabled || last.signature !== recordingSummarySignature(summaries)) {
@@ -1164,23 +817,20 @@ export function App() {
   }, [mergeCustomModels]);
 
   const deleteRecording = useCallback(async () => {
-    const store = recordingStoreRef.current;
     const current = recordingSessionRef.current;
-    if (!store || !current) return;
-    await deleteSessionRecording(current, store);
+    if (!current) return;
+    await runtimeRef.current?.deleteRecording();
     await fetchRecordingSummaries(current);
   }, [fetchRecordingSummaries]);
 
   const toggleBubbleTrim = useCallback(async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
-    const store = recordingStoreRef.current;
     const current = recordingSessionRef.current;
-    if (!store || !current) return false;
+    if (!current) return false;
     const target = recordingViewRef.current.targets.get(targetId) ?? recordingViewRef.current.partTargets.get(targetId);
     if (!target) return false;
     setRecordingView(prev => ({ ...prev, pendingTargetId: targetId, error: '' }));
-    try {
-      await store.setItemsTrimmed(current, target.itemIds, trimmed);
-    } catch (error) {
+    try { await runtimeRef.current?.setItemsTrimmed(target.itemIds, trimmed); }
+    catch (error) {
       setRecordingView(prev => ({ ...prev, pendingTargetId: null, error: error instanceof Error ? error.message : 'The message could not be updated. Try again.' }));
       return false;
     }
@@ -1231,7 +881,7 @@ export function App() {
           settingsOpen={settingsOpen}
           onTogglePause={() => void togglePause()}
           onStop={() => void stop()}
-          onCancelAssistant={() => void controllerRef.current?.cancelAssistant()}
+          onCancelAssistant={() => void runtimeRef.current?.cancelAssistant()}
           onToggleBubbleTrim={toggleBubbleTrim}
           onDeleteRecording={deleteRecording}
           buildExport={buildExport}
