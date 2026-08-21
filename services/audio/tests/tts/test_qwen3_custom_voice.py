@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from benchmarks.harness.adapter import CancelToken
-from services.audio.src.tts.qwen3 import (
+from services.audio.src.tts.qwen import (
     LANGUAGE,
     SAMPLE_RATE,
     Qwen3StreamingAdapter,

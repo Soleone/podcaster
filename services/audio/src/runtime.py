@@ -25,7 +25,7 @@ from .stt.nemotron import NemotronStreamingAdapter
 from .tts.base import AudioChunk, DEFAULT_VOICE_SPEED_MODIFIER, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MIN_VOICE_SPEED_MODIFIER
 from .tts.kokoro import KokoroStreamingAdapter
 from .tts.qwen_subprocess import IsolatedQwenAdapter
-from .tts.qwen3 import QWEN_SUPPORTED_LANGUAGES
+from .tts.qwen import QWEN_SUPPORTED_LANGUAGES
 from .vad.endpointer import DeterministicEndpointer, EndpointerConfig
 
 ROOT = Path(__file__).resolve().parents[3]

@@ -45,7 +45,7 @@ def _run() -> int:
     # Import the Qwen implementation only inside the isolated interpreter.
     # Redirect incidental library output away from the JSON protocol.
     with contextlib.redirect_stdout(sys.stderr):
-        from .qwen3 import (
+        from .qwen import (
             ATTENTION,
             BASE_MODEL_PATH,
             BASE_MODEL_SHA256,
@@ -55,9 +55,9 @@ def _run() -> int:
             PRECISION,
             FasterQwenBaseCloneBackend,
             FasterQwenTorchBackend,
-            _audio_values,
-            _packet,
-            _to_device_prompt,
+        )
+        from .qwen.adapter import _audio_values, _packet, _to_device_prompt
+        from .qwen.backends import (
             _verify_base_assets,
             _verify_qwen_assets,
             _verify_runtime_distribution,

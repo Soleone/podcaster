@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from benchmarks.harness.adapter import CancelToken, Cancelled
-from services.audio.src.tts.qwen3 import (
+from services.audio.src.tts.qwen import (
     ATTENTION,
     BACKEND,
     CANDIDATE_ID,
@@ -31,8 +31,8 @@ from services.audio.src.tts.qwen3 import (
     SAMPLE_RATE,
     SPEAKER,
     Qwen3StreamingAdapter,
-    _verify_runtime_distribution,
 )
+from services.audio.src.tts.qwen.backends import _verify_runtime_distribution
 
 
 def config(**overrides: Any) -> dict[str, Any]:
@@ -193,9 +193,9 @@ def test_prepare_binds_runtime_and_model_path_before_backend() -> None:
 
 
 def test_runtime_origin_revision_verifier_fails_closed(monkeypatch: Any) -> None:
-    monkeypatch.setattr("services.audio.src.tts.qwen3._verify_lockfile", lambda: None)
-    monkeypatch.setattr("services.audio.src.tts.qwen3._verify_faster_source", lambda: (_ for _ in ()).throw(RuntimeError("origin/revision mismatch")))
-    monkeypatch.setattr("services.audio.src.tts.qwen3._verify_runtime_module_bindings", lambda: None)
+    monkeypatch.setattr("services.audio.src.tts.qwen.backends._verify_lockfile", lambda: None)
+    monkeypatch.setattr("services.audio.src.tts.qwen.backends._verify_faster_source", lambda: (_ for _ in ()).throw(RuntimeError("origin/revision mismatch")))
+    monkeypatch.setattr("services.audio.src.tts.qwen.backends._verify_runtime_module_bindings", lambda: None)
     versions = {
         "faster-qwen3-tts": "0.3.2",
         "qwen-tts": "0.1.1",

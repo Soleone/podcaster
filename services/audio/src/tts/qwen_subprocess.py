@@ -14,14 +14,8 @@ from typing import Any, Iterator
 
 import numpy as np
 
-from .qwen3 import (
-    ATTENTION,
-    DEVICE,
-    PRECISION,
-    CUSTOM_VOICE_SAMPLE_RATE,
-    Qwen3StreamingAdapter,
-    ROOT,
-)
+from .qwen import ATTENTION, DEVICE, PRECISION, Qwen3StreamingAdapter, ROOT
+from ..voice_enrollment import CUSTOM_VOICE_SAMPLE_RATE
 
 DEFAULT_QWEN_PYTHON = ROOT / ".venv-qwen/bin/python"
 
