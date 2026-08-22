@@ -17,11 +17,32 @@ const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
 // that tries to send them throws InvalidAccessError inside onmessage.
 const CLOSE_PROTOCOL_VIOLATION = 4000;
 const DEFAULT_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 10_000] as const;
-const DEFAULT_RECONNECT_WINDOW_MS = 25_000;
+// Must comfortably exceed the host's SESSION_DISCONNECT_GRACE_MS (30s): if the
+// client gives up before the host tears the conversation down, a recoverable
+// outage becomes permanent. The margin also absorbs background-tab timer
+// throttling, which stretches the backoff schedule exactly while the user is
+// paused and the tab is hidden.
+const DEFAULT_RECONNECT_WINDOW_MS = 45_000;
+// Bounds one connection attempt: a half-open TCP connect or a server that
+// accepts but never authenticates must not burn the whole reconnect window on
+// a single hung attempt.
+const HANDSHAKE_TIMEOUT_MS = 5_000;
 const MAX_QUEUED_COMMANDS = 128;
 export interface WebSocketTransportOptions {
   reconnectWindowMs?: number;
   reconnectDelaysMs?: readonly number[];
+  /** Invoked when connectivity likely returned (tab visible again, network online). */
+  subscribeConnectivityHints?: (hint: () => void) => () => void;
+}
+
+function subscribeBrowserConnectivityHints(hint: () => void): () => void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+  window.addEventListener('online', hint);
+  document.addEventListener('visibilitychange', hint);
+  return () => {
+    window.removeEventListener('online', hint);
+    document.removeEventListener('visibilitychange', hint);
+  };
 }
 interface OutputBinding {
   playbackId: string;
@@ -55,6 +76,8 @@ export class WebSocketSessionTransport implements SessionTransport {
   private connected = false;
   private reconnecting = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+  private connectivityListeners: (() => void) | undefined;
   private reconnectStartedAt = 0;
   private reconnectAttempt = 0;
   private permanentFailure = false;
@@ -110,8 +133,12 @@ export class WebSocketSessionTransport implements SessionTransport {
     }
     this.socket = socket;
     let authenticated = false;
-    const fail = (detail?: string) => this.handleSocketFailure(socket, detail);
+    const fail = (detail?: string) => {
+      this.clearHandshakeWatchdog();
+      this.handleSocketFailure(socket, detail);
+    };
     socket.binaryType = 'arraybuffer';
+    this.armHandshakeWatchdog(socket, () => authenticated);
     socket.onopen = () => {
       if (this.socket !== socket || this.intentionalDisconnect) return;
       activityLog.append({
@@ -146,6 +173,7 @@ export class WebSocketSessionTransport implements SessionTransport {
       }
       if (typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'authenticated') {
         authenticated = true;
+        this.clearHandshakeWatchdog();
         this.connected = true;
         if (!this.initialConnectionSettled) {
           this.initialConnectionSettled = true;
@@ -154,6 +182,7 @@ export class WebSocketSessionTransport implements SessionTransport {
           this.initialReject = undefined;
         } else if (this.reconnecting) {
           this.reconnecting = false;
+          this.unwatchConnectivityRestored();
           this.reconnectStartedAt = 0;
           this.reconnectAttempt = 0;
           activityLog.append({ level: 'info', source: 'transport', message: 'session socket reconnected' });
@@ -371,8 +400,48 @@ export class WebSocketSessionTransport implements SessionTransport {
         message: 'session connection lost; reconnecting',
         ...(detail ? { detail } : {}),
       });
+      // Browsers throttle timers in hidden tabs, which delays exactly these
+      // backoff attempts; retry eagerly when the tab becomes visible or the
+      // network comes back.
+      this.watchConnectivityRestored();
     }
     this.scheduleReconnect();
+  }
+
+  private armHandshakeWatchdog(socket: WebSocket, isAuthenticated: () => boolean): void {
+    this.clearHandshakeWatchdog();
+    this.handshakeTimer = setTimeout(() => {
+      this.handshakeTimer = undefined;
+      if (isAuthenticated() || this.socket !== socket || this.intentionalDisconnect) return;
+      this.handleSocketFailure(socket, 'authentication timed out');
+    }, HANDSHAKE_TIMEOUT_MS);
+  }
+
+  private clearHandshakeWatchdog(): void {
+    if (!this.handshakeTimer) return;
+    clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = undefined;
+  }
+
+  private watchConnectivityRestored(): void {
+    if (this.connectivityListeners) return;
+    const subscribe = this.options.subscribeConnectivityHints ?? subscribeBrowserConnectivityHints;
+    this.connectivityListeners = subscribe(() => this.retryReconnectImmediately());
+  }
+
+  private unwatchConnectivityRestored(): void {
+    this.connectivityListeners?.();
+    this.connectivityListeners = undefined;
+  }
+
+  private retryReconnectImmediately(): void {
+    // Only short-circuit a pending backoff delay; if an attempt is already in
+    // flight (reconnectTimer undefined) the handshake watchdog bounds it.
+    if (!this.reconnecting || !this.reconnectTimer || this.intentionalDisconnect) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    activityLog.append({ level: 'info', source: 'transport', message: 'connectivity restored; retrying immediately' });
+    this.openSocket();
   }
 
   private scheduleReconnect(): void {
@@ -381,6 +450,7 @@ export class WebSocketSessionTransport implements SessionTransport {
     const elapsed = Date.now() - this.reconnectStartedAt;
     if (elapsed >= windowMs) {
       this.reconnecting = false;
+      this.unwatchConnectivityRestored();
       this.notifyFailure('The secure session connection could not be restored. Local playback was stopped.');
       return;
     }
@@ -413,6 +483,8 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.intentionalDisconnect = true;
     this.connected = false;
     this.reconnecting = false;
+    this.unwatchConnectivityRestored();
+    this.clearHandshakeWatchdog();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;

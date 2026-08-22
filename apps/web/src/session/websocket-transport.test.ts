@@ -447,6 +447,98 @@ describe('WebSocketSessionTransport recovery', () => {
       vi.useRealTimers();
     }
   });
+
+  it('abandons a hung reconnect attempt via the handshake watchdog and keeps cycling', async () => {
+    vi.useFakeTimers();
+    try {
+      (globalThis as Record<string, unknown>).location = { protocol: 'http:', host: 'test' };
+      const sockets = [new EventSocket()];
+      let firstSocket = true;
+      const transport = new WebSocketSessionTransport(
+        SESSION,
+        () => 0,
+        () => {
+          if (firstSocket) {
+            firstSocket = false;
+            return sockets[0] as unknown as WebSocket;
+          }
+          const socket = new EventSocket();
+          sockets.push(socket);
+          return socket as unknown as WebSocket;
+        },
+        { reconnectWindowMs: 60_000, reconnectDelaysMs: [10] },
+      );
+      const failures: string[] = [];
+      transport.onFailure((message) => failures.push(message));
+      const connected = transport.connect('capability');
+      sockets[0]!.onopen?.();
+      sockets[0]!.onmessage?.({ data: JSON.stringify({ type: 'authenticated' }) });
+      await connected;
+
+      sockets[0]!.onclose?.({ code: 1006, reason: 'network' });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(sockets).toHaveLength(2);
+      // The replacement socket opens but never completes authentication; the
+      // watchdog must fail it instead of hanging on it forever.
+      sockets[1]!.onopen?.();
+      await vi.advanceTimersByTimeAsync(5_000);
+      // Backoff continues after the abandoned attempt.
+      await vi.advanceTimersByTimeAsync(10);
+      expect(sockets).toHaveLength(3);
+      expect(failures).toEqual([]);
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries immediately when a connectivity hint arrives during backoff', async () => {
+    vi.useFakeTimers();
+    try {
+      (globalThis as Record<string, unknown>).location = { protocol: 'http:', host: 'test' };
+      let emitHint: (() => void) | undefined;
+      const unsubscribed = vi.fn();
+      const subscribeConnectivityHints = (hint: () => void) => {
+        emitHint = hint;
+        return unsubscribed;
+      };
+      const sockets = [new EventSocket()];
+      let firstSocket = true;
+      const transport = new WebSocketSessionTransport(
+        SESSION,
+        () => 0,
+        () => {
+          if (firstSocket) {
+            firstSocket = false;
+            return sockets[0] as unknown as WebSocket;
+          }
+          const socket = new EventSocket();
+          sockets.push(socket);
+          return socket as unknown as WebSocket;
+        },
+        { reconnectDelaysMs: [10_000], subscribeConnectivityHints },
+      );
+      const connected = transport.connect('capability');
+      sockets[0]!.onopen?.();
+      sockets[0]!.onmessage?.({ data: JSON.stringify({ type: 'authenticated' }) });
+      await connected;
+
+      sockets[0]!.onclose?.({ code: 1006, reason: 'network' });
+      expect(emitHint).toBeTypeOf('function');
+      // The backoff delay has not elapsed yet, but the hint short-circuits it.
+      emitHint?.();
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.onopen?.();
+      sockets[1]!.onmessage?.({ data: JSON.stringify({ type: 'authenticated' }) });
+      await Promise.resolve();
+
+      // Listeners are detached once reconnection settles.
+      expect(unsubscribed).toHaveBeenCalled();
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 const REASONING = (responseId: string) =>
