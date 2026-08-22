@@ -1,15 +1,37 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-export type FakePiScenario = "normal" | "slow" | "hanging-probe" | "malformed" | "oversized" | "invalid-utf8" | "unicode-separator" | "crlf" | "crash" | "login" | "rate-limit" | "async-login" | "async-rate-limit" | "too-many-words" | "stubborn-descendant" | "incompatible-model" | "unrelated-probe" | "tools";
+export type FakePiScenario =
+  | 'normal'
+  | 'slow'
+  | 'hanging-probe'
+  | 'malformed'
+  | 'oversized'
+  | 'invalid-utf8'
+  | 'unicode-separator'
+  | 'crlf'
+  | 'crash'
+  | 'login'
+  | 'rate-limit'
+  | 'async-login'
+  | 'async-rate-limit'
+  | 'too-many-words'
+  | 'stubborn-descendant'
+  | 'incompatible-model'
+  | 'unrelated-probe'
+  | 'tools';
 
-export interface FakePi { executable: string; log: string; cleanup(): Promise<void> }
+export interface FakePi {
+  executable: string;
+  log: string;
+  cleanup(): Promise<void>;
+}
 
-export async function makeFakePi(scenario: FakePiScenario = "normal", version = "0.84.2"): Promise<FakePi> {
-  const directory = await mkdtemp(join(tmpdir(), "podcaster-fake-pi-"));
-  const executable = join(directory, "pi");
-  const log = join(directory, "calls.jsonl");
+export async function makeFakePi(scenario: FakePiScenario = 'normal', version = '0.84.2'): Promise<FakePi> {
+  const directory = await mkdtemp(join(tmpdir(), 'podcaster-fake-pi-'));
+  const executable = join(directory, 'pi');
+  const log = join(directory, 'calls.jsonl');
   const source = `#!/usr/bin/env node
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");

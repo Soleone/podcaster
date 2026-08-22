@@ -27,16 +27,16 @@ export interface AssemblerResult {
 }
 
 export class ReasoningSpeechAssembler {
-  private raw = "";
+  private raw = '';
   private emitted = 0;
   private chunks: SentenceChunk[] = [];
   /** Chunks released by append() only — exactly what callers streamed to TTS. */
   private appendEmitted: SentenceChunk[] = [];
   private segmenter: Intl.Segmenter;
-  private _canonicalPrefix = "";
+  private _canonicalPrefix = '';
 
-  constructor(private readonly posture: "riff" | "question" | "challenge") {
-    this.segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
+  constructor(private readonly posture: 'riff' | 'question' | 'challenge') {
+    this.segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
   }
 
   /** The canonical text accumulated so far. Usable by interruption classifiers. */
@@ -65,7 +65,7 @@ export class ReasoningSpeechAssembler {
 
     for (let i = this.emitted; i < releaseCount; i++) {
       const segment = segments[i]!;
-      const text = segment.segment.trim().replace(/\s+/gu, " ");
+      const text = segment.segment.trim().replace(/\s+/gu, ' ');
       if (text.length === 0) continue;
       if (!this.isValidChunk(text)) {
         // Invalid text detected: stop emitting and mark as poisoned.
@@ -80,9 +80,17 @@ export class ReasoningSpeechAssembler {
     }
 
     // Update canonical prefix for interruption classification
-    this._canonicalPrefix = this.chunks.map(c => c.text).join(" ") +
-      (this.chunks.length > 0 ? " " : "") +
-      (segments.length > this.emitted ? segments.slice(this.emitted).map(s => s.segment).join("").trim().replace(/\s+/gu, " ") : "");
+    this._canonicalPrefix =
+      this.chunks.map((c) => c.text).join(' ') +
+      (this.chunks.length > 0 ? ' ' : '') +
+      (segments.length > this.emitted
+        ? segments
+            .slice(this.emitted)
+            .map((s) => s.segment)
+            .join('')
+            .trim()
+            .replace(/\s+/gu, ' ')
+        : '');
 
     // Trim the prefix
     this._canonicalPrefix = this._canonicalPrefix.trim();
@@ -108,7 +116,7 @@ export class ReasoningSpeechAssembler {
     // Emit remaining segments
     for (let i = this.emitted; i < segments.length; i++) {
       const segment = segments[i]!;
-      const text = segment.segment.trim().replace(/\s+/gu, " ");
+      const text = segment.segment.trim().replace(/\s+/gu, ' ');
       if (text.length === 0) continue;
       if (!this.isValidChunk(text)) {
         throw new InvalidResponseError(canonical, this.posture);
@@ -135,32 +143,35 @@ export class ReasoningSpeechAssembler {
    * the TTS stream received.
    */
   emittedText(): string {
-    return this.appendEmitted.map(chunk => chunk.text).join(" ");
+    return this.appendEmitted.map((chunk) => chunk.text).join(' ');
   }
 
   /**
    * Validate that the given full canonical text equals the concatenation of emitted chunks.
    */
   validateFull(canonical: string): boolean {
-    const reconstructed = this.chunks.map(c => c.text).join(" ").trim();
+    const reconstructed = this.chunks
+      .map((c) => c.text)
+      .join(' ')
+      .trim();
     return canonical === reconstructed;
   }
 
   private canonicalize(text: string): string {
-    return text.trim().replace(/\s+/gu, " ");
+    return text.trim().replace(/\s+/gu, ' ');
   }
 
   private isValidChunk(text: string): boolean {
     if (text.length === 0) return false;
     // 45-word limit (check on the canonical prefix + this chunk)
-    const words = (this.chunks.map(c => c.text).join(" ") + " " + text).trim().split(/\s+/u).filter(Boolean);
+    const words = (this.chunks.map((c) => c.text).join(' ') + ' ' + text).trim().split(/\s+/u).filter(Boolean);
     if (words.length > 45) return false;
     // For question posture, restrict to at most one question mark total
-    if (this.posture === "question") {
+    if (this.posture === 'question') {
       // This is a progressive guard. The full check happens at final.
       // We're conservative: if we already emitted a question mark or this chunk contains one,
       // we count. But we only check total across all emitted + this new one.
-      const totalQuestions = (this.chunks.map(c => c.text).join(" ") + " " + text).match(/\?/gu) ?? [];
+      const totalQuestions = (this.chunks.map((c) => c.text).join(' ') + ' ' + text).match(/\?/gu) ?? [];
       if (totalQuestions.length > 1) return false;
     }
     // Forbidden output prefix check
@@ -174,7 +185,7 @@ export class MismatchedFinalError extends Error {
     readonly finalText: string,
     readonly accumulatedDeltas: string,
   ) {
-    super("Pi final text does not match accumulated deltas");
+    super('Pi final text does not match accumulated deltas');
   }
 }
 

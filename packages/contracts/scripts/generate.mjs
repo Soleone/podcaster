@@ -7,18 +7,22 @@ async function walk(dir) {
   const out = [];
   for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...await walk(path));
+    if (entry.isDirectory()) out.push(...(await walk(path)));
     else if (entry.name.endsWith('.json')) out.push(path);
   }
   return out;
 }
 const schemas = [];
-for (const path of await walk(schemaRoot)) schemas.push({ path: relative(schemaRoot, path), schema: JSON.parse(await readFile(path, 'utf8')) });
+for (const path of await walk(schemaRoot))
+  schemas.push({ path: relative(schemaRoot, path), schema: JSON.parse(await readFile(path, 'utf8')) });
 const namesById = new Map(schemas.map(({ schema }) => [schema.$id, schema.title]));
-const safeName = value => value.replace(/[^A-Za-z0-9_$]/g, '_');
+const safeName = (value) => value.replace(/[^A-Za-z0-9_$]/g, '_');
 function refName(ref, owner) {
-  if (ref.startsWith('#/$defs/')) return `${owner}${safeName(ref.slice(8)).replace(/^./, c => c.toUpperCase())}`;
-  const absolute = new URL(ref, owner === '' ? 'https://podcaster.local/schema/' : schemas.find(x => x.schema.title === owner)?.schema.$id).href;
+  if (ref.startsWith('#/$defs/')) return `${owner}${safeName(ref.slice(8)).replace(/^./, (c) => c.toUpperCase())}`;
+  const absolute = new URL(
+    ref,
+    owner === '' ? 'https://podcaster.local/schema/' : schemas.find((x) => x.schema.title === owner)?.schema.$id,
+  ).href;
   return namesById.get(absolute) ?? 'unknown';
 }
 function mergeObjectSchemas(parts) {
@@ -34,29 +38,32 @@ function mergeObjectSchemas(parts) {
 function resolveForType(schema, owner) {
   if (schema.$ref) {
     if (schema.$ref.startsWith('#/$defs/')) {
-      const source = schemas.find(x => x.schema.title === owner)?.schema;
+      const source = schemas.find((x) => x.schema.title === owner)?.schema;
       return source?.$defs?.[schema.$ref.slice(8)] ?? schema;
     }
-    const source = schemas.find(x => x.schema.title === owner)?.schema;
+    const source = schemas.find((x) => x.schema.title === owner)?.schema;
     const absolute = new URL(schema.$ref, source?.$id ?? 'https://podcaster.local/schema/').href;
-    return schemas.find(x => x.schema.$id === absolute)?.schema ?? schema;
+    return schemas.find((x) => x.schema.$id === absolute)?.schema ?? schema;
   }
   return schema;
 }
 function tsType(schema, owner = '') {
   if (schema.allOf) {
-    const parts = schema.allOf.map(part => resolveForType(part, owner));
-    if (parts.every(part => part.type === 'object' || part.properties || part.allOf)) {
-      const flattened = parts.flatMap(part => part.allOf ? part.allOf.map(inner => resolveForType(inner, part.title ?? owner)) : [part]);
+    const parts = schema.allOf.map((part) => resolveForType(part, owner));
+    if (parts.every((part) => part.type === 'object' || part.properties || part.allOf)) {
+      const flattened = parts.flatMap((part) =>
+        part.allOf ? part.allOf.map((inner) => resolveForType(inner, part.title ?? owner)) : [part],
+      );
       return tsType(mergeObjectSchemas(flattened), owner);
     }
-    return parts.map(value => `(${tsType(value, owner)})`).join(' & ');
+    return parts.map((value) => `(${tsType(value, owner)})`).join(' & ');
   }
   if (schema.$ref) return refName(schema.$ref, owner);
   if (schema.const !== undefined) return JSON.stringify(schema.const);
-  if (schema.enum) return schema.enum.map(value => JSON.stringify(value)).join(' | ');
-  if (schema.oneOf || schema.anyOf) return (schema.oneOf ?? schema.anyOf).map(value => tsType(value, owner)).join(' | ');
-  if (Array.isArray(schema.type)) return schema.type.map(type => tsType({ ...schema, type }, owner)).join(' | ');
+  if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
+  if (schema.oneOf || schema.anyOf)
+    return (schema.oneOf ?? schema.anyOf).map((value) => tsType(value, owner)).join(' | ');
+  if (Array.isArray(schema.type)) return schema.type.map((type) => tsType({ ...schema, type }, owner)).join(' | ');
   if (schema.type === 'string') return 'string';
   if (schema.type === 'number' || schema.type === 'integer') return 'number';
   if (schema.type === 'boolean') return 'boolean';
@@ -64,21 +71,43 @@ function tsType(schema, owner = '') {
   if (schema.type === 'array') return `Array<${tsType(schema.items ?? {}, owner)}>`;
   if (schema.type === 'object' || schema.properties) {
     const required = new Set(schema.required ?? []);
-    const fields = Object.entries(schema.properties ?? {}).map(([key, value]) => `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${tsType(value, owner)};`);
-    if (schema.additionalProperties && typeof schema.additionalProperties === 'object') fields.push(`[key: string]: ${tsType(schema.additionalProperties, owner)};`);
-    if ((schema.additionalProperties === undefined || schema.additionalProperties === true) && fields.length === 0) return 'Record<string, unknown>';
+    const fields = Object.entries(schema.properties ?? {}).map(
+      ([key, value]) => `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${tsType(value, owner)};`,
+    );
+    if (schema.additionalProperties && typeof schema.additionalProperties === 'object')
+      fields.push(`[key: string]: ${tsType(schema.additionalProperties, owner)};`);
+    if ((schema.additionalProperties === undefined || schema.additionalProperties === true) && fields.length === 0)
+      return 'Record<string, unknown>';
     return `{ ${fields.join(' ')} }`;
   }
   return 'unknown';
 }
-const lines = ['// Generated by packages/contracts/scripts/generate.mjs. Do not edit.', '', 'export const PROTOCOL_VERSION = 1 as const;', ''];
+const lines = [
+  '// Generated by packages/contracts/scripts/generate.mjs. Do not edit.',
+  '',
+  'export const PROTOCOL_VERSION = 1 as const;',
+  '',
+];
 for (const { schema } of schemas) {
-  for (const [name, definition] of Object.entries(schema.$defs ?? {})) lines.push(`export type ${schema.title}${safeName(name).replace(/^./, c => c.toUpperCase())} = ${tsType(definition, schema.title)};`);
+  for (const [name, definition] of Object.entries(schema.$defs ?? {}))
+    lines.push(
+      `export type ${schema.title}${safeName(name).replace(/^./, (c) => c.toUpperCase())} = ${tsType(definition, schema.title)};`,
+    );
   lines.push(`export type ${schema.title} = ${tsType(schema, schema.title)};`);
 }
 const core = schemas.find(({ path }) => path === 'events/core-events.json').schema;
-lines.push('', `export const CORE_EVENT_TYPES = ${JSON.stringify(core.allOf[1].properties.type.enum, null, 2)} as const;`, 'export type CoreEventType = (typeof CORE_EVENT_TYPES)[number];');
-lines.push('', `export const CONTRACT_SCHEMAS = ${JSON.stringify(Object.fromEntries(schemas.map(({ path, schema }) => [path, schema])), null, 2)} as const;`, 'export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;', `export type ContractModelName = ${schemas.map(({ schema }) => JSON.stringify(schema.title)).join(' | ')};`, '');
+lines.push(
+  '',
+  `export const CORE_EVENT_TYPES = ${JSON.stringify(core.allOf[1].properties.type.enum, null, 2)} as const;`,
+  'export type CoreEventType = (typeof CORE_EVENT_TYPES)[number];',
+);
+lines.push(
+  '',
+  `export const CONTRACT_SCHEMAS = ${JSON.stringify(Object.fromEntries(schemas.map(({ path, schema }) => [path, schema])), null, 2)} as const;`,
+  'export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;',
+  `export type ContractModelName = ${schemas.map(({ schema }) => JSON.stringify(schema.title)).join(' | ')};`,
+  '',
+);
 await writeFile(join(root, 'src/generated/contracts.ts'), lines.join('\n'));
 
 // The contracts package owns the benchmark publication schemas: copy the exact
@@ -97,7 +126,8 @@ for (const entry of schemas) {
 
 function requiredKeys(schema, owner) {
   const keys = new Set(schema.required ?? []);
-  for (const part of schema.allOf ?? []) for (const key of requiredKeys(resolveForType(part, owner), owner)) keys.add(key);
+  for (const part of schema.allOf ?? [])
+    for (const key of requiredKeys(resolveForType(part, owner), owner)) keys.add(key);
   return [...keys].sort();
 }
 const modelNames = schemas.map(({ schema }) => schema.title);
@@ -107,8 +137,12 @@ const assertionLines = [
   '',
   'type Assert<T extends true> = T;',
   'type IsRequired<T, K extends keyof T> = {} extends Pick<T, K> ? false : true;',
-  ...schemas.flatMap(({ schema }) => requiredKeys(schema, schema.title).map((key, index) =>
-    `type ${schema.title}Required${index} = Assert<IsRequired<${schema.title}, ${JSON.stringify(key)}>>;`)),
+  ...schemas.flatMap(({ schema }) =>
+    requiredKeys(schema, schema.title).map(
+      (key, index) =>
+        `type ${schema.title}Required${index} = Assert<IsRequired<${schema.title}, ${JSON.stringify(key)}>>;`,
+    ),
+  ),
   '',
 ];
 await writeFile(join(root, 'test/types-required.generated.compile.ts'), assertionLines.join('\n'));

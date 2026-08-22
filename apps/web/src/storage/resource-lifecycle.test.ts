@@ -6,7 +6,12 @@ afterEach(() => vi.restoreAllMocks());
 describe('resource lifecycle', () => {
   it('shares an open across StrictMode-like setup/cleanup and closes after the newer owner releases', async () => {
     let resolveOpen!: (value: { id: number }) => void;
-    const open = vi.fn(() => new Promise<{ id: number }>(resolve => { resolveOpen = resolve; }));
+    const open = vi.fn(
+      () =>
+        new Promise<{ id: number }>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
     const close = vi.fn();
     const owner = createResourceOwner(open, close);
 

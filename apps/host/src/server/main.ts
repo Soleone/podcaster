@@ -4,7 +4,8 @@ import { createPiClient, PI_PROBE_DEADLINE_MS } from '../pi/PiClient.js';
 const sidecar = await startSidecar();
 const app = await buildApp({
   sidecar,
-  createProbeClient: piSettings => createPiClient({ model: piSettings.model, thinkingLevel: 'off', probeDeadlineMs: PI_PROBE_DEADLINE_MS }),
+  createProbeClient: (piSettings) =>
+    createPiClient({ model: piSettings.model, thinkingLevel: 'off', probeDeadlineMs: PI_PROBE_DEADLINE_MS }),
 });
 const configuredPort = process.env.PODCASTER_PORT ?? '43127';
 const port = Number(configuredPort);
@@ -16,6 +17,14 @@ try {
   const address = await app.listen({ host: '127.0.0.1', port });
   app.setCanonicalOrigin(address);
   process.stdout.write(`Podcaster readiness: ${address}\n`);
-  const shutdown = async () => { await app.close(); await sidecar.stop(); process.exit(0); };
-  process.once('SIGINT', shutdown); process.once('SIGTERM', shutdown);
-} catch (error) { await sidecar.stop(); throw error; }
+  const shutdown = async () => {
+    await app.close();
+    await sidecar.stop();
+    process.exit(0);
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+} catch (error) {
+  await sidecar.stop();
+  throw error;
+}

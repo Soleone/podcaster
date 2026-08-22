@@ -3,7 +3,16 @@ import type { RecordingItemSummary } from '../storage/recording-store';
 import { projectRecordingTrim } from './trim-state';
 
 function summary(partial: Partial<RecordingItemSummary> & { itemId: string }): RecordingItemSummary {
-  return { sessionId: 's', recordSeq: 0, role: 'user', turnId: null, responseId: null, partIndex: null, trimmed: false, ...partial };
+  return {
+    sessionId: 's',
+    recordSeq: 0,
+    role: 'user',
+    turnId: null,
+    responseId: null,
+    partIndex: null,
+    trimmed: false,
+    ...partial,
+  };
 }
 
 describe('projectRecordingTrim', () => {
@@ -18,11 +27,14 @@ describe('projectRecordingTrim', () => {
   });
 
   it('groups every agent part sharing a responseId into one assistant target', () => {
-    const state = projectRecordingTrim([
-      summary({ itemId: 'p0', role: 'agent', responseId: 'r1', partIndex: 0 }),
-      summary({ itemId: 'p1', role: 'agent', responseId: 'r1', partIndex: 1 }),
-      summary({ itemId: 'p2', role: 'agent', responseId: 'r1', partIndex: 2 }),
-    ], true);
+    const state = projectRecordingTrim(
+      [
+        summary({ itemId: 'p0', role: 'agent', responseId: 'r1', partIndex: 0 }),
+        summary({ itemId: 'p1', role: 'agent', responseId: 'r1', partIndex: 1 }),
+        summary({ itemId: 'p2', role: 'agent', responseId: 'r1', partIndex: 2 }),
+      ],
+      true,
+    );
     const target = state.targets.get('assistant:r1');
     expect(target).toEqual({ targetId: 'assistant:r1', itemIds: ['p0', 'p1', 'p2'], state: 'included' });
     expect(state.targets.size).toBe(1);
@@ -33,13 +45,24 @@ describe('projectRecordingTrim', () => {
   });
 
   it('projects each assistant part separately while keeping the parent bubble target', () => {
-    const state = projectRecordingTrim([
-      summary({ itemId: 'p0', role: 'agent', responseId: 'r1', partIndex: 0 }),
-      summary({ itemId: 'p1', role: 'agent', responseId: 'r1', partIndex: 1, trimmed: true }),
-    ], true);
+    const state = projectRecordingTrim(
+      [
+        summary({ itemId: 'p0', role: 'agent', responseId: 'r1', partIndex: 0 }),
+        summary({ itemId: 'p1', role: 'agent', responseId: 'r1', partIndex: 1, trimmed: true }),
+      ],
+      true,
+    );
     expect(state.targets.get('assistant:r1')).toMatchObject({ itemIds: ['p0', 'p1'], state: 'mixed' });
-    expect(state.partTargets.get('assistant-part:r1:0')).toEqual({ targetId: 'assistant-part:r1:0', itemIds: ['p0'], state: 'included' });
-    expect(state.partTargets.get('assistant-part:r1:1')).toEqual({ targetId: 'assistant-part:r1:1', itemIds: ['p1'], state: 'trimmed' });
+    expect(state.partTargets.get('assistant-part:r1:0')).toEqual({
+      targetId: 'assistant-part:r1:0',
+      itemIds: ['p0'],
+      state: 'included',
+    });
+    expect(state.partTargets.get('assistant-part:r1:1')).toEqual({
+      targetId: 'assistant-part:r1:1',
+      itemIds: ['p1'],
+      state: 'trimmed',
+    });
     expect(state.totalCount).toBe(2);
     expect(state.includedCount).toBe(1);
     expect(state.bubbleCount).toBe(1);
@@ -47,37 +70,49 @@ describe('projectRecordingTrim', () => {
   });
 
   it('keeps same-turn user and assistant targets distinct', () => {
-    const state = projectRecordingTrim([
-      summary({ itemId: 'u', role: 'user', turnId: 't1' }),
-      summary({ itemId: 'a', role: 'agent', turnId: 't1', responseId: 'r1' }),
-    ], true);
+    const state = projectRecordingTrim(
+      [
+        summary({ itemId: 'u', role: 'user', turnId: 't1' }),
+        summary({ itemId: 'a', role: 'agent', turnId: 't1', responseId: 'r1' }),
+      ],
+      true,
+    );
     expect(state.targets.get('user:t1')).toBeDefined();
     expect(state.targets.get('assistant:r1')).toBeDefined();
     expect(state.targets.size).toBe(2);
   });
 
   it('keeps orphan rows exportable without creating bubble controls', () => {
-    const state = projectRecordingTrim([
-      summary({ itemId: 'u', role: 'user', turnId: 't1' }),
-      summary({ itemId: 'orphan', role: 'user', turnId: null }),
-    ], true);
+    const state = projectRecordingTrim(
+      [summary({ itemId: 'u', role: 'user', turnId: 't1' }), summary({ itemId: 'orphan', role: 'user', turnId: null })],
+      true,
+    );
     expect(state.targets.size).toBe(1);
     expect(state.totalCount).toBe(2);
     expect(state.includedCount).toBe(2);
   });
 
   it('aggregates included, trimmed, and mixed deterministically', () => {
-    const included = projectRecordingTrim([summary({ itemId: 'a', role: 'agent', responseId: 'r1', partIndex: 0 })], true);
+    const included = projectRecordingTrim(
+      [summary({ itemId: 'a', role: 'agent', responseId: 'r1', partIndex: 0 })],
+      true,
+    );
     expect(included.targets.get('assistant:r1')!.state).toBe('included');
 
-    const trimmed = projectRecordingTrim([summary({ itemId: 'a', role: 'agent', responseId: 'r1', partIndex: 0, trimmed: true })], true);
+    const trimmed = projectRecordingTrim(
+      [summary({ itemId: 'a', role: 'agent', responseId: 'r1', partIndex: 0, trimmed: true })],
+      true,
+    );
     expect(trimmed.targets.get('assistant:r1')!.state).toBe('trimmed');
     expect(trimmed.includedCount).toBe(0);
 
-    const mixed = projectRecordingTrim([
-      summary({ itemId: 'a', role: 'agent', responseId: 'r1', partIndex: 0, trimmed: true }),
-      summary({ itemId: 'b', role: 'agent', responseId: 'r1', partIndex: 1 }),
-    ], true);
+    const mixed = projectRecordingTrim(
+      [
+        summary({ itemId: 'a', role: 'agent', responseId: 'r1', partIndex: 0, trimmed: true }),
+        summary({ itemId: 'b', role: 'agent', responseId: 'r1', partIndex: 1 }),
+      ],
+      true,
+    );
     expect(mixed.targets.get('assistant:r1')!.state).toBe('mixed');
     expect(mixed.includedCount).toBe(1);
     // A partially trimmed bubble still counts as included (audio remains).

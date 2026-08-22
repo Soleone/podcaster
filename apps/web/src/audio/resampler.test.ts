@@ -3,7 +3,7 @@ import { StreamingResampler } from './resampler';
 import { floatToPcm16, foldToMono } from './pcm';
 
 describe('browser PCM preparation', () => {
-  it.each([44_100, 48_000])('preserves exact long-running phase across 128-sample blocks at %i Hz', inputRate => {
+  it.each([44_100, 48_000])('preserves exact long-running phase across 128-sample blocks at %i Hz', (inputRate) => {
     const seconds = 12;
     const sampleCount = inputRate * seconds;
     const resampler = new StreamingResampler(inputRate);
@@ -24,8 +24,9 @@ describe('browser PCM preparation', () => {
   it('preserves interpolation continuity across irregular block boundaries', () => {
     const resampler = new StreamingResampler(44_100);
     const source = Float32Array.from({ length: 4_410 }, (_, index) => Math.sin(index / 20));
-    const streamed = [source.slice(0, 137), source.slice(137, 991), source.slice(991)]
-      .flatMap(part => Array.from(resampler.push(part)));
+    const streamed = [source.slice(0, 137), source.slice(137, 991), source.slice(991)].flatMap((part) =>
+      Array.from(resampler.push(part)),
+    );
     const single = Array.from(new StreamingResampler(44_100).push(source));
     expect(streamed).toHaveLength(single.length);
     streamed.forEach((sample, index) => expect(sample).toBeCloseTo(single[index]!, 6));

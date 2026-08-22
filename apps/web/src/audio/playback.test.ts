@@ -7,9 +7,13 @@ class FakeSource {
   onended: (() => void) | null = null;
   startTime = 0;
   connect = vi.fn();
-  start = vi.fn((time = 0) => { this.startTime = time; });
+  start = vi.fn((time = 0) => {
+    this.startTime = time;
+  });
   stop = vi.fn();
-  finish(): void { this.onended?.(); }
+  finish(): void {
+    this.onended?.();
+  }
 }
 
 class FakeAudioContext {
@@ -37,8 +41,16 @@ function setup() {
   const context = new FakeAudioContext();
   const progress = vi.fn();
   const receipts: PlaybackTerminal[] = [];
-  const terminal = vi.fn(async (receipt: PlaybackTerminal) => { receipts.push(receipt); });
-  const playback = new BrowserPlayback('playback', 4, 24_000, { progress, terminal, degraded: vi.fn() }, () => context as unknown as AudioContext);
+  const terminal = vi.fn(async (receipt: PlaybackTerminal) => {
+    receipts.push(receipt);
+  });
+  const playback = new BrowserPlayback(
+    'playback',
+    4,
+    24_000,
+    { progress, terminal, degraded: vi.fn() },
+    () => context as unknown as AudioContext,
+  );
   return { context, playback, progress, receipts, terminal };
 }
 
@@ -49,7 +61,12 @@ describe('BrowserPlayback', () => {
     playback.append(0, new Int16Array(2_400));
     context.currentTime = 0.025;
     const checkpoint = await playback.pause();
-    expect(checkpoint).toMatchObject({ playbackId: 'playback', outputEpoch: 4, playedSampleOffset: 600, generatedSamples: 2_400 });
+    expect(checkpoint).toMatchObject({
+      playbackId: 'playback',
+      outputEpoch: 4,
+      playedSampleOffset: 600,
+      generatedSamples: 2_400,
+    });
     expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ playedSampleOffset: 600 }));
     playback.append(2_400, new Int16Array(480));
     expect(context.sources).toHaveLength(2);
@@ -57,7 +74,12 @@ describe('BrowserPlayback', () => {
     expect(context.resume).toHaveBeenCalledOnce();
     context.currentTime = 0.04;
     const receipt = await playback.stop('cancelled');
-    expect(receipt).toEqual({ playbackId: 'playback', cancelledEpoch: 4, finalPlayedSampleOffset: 960, reason: 'cancelled' });
+    expect(receipt).toEqual({
+      playbackId: 'playback',
+      cancelledEpoch: 4,
+      finalPlayedSampleOffset: 960,
+      reason: 'cancelled',
+    });
     expect(terminal).toHaveBeenCalledOnce();
   });
 
@@ -99,7 +121,9 @@ describe('BrowserPlayback', () => {
     playback.append(0, new Int16Array(480));
     context.currentTime = 0.02;
     context.sources[0]!.finish();
-    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ playedSampleOffset: 480, generatedSamples: 480 }));
+    expect(progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ playedSampleOffset: 480, generatedSamples: 480 }),
+    );
     expect(terminal).not.toHaveBeenCalled();
     playback.setGeneratedSamples(480);
     await vi.waitFor(() => expect(terminal).toHaveBeenCalledOnce());
@@ -122,7 +146,12 @@ describe('BrowserPlayback', () => {
     context.sources[0]!.finish();
     await vi.waitFor(() => expect(terminal).toHaveBeenCalledOnce());
     const completed = receipts[0]!;
-    expect(completed).toEqual({ playbackId: 'playback', cancelledEpoch: 4, finalPlayedSampleOffset: 2_400, reason: 'completed' });
+    expect(completed).toEqual({
+      playbackId: 'playback',
+      cancelledEpoch: 4,
+      finalPlayedSampleOffset: 2_400,
+      reason: 'completed',
+    });
     expect(await playback.stop('cancelled')).toBe(completed);
     expect(terminal).toHaveBeenCalledOnce();
   });
@@ -131,7 +160,9 @@ describe('BrowserPlayback', () => {
     const { context, playback, receipts, terminal } = setup();
     playback.setGeneratedSamples(0);
     await vi.waitFor(() => expect(terminal).toHaveBeenCalledOnce());
-    expect(receipts).toEqual([{ playbackId: 'playback', cancelledEpoch: 4, finalPlayedSampleOffset: 0, reason: 'completed' }]);
+    expect(receipts).toEqual([
+      { playbackId: 'playback', cancelledEpoch: 4, finalPlayedSampleOffset: 0, reason: 'completed' },
+    ]);
     expect(context.close).toHaveBeenCalledOnce();
     expect(await playback.stop('failed')).toBe(receipts[0]);
     expect(terminal).toHaveBeenCalledOnce();

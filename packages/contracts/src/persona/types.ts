@@ -1,7 +1,7 @@
-import type { Persona } from "../generated/contracts.js";
+import type { Persona } from '../generated/contracts.js';
 
 export type PersonaInterpretation = Persona;
-export type PersonaDiagnosticSeverity = "warning" | "error";
+export type PersonaDiagnosticSeverity = 'warning' | 'error';
 
 export interface PersonaDiagnostic {
   severity: PersonaDiagnosticSeverity;

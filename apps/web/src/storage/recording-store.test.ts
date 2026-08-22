@@ -5,7 +5,10 @@ import { RecordingStore, type StoredRecordingItem } from './recording-store';
 let dbName = '';
 afterEach(async () => {
   if (dbName) {
-    await new Promise<void>(resolve => { const request = indexedDB.deleteDatabase(dbName); request.onsuccess = request.onerror = request.onblocked = () => resolve(); });
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(dbName);
+      request.onsuccess = request.onerror = request.onblocked = () => resolve();
+    });
     dbName = '';
   }
 });
@@ -15,10 +18,29 @@ const OTHER = '018f1f32-7acc-7def-8abc-0123456789ab';
 
 function item(itemId: string, sessionId = SESSION, partial: Partial<StoredRecordingItem> = {}): StoredRecordingItem {
   return {
-    itemId, sessionId, recordSeq: 0, role: 'user', turnId: null, responseId: null, partIndex: null, playbackId: null,
-    outputEpoch: null, sampleRate: 16000, sampleCount: 0, interrupted: false, deliveredSamples: null, terminalReason: null,
-    captureStartSequence: null, captureEndSequence: null, truncated: false, durationMs: 0, createdAt: '2026-01-01T00:00:00Z',
-    monotonicMs: 0, trimmed: false, data: new Blob([], { type: 'audio/mpeg' }), ...partial,
+    itemId,
+    sessionId,
+    recordSeq: 0,
+    role: 'user',
+    turnId: null,
+    responseId: null,
+    partIndex: null,
+    playbackId: null,
+    outputEpoch: null,
+    sampleRate: 16000,
+    sampleCount: 0,
+    interrupted: false,
+    deliveredSamples: null,
+    terminalReason: null,
+    captureStartSequence: null,
+    captureEndSequence: null,
+    truncated: false,
+    durationMs: 0,
+    createdAt: '2026-01-01T00:00:00Z',
+    monotonicMs: 0,
+    trimmed: false,
+    data: new Blob([], { type: 'audio/mpeg' }),
+    ...partial,
   };
 }
 
@@ -53,15 +75,15 @@ describe('RecordingStore trim', () => {
     await store.put(item('b'));
     await store.put(item('c', OTHER));
     await store.setItemsTrimmed(SESSION, ['a', 'b'], true);
-    expect((await store.getSessionItemSummaries(SESSION)).every(summary => summary.trimmed)).toBe(true);
+    expect((await store.getSessionItemSummaries(SESSION)).every((summary) => summary.trimmed)).toBe(true);
 
     await expect(store.setItemsTrimmed(SESSION, ['a', 'b', 'missing'], false)).rejects.toThrow();
     const afterMissing = await store.getSessionItemSummaries(SESSION);
-    expect(afterMissing.every(summary => summary.trimmed)).toBe(true);
+    expect(afterMissing.every((summary) => summary.trimmed)).toBe(true);
 
     await expect(store.setItemsTrimmed(SESSION, ['a', 'c'], false)).rejects.toThrow();
     const afterCrossSession = await store.getSessionItemSummaries(SESSION);
-    expect(afterCrossSession.every(summary => summary.trimmed)).toBe(true);
+    expect(afterCrossSession.every((summary) => summary.trimmed)).toBe(true);
     store.close();
   });
 

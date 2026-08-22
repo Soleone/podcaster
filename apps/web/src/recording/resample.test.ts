@@ -10,7 +10,8 @@ function rms(channelData: Float32Array): number {
 describe('offlineResample', () => {
   it('preserves the RMS of a 440 Hz tone from 16 kHz to 44.1 kHz', () => {
     const input = new Float32Array(16_000);
-    for (let index = 0; index < input.length; index++) input[index] = 0.5 * Math.sin((2 * Math.PI * 440 * index) / 16_000);
+    for (let index = 0; index < input.length; index++)
+      input[index] = 0.5 * Math.sin((2 * Math.PI * 440 * index) / 16_000);
     const output = offlineResample(input, 16_000, 44_100);
     expect(output.length).toBe(Math.round((16_000 / 16_000) * 44_100));
     expect(rms(output)).toBeCloseTo(rms(input), 1);
@@ -18,7 +19,8 @@ describe('offlineResample', () => {
 
   it('preserves RMS from 24 kHz to 44.1 kHz and produces the expected length', () => {
     const input = new Float32Array(24_000);
-    for (let index = 0; index < input.length; index++) input[index] = 0.3 * Math.sin((2 * Math.PI * 220 * index) / 24_000);
+    for (let index = 0; index < input.length; index++)
+      input[index] = 0.3 * Math.sin((2 * Math.PI * 220 * index) / 24_000);
     const output = offlineResample(input, 24_000, 44_100);
     expect(output.length).toBe(Math.round((24_000 / 24_000) * 44_100));
     expect(rms(output)).toBeCloseTo(rms(input), 1);

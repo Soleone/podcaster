@@ -78,7 +78,12 @@ async function feedPcm(socket, srcStart, samples, started, label, stepMs = 10) {
     const pcm16 = new Int16Array(FRAME_SAMPLES);
     const take = Math.min(FRAME_SAMPLES, Math.max(0, pcm.length / 2 - src));
     if (take > 0) pcm16.set(new Int16Array(pcm.buffer, pcm.byteOffset + src * 2, take));
-    socket.send(encodeBinaryAudioFrame({ channel: 1, streamId: 7, sequence: captureSequence++, monotonicUs: BigInt(Date.now() * 1000), pcm16 }, MAX_PAYLOAD));
+    socket.send(
+      encodeBinaryAudioFrame(
+        { channel: 1, streamId: 7, sequence: captureSequence++, monotonicUs: BigInt(Date.now() * 1000), pcm16 },
+        MAX_PAYLOAD,
+      ),
+    );
     await new Promise((resolve) => setTimeout(resolve, stepMs));
   }
   log.push({ t: stamp(started), event: `feed.${label}`, frames: frameCount });
@@ -96,17 +101,28 @@ async function main() {
   });
   let stderr = '';
   host.stderr.setEncoding('utf8');
-  host.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-3000); });
+  host.stderr.on('data', (chunk) => {
+    stderr = (stderr + chunk).slice(-3000);
+  });
   const origin = await new Promise((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error(`host startup timed out; stderr: ${stderr.slice(-500)}`)), 20_000);
+    const deadline = setTimeout(
+      () => reject(new Error(`host startup timed out; stderr: ${stderr.slice(-500)}`)),
+      20_000,
+    );
     let buffer = '';
     host.stdout.setEncoding('utf8');
     host.stdout.on('data', (chunk) => {
       buffer += chunk;
       const match = buffer.match(/Podcaster readiness: (http:\/\/127\.0\.0\.1:\d+)/);
-      if (match) { clearTimeout(deadline); resolve(match[1]); }
+      if (match) {
+        clearTimeout(deadline);
+        resolve(match[1]);
+      }
     });
-    host.once('exit', (code) => { clearTimeout(deadline); reject(new Error(`host exited early (${code}): ${stderr.slice(-500)}`)); });
+    host.once('exit', (code) => {
+      clearTimeout(deadline);
+      reject(new Error(`host exited early (${code}): ${stderr.slice(-500)}`));
+    });
   });
   log.push({ t: stamp(started), event: 'host.up', origin });
 
@@ -130,7 +146,10 @@ async function main() {
       }).catch(() => null);
       if (probe && probe.ok) {
         const body = await probe.json();
-        if (body.sidecar === 'ready' && body.reasoning === 'ready') { ready = true; break; }
+        if (body.sidecar === 'ready' && body.reasoning === 'ready') {
+          ready = true;
+          break;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
@@ -139,7 +158,10 @@ async function main() {
 
     socket = new WebSocket(`${origin.replace('http', 'ws')}/ws`, { headers: { Origin: origin, Cookie: cookie } });
     socket.on('message', (raw, isBinary) => {
-      if (isBinary) { playbackBinaryFrames += 1; return; }
+      if (isBinary) {
+        playbackBinaryFrames += 1;
+        return;
+      }
       const message = JSON.parse(raw.toString());
       if (message.type === 'authenticated') return;
       events.push(message);
@@ -149,15 +171,21 @@ async function main() {
       socket.once('open', () => socket.send(JSON.stringify({ capability })));
       const timer = setTimeout(() => reject(new Error('ws authentication timed out')), 10_000);
       socket.once('message', (raw) => {
-        if (raw.toString().includes('"authenticated"')) { clearTimeout(timer); resolve(); }
-        else reject(new Error('expected authenticated'));
+        if (raw.toString().includes('"authenticated"')) {
+          clearTimeout(timer);
+          resolve();
+        } else reject(new Error('expected authenticated'));
       });
       socket.once('close', (code) => reject(new Error(`socket closed during connect (${code})`)));
     });
     log.push({ t: stamp(started), event: 'authenticated' });
 
     socket.send(JSON.stringify(command('session.start', { sessionSeed: SEED, reasoningMode: 'full' })));
-    socket.send(JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: FRAME_SAMPLES })));
+    socket.send(
+      JSON.stringify(
+        command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: FRAME_SAMPLES }),
+      ),
+    );
 
     const ackedFinals = new Set();
     const ackedPlaybacks = new Set();
@@ -165,15 +193,41 @@ async function main() {
       for (const e of events) {
         if (e.type === 'transcript.final' && !ackedFinals.has(e.eventId)) {
           ackedFinals.add(e.eventId);
-          socket.send(JSON.stringify(command('turn.persisted', { turnId: e.payload.turnId, finalEventId: e.eventId, persistedEpoch: e.epoch }, e.epoch)));
+          socket.send(
+            JSON.stringify(
+              command(
+                'turn.persisted',
+                { turnId: e.payload.turnId, finalEventId: e.eventId, persistedEpoch: e.epoch },
+                e.epoch,
+              ),
+            ),
+          );
         }
         if (e.type === 'tts.ended') {
           const key = `${e.epoch}:${e.payload.playbackId}`;
           if (!ackedPlaybacks.has(key)) {
             ackedPlaybacks.add(key);
             const generated = Number(e.payload.generatedSamples ?? 0);
-            socket.send(JSON.stringify(command('playback.progress', { playbackId: e.payload.playbackId, outputEpoch: e.epoch, playedSampleOffset: generated, generatedSamples: generated })));
-            socket.send(JSON.stringify(command('playback.stopped', { playbackId: e.payload.playbackId, cancelledEpoch: e.epoch, finalPlayedSampleOffset: generated, reason: 'completed' })));
+            socket.send(
+              JSON.stringify(
+                command('playback.progress', {
+                  playbackId: e.payload.playbackId,
+                  outputEpoch: e.epoch,
+                  playedSampleOffset: generated,
+                  generatedSamples: generated,
+                }),
+              ),
+            );
+            socket.send(
+              JSON.stringify(
+                command('playback.stopped', {
+                  playbackId: e.payload.playbackId,
+                  cancelledEpoch: e.epoch,
+                  finalPlayedSampleOffset: generated,
+                  reason: 'completed',
+                }),
+              ),
+            );
             log.push({ t: stamp(started), event: 'playback.completed', epoch: e.epoch });
           }
         }
@@ -181,7 +235,16 @@ async function main() {
           const key = `b${e.payload.outputEpoch}`;
           if (!ackedPlaybacks.has(key)) {
             ackedPlaybacks.add(key);
-            socket.send(JSON.stringify(command('playback.stopped', { playbackId: e.payload.responseId, cancelledEpoch: e.payload.outputEpoch, finalPlayedSampleOffset: playbackDeliveredSamples(), reason: 'barge_in' })));
+            socket.send(
+              JSON.stringify(
+                command('playback.stopped', {
+                  playbackId: e.payload.responseId,
+                  cancelledEpoch: e.payload.outputEpoch,
+                  finalPlayedSampleOffset: playbackDeliveredSamples(),
+                  reason: 'barge_in',
+                }),
+              ),
+            );
             log.push({ t: stamp(started), event: 'playback.barge_in_acked', epoch: e.payload.outputEpoch });
           }
         }
@@ -211,7 +274,8 @@ async function main() {
             const bad = events.find((e) => e.type === 'failure' || e.type === 'response.failed');
             return reject(new Error(`host reported ${bad.type}: ${JSON.stringify(bad.payload).slice(0, 240)}`));
           }
-          if (Date.now() > deadline) reject(new Error(`timeout waiting for ${label} (#${index + 1} ${type}; have ${list.length})`));
+          if (Date.now() > deadline)
+            reject(new Error(`timeout waiting for ${label} (#${index + 1} ${type}; have ${list.length})`));
           else setTimeout(scan, 25);
         };
         scan();
@@ -221,9 +285,16 @@ async function main() {
     const turnLog = [];
     const notePolicy = async (finalEvent, label) => {
       const policy = await next('policy.decision', `policy ${label}`, 60_000);
-      turnLog.push({ turn: label, posture: policy.payload.posture, eligible: policy.payload.eligible, transcript: finalEvent.payload.text });
+      turnLog.push({
+        turn: label,
+        posture: policy.payload.posture,
+        eligible: policy.payload.eligible,
+        transcript: finalEvent.payload.text,
+      });
       if (policy.payload.posture === 'silence') {
-        throw new Error(`${label} policy=silence ("${finalEvent.payload.text}"); utterance choice does not trigger a response`);
+        throw new Error(
+          `${label} policy=silence ("${finalEvent.payload.text}"); utterance choice does not trigger a response`,
+        );
       }
     };
 
@@ -257,14 +328,25 @@ async function main() {
       outcome = 'replaced-before-tts'; // U1 cancelled during reasoning, before synthesis
     } else {
       const first = startedList[0];
-      const ended = events.filter((e) => e.type === 'tts.ended').find((e) => e.payload.playbackId === first.payload.playbackId);
+      const ended = events
+        .filter((e) => e.type === 'tts.ended')
+        .find((e) => e.payload.playbackId === first.payload.playbackId);
       if (ended) {
         outcome = 'completed';
         await next('session.state', 'listening after turn 0', 30_000);
       } else {
         outcome = 'replaced-after-tts';
         ackedPlaybacks.add('b0');
-        socket.send(JSON.stringify(command('playback.stopped', { playbackId: first.payload.playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: playbackDeliveredSamples(), reason: 'barge_in' })));
+        socket.send(
+          JSON.stringify(
+            command('playback.stopped', {
+              playbackId: first.payload.playbackId,
+              cancelledEpoch: 0,
+              finalPlayedSampleOffset: playbackDeliveredSamples(),
+              reason: 'barge_in',
+            }),
+          ),
+        );
       }
     }
     log.push({ t: stamp(started), event: 'turn.0.outcome', outcome });
@@ -294,7 +376,15 @@ async function main() {
     // and every turn produced a non-silence policy response. When U1 is replaced
     // before its TTS starts, exactly two spoken responses exist; when U1 completes
     // and U2 still supersedes, three. Either is a valid clean-replacement result.
-    const status = failures.length === 0 && replacement && turnLog.length === 3 && ttsStarted >= 2 && ttsEnded >= 2 && reasoningFinals >= 2 ? 'passed' : 'failed';
+    const status =
+      failures.length === 0 &&
+      replacement &&
+      turnLog.length === 3 &&
+      ttsStarted >= 2 &&
+      ttsEnded >= 2 &&
+      reasoningFinals >= 2
+        ? 'passed'
+        : 'failed';
     const summary = {
       status,
       outcome,
@@ -306,27 +396,60 @@ async function main() {
       playbackBinaryFrames,
       failures: failures.map((e) => ({ type: e.type, payload: e.payload })),
       durationMs: stamp(started),
-      timeline: log.filter((e) => ['transcript.partial', 'transcript.final', 'policy.decision', 'reasoning.started', 'reasoning.final', 'tts.started', 'tts.ended', 'barge_in.confirmed', 'playback.completed', 'turn.0.outcome', 'replacement.observed', 'response.failed', 'failure'].includes(e.event))
+      timeline: log
+        .filter((e) =>
+          [
+            'transcript.partial',
+            'transcript.final',
+            'policy.decision',
+            'reasoning.started',
+            'reasoning.final',
+            'tts.started',
+            'tts.ended',
+            'barge_in.confirmed',
+            'playback.completed',
+            'turn.0.outcome',
+            'replacement.observed',
+            'response.failed',
+            'failure',
+          ].includes(e.event),
+        )
         .map((e) => ({ t: e.t, event: e.event, epoch: e.epoch, payload: e.payload })),
     };
     console.log(JSON.stringify(summary, null, 2));
 
     socket.send(JSON.stringify(command('session.stop', { reason: 'user' })));
-    await Promise.race([new Promise((resolve) => socket.once('close', () => resolve())), new Promise((resolve) => setTimeout(resolve, 5000))]);
+    await Promise.race([
+      new Promise((resolve) => socket.once('close', () => resolve())),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ]);
     socket.close();
     return status === 'passed' ? 0 : 1;
   } catch (error) {
-    console.log(JSON.stringify({
-      status: 'failed',
-      error: String(error.message ?? error),
-      stderr: stderr.slice(-800),
-      recentEvents: log.slice(-45).map((e) => ({ t: e.t, event: e.event, epoch: e.epoch, payload: e.payload })),
-      durationMs: stamp(started),
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          status: 'failed',
+          error: String(error.message ?? error),
+          stderr: stderr.slice(-800),
+          recentEvents: log.slice(-45).map((e) => ({ t: e.t, event: e.event, epoch: e.epoch, payload: e.payload })),
+          durationMs: stamp(started),
+        },
+        null,
+        2,
+      ),
+    );
     return 1;
   } finally {
-    try { socket?.close(); } catch { /* noop */ }
-    if (host.exitCode === null) { host.kill('SIGTERM'); await Promise.race([once(host, 'exit'), new Promise((r) => setTimeout(r, 2000))]); }
+    try {
+      socket?.close();
+    } catch {
+      /* noop */
+    }
+    if (host.exitCode === null) {
+      host.kill('SIGTERM');
+      await Promise.race([once(host, 'exit'), new Promise((r) => setTimeout(r, 2000))]);
+    }
     if (host.exitCode === null) host.kill('SIGKILL');
   }
 }

@@ -45,7 +45,10 @@ export function StoppedSession(props: StoppedSessionProps) {
     const store = storeRef.current;
     if (!store) return;
     try {
-      const [enabled, summaries] = await Promise.all([store.getRecordingEnabled(), store.getSessionItemSummaries(props.sessionId)]);
+      const [enabled, summaries] = await Promise.all([
+        store.getRecordingEnabled(),
+        store.getSessionItemSummaries(props.sessionId),
+      ]);
       if (mounted.current) setRecording(projectRecordingTrim(summaries, enabled));
     } catch {
       if (mounted.current) setRecordingError('Recording state could not be read.');
@@ -57,38 +60,61 @@ export function StoppedSession(props: StoppedSessionProps) {
     mounted.current = true;
     void (async () => {
       const store = await RecordingStore.open();
-      if (cancelled) { store.close(); return; }
+      if (cancelled) {
+        store.close();
+        return;
+      }
       storeRef.current = store;
       const session = await props.writer.getSession(props.sessionId);
-      if (cancelled) { store.close(); return; }
-      if (!session) { if (!cancelled) setSession(undefined); return; }
+      if (cancelled) {
+        store.close();
+        return;
+      }
+      if (!session) {
+        if (!cancelled) setSession(undefined);
+        return;
+      }
       setSession(session);
-      const viewState = await sessionViewStateFromTurns(props.writer, props.sessionId, session.state === 'paused' ? 'paused' : 'stopped');
+      const viewState = await sessionViewStateFromTurns(
+        props.writer,
+        props.sessionId,
+        session.state === 'paused' ? 'paused' : 'stopped',
+      );
       if (!cancelled) setView(viewState);
       await loadRecording();
     })();
-    return () => { cancelled = true; mounted.current = false; void storeRef.current?.close(); storeRef.current = undefined; };
+    return () => {
+      cancelled = true;
+      mounted.current = false;
+      void storeRef.current?.close();
+      storeRef.current = undefined;
+    };
   }, [props.sessionId, props.writer, loadRecording]);
 
-  const toggleTrim = useCallback(async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
-    const store = storeRef.current;
-    const current = recording;
-    if (!store || !current) return false;
-    const target = current.targets.get(targetId) ?? current.partTargets.get(targetId);
-    if (!target) return false;
-    try {
-      await store.setItemsTrimmed(props.sessionId, target.itemIds, trimmed);
-    } catch {
-      setRecordingError('The message could not be updated. Try again.');
-      return false;
-    }
-    setRecordingError(undefined);
-    await loadRecording();
-    return true;
-  }, [props.sessionId, recording, loadRecording]);
+  const toggleTrim = useCallback(
+    async (targetId: RecordingTrimTargetId, trimmed: boolean): Promise<boolean> => {
+      const store = storeRef.current;
+      const current = recording;
+      if (!store || !current) return false;
+      const target = current.targets.get(targetId) ?? current.partTargets.get(targetId);
+      if (!target) return false;
+      try {
+        await store.setItemsTrimmed(props.sessionId, target.itemIds, trimmed);
+      } catch {
+        setRecordingError('The message could not be updated. Try again.');
+        return false;
+      }
+      setRecordingError(undefined);
+      await loadRecording();
+      return true;
+    },
+    [props.sessionId, recording, loadRecording],
+  );
 
-  const buildExport = useCallback((onProgress?: ExportOnProgress) =>
-    exportSessionRecording(props.sessionId, props.writer, onProgress), [props.sessionId, props.writer]);
+  const buildExport = useCallback(
+    (onProgress?: ExportOnProgress) => exportSessionRecording(props.sessionId, props.writer, onProgress),
+    [props.sessionId, props.writer],
+  );
 
   const deleteRecording = useCallback(async () => {
     const store = storeRef.current;
@@ -104,59 +130,97 @@ export function StoppedSession(props: StoppedSessionProps) {
   }, [props.sessionId, loadRecording]);
 
   if (!session) {
-    return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
-      <Card className="mx-auto max-w-md text-center">
-        <CardHeader className="items-center">
-          <CardTitle><h1 className="m-0 text-base leading-snug font-medium">Session not found</h1></CardTitle>
-          <CardDescription>This session may have been removed from this device.</CardDescription>
-        </CardHeader>
-        <CardFooter className="justify-center">
-          <Button variant="outline" onClick={props.onBack}><ArrowLeft data-icon="inline-start" aria-hidden="true" />All sessions</Button>
-        </CardFooter>
-      </Card>
-    </main>;
+    return (
+      <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
+        <Card className="mx-auto max-w-md text-center">
+          <CardHeader className="items-center">
+            <CardTitle>
+              <h1 className="m-0 text-base leading-snug font-medium">Session not found</h1>
+            </CardTitle>
+            <CardDescription>This session may have been removed from this device.</CardDescription>
+          </CardHeader>
+          <CardFooter className="justify-center">
+            <Button variant="outline" onClick={props.onBack}>
+              <ArrowLeft data-icon="inline-start" aria-hidden="true" />
+              All sessions
+            </Button>
+          </CardFooter>
+        </Card>
+      </main>
+    );
   }
 
   if (!view || !recording) {
-    return <main className="mx-auto mt-5 mb-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground"><Spinner />Loading session…</main>;
+    return (
+      <main className="mx-auto mt-5 mb-8 flex w-[min(56rem,calc(100%_-_2rem))] items-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        Loading session…
+      </main>
+    );
   }
 
   const elapsed = sessionDurationSeconds(session);
-  return <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
-    <SessionScreen
-      state={view}
-      sessionId={props.sessionId}
-      agentName={props.agentName}
-      elapsedSeconds={elapsed}
-      sessionPaused={session.state === 'paused'}
-      onTogglePause={() => undefined}
-      onStop={props.onBack}
-      onCancelAssistant={() => undefined}
-      settingsOpen={false}
-      recording={recording}
-      onToggleBubbleTrim={toggleTrim}
-      buildExport={buildExport}
-      readOnly
-    />
-    <Card className="mt-6" role="group" aria-label="Session actions">
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary">{session.state === 'paused' ? 'Paused' : session.state === 'active' ? 'Interrupted' : 'Ended'}</Badge>
+  return (
+    <main className="mx-auto mt-5 mb-8 w-[min(56rem,calc(100%_-_2rem))]">
+      <SessionScreen
+        state={view}
+        sessionId={props.sessionId}
+        agentName={props.agentName}
+        elapsedSeconds={elapsed}
+        sessionPaused={session.state === 'paused'}
+        onTogglePause={() => undefined}
+        onStop={props.onBack}
+        onCancelAssistant={() => undefined}
+        settingsOpen={false}
+        recording={recording}
+        onToggleBubbleTrim={toggleTrim}
+        buildExport={buildExport}
+        readOnly
+      />
+      <Card className="mt-6" role="group" aria-label="Session actions">
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary">
+                {session.state === 'paused' ? 'Paused' : session.state === 'active' ? 'Interrupted' : 'Ended'}
+              </Badge>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button className="min-h-11" onClick={props.onContinue}>
+                <Mic2 data-icon="inline-start" aria-hidden="true" />
+                {session.state === 'paused' ? 'Resume session' : 'Continue session'}
+              </Button>
+              <ExportPopover
+                sessionId={props.sessionId}
+                buildExport={buildExport}
+                disabled={recording.includedCount === 0}
+                label="Export recording"
+                variant="secondary"
+              />
+              <ConfirmDeleteDialog
+                deleting={deleting}
+                onConfirm={deleteRecording}
+                trigger={
+                  <Button variant="outline" disabled={deleting || recording.totalCount === 0}>
+                    <Trash data-icon="inline-start" aria-hidden="true" />
+                    Delete recording
+                  </Button>
+                }
+              />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button className="min-h-11" onClick={props.onContinue}><Mic2 data-icon="inline-start" aria-hidden="true" />{session.state === 'paused' ? 'Resume session' : 'Continue session'}</Button>
-            <ExportPopover sessionId={props.sessionId} buildExport={buildExport} disabled={recording.includedCount === 0} label="Export recording" variant="secondary" />
-            <ConfirmDeleteDialog
-              deleting={deleting}
-              onConfirm={deleteRecording}
-              trigger={<Button variant="outline" disabled={deleting || recording.totalCount === 0}><Trash data-icon="inline-start" aria-hidden="true" />Delete recording</Button>}
-            />
-          </div>
-        </div>
-        {recordingError ? <Alert variant="destructive"><AlertDescription>{recordingError}</AlertDescription></Alert> : null}
-        {notice ? <p className="text-sm text-muted-foreground" role="status">{notice}</p> : null}
-      </CardContent>
-    </Card>
-  </main>;
+          {recordingError ? (
+            <Alert variant="destructive">
+              <AlertDescription>{recordingError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {notice ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              {notice}
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
+    </main>
+  );
 }

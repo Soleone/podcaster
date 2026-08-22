@@ -55,7 +55,12 @@ export interface LiveRuntimeTestApi {
   audio(playbackId: string, sampleOffset: number, samples: number): Promise<void>;
   capture(): void;
   degrade(message: string): void;
-  stats(): FakeRuntimeStats & { captureFrames: number; progressReports: number; terminalReceipts: number; commands: string[] };
+  stats(): FakeRuntimeStats & {
+    captureFrames: number;
+    progressReports: number;
+    terminalReceipts: number;
+    commands: string[];
+  };
 }
 
 export interface LiveRuntimeOptions {
@@ -74,20 +79,43 @@ export interface LiveRuntimeOptions {
   /** Narrow seams used by lifecycle tests; production uses browser implementations. */
   transport?: SessionTransport;
   openRecordingStore?: () => Promise<RecordingStore>;
-  createCapture?: (streamId?: number, onAudio?: (audio: Parameters<RecordingRecorder['onCaptureAudio']>[0]) => void) => Promise<CaptureHandle>;
+  createCapture?: (
+    streamId?: number,
+    onAudio?: (audio: Parameters<RecordingRecorder['onCaptureAudio']>[0]) => void,
+  ) => Promise<CaptureHandle>;
   createEncoder?: () => EncodeMp3;
 }
 
 class InstrumentedPlayback implements ControlledPlayback {
-  constructor(private readonly playback: BrowserPlayback, private readonly stats: FakeRuntimeStats) {}
-  setGeneratedSamples(samples: number): void { this.playback.setGeneratedSamples(samples); }
-  append(offset: number, pcm16: Int16Array): void { this.playback.append(offset, pcm16); }
-  async pause(): Promise<ReturnType<ControlledPlayback['pause']> extends Promise<infer T> ? T : never> { this.stats.playbackPauses++; return this.playback.pause(); }
-  async resume(rewindMs?: number): Promise<void> { this.stats.playbackResumes++; await this.playback.resume(rewindMs); }
-  stop(reason: PlaybackStopReason) { return this.playback.stop(reason); }
+  constructor(
+    private readonly playback: BrowserPlayback,
+    private readonly stats: FakeRuntimeStats,
+  ) {}
+  setGeneratedSamples(samples: number): void {
+    this.playback.setGeneratedSamples(samples);
+  }
+  append(offset: number, pcm16: Int16Array): void {
+    this.playback.append(offset, pcm16);
+  }
+  async pause(): Promise<ReturnType<ControlledPlayback['pause']> extends Promise<infer T> ? T : never> {
+    this.stats.playbackPauses++;
+    return this.playback.pause();
+  }
+  async resume(rewindMs?: number): Promise<void> {
+    this.stats.playbackResumes++;
+    await this.playback.resume(rewindMs);
+  }
+  stop(reason: PlaybackStopReason) {
+    return this.playback.stop(reason);
+  }
 }
 
-function fakeHostEvent<T extends HostEvent['type']>(sessionId: string, epoch: number, type: T, payload: HostEventPayload<T>): HostEvent {
+function fakeHostEvent<T extends HostEvent['type']>(
+  sessionId: string,
+  epoch: number,
+  type: T,
+  payload: HostEventPayload<T>,
+): HostEvent {
   return createEnvelope({ sessionId, epoch, type, payload }) as HostEvent;
 }
 
@@ -109,7 +137,14 @@ class Runtime implements LiveSessionRuntime {
 
   private constructor(options: LiveRuntimeOptions) {
     this.options = options;
-    this.stats = options.stats ?? { captureStarts: 0, captureStops: 0, captureRunning: false, playbackPauses: 0, playbackResumes: 0, playbackStops: [] };
+    this.stats = options.stats ?? {
+      captureStarts: 0,
+      captureStops: 0,
+      captureRunning: false,
+      playbackPauses: 0,
+      playbackResumes: 0,
+      playbackStops: [],
+    };
   }
 
   static async create(options: LiveRuntimeOptions): Promise<LiveSessionRuntime> {
@@ -123,68 +158,134 @@ class Runtime implements LiveSessionRuntime {
     }
   }
 
-  get sessionId(): string { return this.options.sessionId; }
-  snapshot(): SessionViewState { return this.controller?.snapshot() ?? this.options.initialState ?? initialSessionState; }
+  get sessionId(): string {
+    return this.options.sessionId;
+  }
+  snapshot(): SessionViewState {
+    return this.controller?.snapshot() ?? this.options.initialState ?? initialSessionState;
+  }
 
   private async compose(): Promise<void> {
     const store = await (this.options.openRecordingStore ?? (() => RecordingStore.open()))();
     this.store = store;
-    const recorder = new RecordingRecorder({ sessionId: this.sessionId, store, encode: this.options.createEncoder?.() ?? createEncoderClient() });
+    const recorder = new RecordingRecorder({
+      sessionId: this.sessionId,
+      store,
+      encode: this.options.createEncoder?.() ?? createEncoderClient(),
+    });
     await recorder.start();
     this.recorder = recorder;
-    const transport = this.options.transport ?? (this.options.fake ? new FakeSessionTransport() : new WebSocketSessionTransport(this.sessionId, () => this.controller?.snapshot().epoch ?? 0));
+    const transport =
+      this.options.transport ??
+      (this.options.fake
+        ? new FakeSessionTransport()
+        : new WebSocketSessionTransport(this.sessionId, () => this.controller?.snapshot().epoch ?? 0));
     this.transport = transport;
     await transport.connect(this.options.capability);
-    this.unsubs.push(transport.onEvent(event => recorder.onSessionEvent(event)));
+    this.unsubs.push(transport.onEvent((event) => recorder.onSessionEvent(event)));
     let controller!: SessionController;
     controller = new SessionController({
       sessionId: this.sessionId,
       transport,
       writer: this.options.writer,
-      ...(this.options.initialState ? { initialState: this.options.fake ? { ...this.options.initialState, audioEngine: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' } } : this.options.initialState } : {}),
-      playbackFactory: input => {
-        const playback = new BrowserPlayback(input.playbackId, input.outputEpoch, input.sampleRate, {
-          progress: progress => controller.reportPlaybackProgress(progress),
-          terminal: receipt => {
-            recorder.onSessionEvent(createEnvelope({ sessionId: this.sessionId, epoch: controller.snapshot().epoch, type: 'playback.stopped', payload: { ...receipt } }));
-            if (this.options.fake) this.stats.playbackStops.push(receipt.reason);
-            return controller.reportPlaybackTerminal(receipt);
+      ...(this.options.initialState
+        ? {
+            initialState: this.options.fake
+              ? {
+                  ...this.options.initialState,
+                  audioEngine: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' },
+                }
+              : this.options.initialState,
+          }
+        : {}),
+      playbackFactory: (input) => {
+        const playback = new BrowserPlayback(
+          input.playbackId,
+          input.outputEpoch,
+          input.sampleRate,
+          {
+            progress: (progress) => controller.reportPlaybackProgress(progress),
+            terminal: (receipt) => {
+              recorder.onSessionEvent(
+                createEnvelope({
+                  sessionId: this.sessionId,
+                  epoch: controller.snapshot().epoch,
+                  type: 'playback.stopped',
+                  payload: { ...receipt },
+                }),
+              );
+              if (this.options.fake) this.stats.playbackStops.push(receipt.reason);
+              return controller.reportPlaybackTerminal(receipt);
+            },
+            degraded: (message) => controller.degrade(message),
           },
-          degraded: message => controller.degrade(message),
-        }, undefined, audio => recorder.onPlaybackAudio(audio));
+          undefined,
+          (audio) => recorder.onPlaybackAudio(audio),
+        );
         return this.options.fake ? new InstrumentedPlayback(playback, this.stats) : playback;
       },
     });
     this.controller = controller;
-    this.unsubs.push(controller.subscribe(state => this.options.callbacks.onView(state)));
-    this.unsubs.push(transport.onFailure(message => {
-      this.options.callbacks.onTransportFailure(message);
-      this.generation++;
-      const capture = this.capture;
-      this.capture = undefined;
-      this.streamId = undefined;
-      void capture?.stop().catch(() => undefined);
-    }));
+    this.unsubs.push(controller.subscribe((state) => this.options.callbacks.onView(state)));
+    this.unsubs.push(
+      transport.onFailure((message) => {
+        this.options.callbacks.onTransportFailure(message);
+        this.generation++;
+        const capture = this.capture;
+        this.capture = undefined;
+        this.streamId = undefined;
+        void capture?.stop().catch(() => undefined);
+      }),
+    );
     if (!this.options.fake) this.unsubs.push(transport.onReconnect(() => this.recoverCapture()));
     if (!this.options.fake) {
-      await transport.startSession({ sessionSeed: this.options.seed, reasoningMode: this.options.reasoningMode, ...(this.options.planning ? { planning: this.options.planning } : {}), settings: this.options.settings });
+      await transport.startSession({
+        sessionSeed: this.options.seed,
+        reasoningMode: this.options.reasoningMode,
+        ...(this.options.planning ? { planning: this.options.planning } : {}),
+        settings: this.options.settings,
+      });
     }
-    const fakeTransport = this.options.fake ? transport as FakeSessionTransport : undefined;
-    if (fakeTransport && this.options.planning) await fakeTransport.emit(fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', { phase: 'ready', personaDigest: '0'.repeat(64), planning: { status: 'ready', topic: this.options.planning.topic, depth: this.options.planning.depth, progress: 100, detail: 'Fake services are ready to go live.' } }));
+    const fakeTransport = this.options.fake ? (transport as FakeSessionTransport) : undefined;
+    if (fakeTransport && this.options.planning)
+      await fakeTransport.emit(
+        fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', {
+          phase: 'ready',
+          personaDigest: '0'.repeat(64),
+          planning: {
+            status: 'ready',
+            topic: this.options.planning.topic,
+            depth: this.options.planning.depth,
+            progress: 100,
+            detail: 'Fake services are ready to go live.',
+          },
+        }),
+      );
     await this.options.activate();
     if (this.options.fake) {
       await this.startCapture();
-      if (fakeTransport && this.options.planning) await fakeTransport.emit(fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', { phase: 'listening', personaDigest: '0'.repeat(64) }));
+      if (fakeTransport && this.options.planning)
+        await fakeTransport.emit(
+          fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', {
+            phase: 'listening',
+            personaDigest: '0'.repeat(64),
+          }),
+        );
     } else {
-      const random = new Uint32Array(1); crypto.getRandomValues(random);
+      const random = new Uint32Array(1);
+      crypto.getRandomValues(random);
       this.streamId = random[0] ?? 0;
       let audioReady = false;
       const pending: Uint8Array[] = [];
-      this.capture = await this.makeCapture(this.streamId, audio => recorder.onCaptureAudio(audio), frame => {
-        if (audioReady) void transport.sendCapture(frame);
-        else if (pending.length < 128) pending.push(frame);
-        else controller.degrade('Microphone audio arrived before the audio engine was ready.');
-      });
+      this.capture = await this.makeCapture(
+        this.streamId,
+        (audio) => recorder.onCaptureAudio(audio),
+        (frame) => {
+          if (audioReady) void transport.sendCapture(frame);
+          else if (pending.length < 128) pending.push(frame);
+          else controller.degrade('Microphone audio arrived before the audio engine was ready.');
+        },
+      );
       await transport.startAudio(this.streamId);
       audioReady = true;
       for (const frame of pending.splice(0)) void transport.sendCapture(frame);
@@ -192,19 +293,26 @@ class Runtime implements LiveSessionRuntime {
     }
   }
 
-  private makeCapture(streamId?: number, onAudio?: (audio: Parameters<RecordingRecorder['onCaptureAudio']>[0]) => void, send?: (frame: Uint8Array) => void | Promise<void>): Promise<CaptureHandle> {
+  private makeCapture(
+    streamId?: number,
+    onAudio?: (audio: Parameters<RecordingRecorder['onCaptureAudio']>[0]) => void,
+    send?: (frame: Uint8Array) => void | Promise<void>,
+  ): Promise<CaptureHandle> {
     if (this.options.createCapture) return this.options.createCapture(streamId, onAudio);
-    const dependencies = { ...(streamId === undefined ? {} : { streamId: () => streamId }), ...(onAudio ? { onAudio } : {}) };
+    const dependencies = {
+      ...(streamId === undefined ? {} : { streamId: () => streamId }),
+      ...(onAudio ? { onAudio } : {}),
+    };
     return new BrowserCapture(dependencies).start({
-      send: send ?? (frame => this.transport!.sendCapture(frame)),
-      degraded: message => this.controller?.degrade(message),
+      send: send ?? ((frame) => this.transport!.sendCapture(frame)),
+      degraded: (message) => this.controller?.degrade(message),
     });
   }
 
   private async startCapture(): Promise<void> {
     const transport = this.transport!;
     const recorder = this.recorder!;
-    const capture = await this.makeCapture(undefined, audio => recorder.onCaptureAudio(audio));
+    const capture = await this.makeCapture(undefined, (audio) => recorder.onCaptureAudio(audio));
     this.capture = capture;
     this.stats.captureStarts++;
     if (this.options.fake) this.stats.captureRunning = true;
@@ -220,32 +328,46 @@ class Runtime implements LiveSessionRuntime {
       const generation = ++this.generation;
       const oldCapture = this.capture;
       const oldStream = this.streamId;
-      this.capture = undefined; this.streamId = undefined;
+      this.capture = undefined;
+      this.streamId = undefined;
       if (oldCapture) await oldCapture.stop().catch(() => undefined);
       if (oldStream !== undefined) await Promise.resolve(transport.stopAudio(oldStream)).catch(() => undefined);
       if (this.stopped || this.disposed) return;
-      const random = new Uint32Array(1); crypto.getRandomValues(random);
+      const random = new Uint32Array(1);
+      crypto.getRandomValues(random);
       const streamId = random[0] ?? 0;
       try {
         await transport.startAudio(streamId);
-        const recovered = await this.makeCapture(streamId, audio => recorder.onCaptureAudio(audio));
+        const recovered = await this.makeCapture(streamId, (audio) => recorder.onCaptureAudio(audio));
         if (generation !== this.generation || this.stopped || this.disposed) {
-          await recovered.stop(); await Promise.resolve(transport.stopAudio(streamId)).catch(() => undefined); return;
+          await recovered.stop();
+          await Promise.resolve(transport.stopAudio(streamId)).catch(() => undefined);
+          return;
         }
         this.streamId = streamId;
         this.capture = recovered;
-        activityLog.append({ level: 'info', source: 'app', message: 'microphone capture recovered after transport reconnect' });
+        activityLog.append({
+          level: 'info',
+          source: 'app',
+          message: 'microphone capture recovered after transport reconnect',
+        });
       } catch (error) {
         await Promise.resolve(transport.stopAudio(streamId)).catch(() => undefined);
         if (generation !== this.generation || this.stopped) return;
-        controller.degrade(error instanceof Error ? error.message : 'The microphone could not be recovered after reconnecting.');
+        controller.degrade(
+          error instanceof Error ? error.message : 'The microphone could not be recovered after reconnecting.',
+        );
       }
-    })().finally(() => { if (this.recovery === recovery) this.recovery = undefined; });
+    })().finally(() => {
+      if (this.recovery === recovery) this.recovery = undefined;
+    });
     this.recovery = recovery;
     return recovery;
   }
 
-  async cancelAssistant(): Promise<void> { await this.controller?.cancelAssistant(); }
+  async cancelAssistant(): Promise<void> {
+    await this.controller?.cancelAssistant();
+  }
 
   async pause(): Promise<boolean> {
     if (this.disposed || this.stopped) return this.snapshot().dominant === 'paused';
@@ -276,7 +398,11 @@ class Runtime implements LiveSessionRuntime {
     this.stopped = true;
     this.generation++;
     await this.releaseCapture();
-    try { await this.controller?.pause(); } catch { /* best effort during rollback */ }
+    try {
+      await this.controller?.pause();
+    } catch {
+      /* best effort during rollback */
+    }
     await this.releaseRecording(true);
     this.transport?.disconnect();
     for (const unsubscribe of this.unsubs.splice(0)) unsubscribe();
@@ -290,7 +416,11 @@ class Runtime implements LiveSessionRuntime {
     const streamId = this.streamId;
     this.streamId = undefined;
     if (capture) {
-      try { await capture.stop(); } catch { /* capture cleanup is best effort */ }
+      try {
+        await capture.stop();
+      } catch {
+        /* capture cleanup is best effort */
+      }
       this.stats.captureStops++;
       this.stats.captureRunning = false;
     }
@@ -302,8 +432,16 @@ class Runtime implements LiveSessionRuntime {
     this.released = true;
     const recorder = this.recorder;
     if (recorder) {
-      try { await recorder.stop(finalize); }
-      catch (error) { activityLog.append({ level: 'warn', source: 'app', message: 'recording cleanup failed', ...(error instanceof Error ? { detail: error.message } : {}) }); }
+      try {
+        await recorder.stop(finalize);
+      } catch (error) {
+        activityLog.append({
+          level: 'warn',
+          source: 'app',
+          message: 'recording cleanup failed',
+          ...(error instanceof Error ? { detail: error.message } : {}),
+        });
+      }
     }
     this.recorder = undefined;
     this.options.callbacks.onRecordingChanged();
@@ -333,13 +471,22 @@ class Runtime implements LiveSessionRuntime {
 
   async recordingSummaries(): Promise<{ enabled: boolean; summaries: RecordingItemSummary[] }> {
     if (!this.store) return { enabled: false, summaries: [] };
-    const [enabled, summaries] = await Promise.all([this.store.getRecordingEnabled(), this.store.getSessionItemSummaries(this.sessionId)]);
+    const [enabled, summaries] = await Promise.all([
+      this.store.getRecordingEnabled(),
+      this.store.getSessionItemSummaries(this.sessionId),
+    ]);
     return { enabled, summaries };
   }
 
   buildRecording(onProgress?: ExportOnProgress): ReturnType<typeof buildRecording> {
     if (!this.store) return Promise.resolve(null);
-    const deps: Parameters<typeof buildRecording>[1] = { store: this.store, turns: this.options.writer, decode: createBrowserDecoder(), resample: offlineResample, encode: createEncoderClient() };
+    const deps: Parameters<typeof buildRecording>[1] = {
+      store: this.store,
+      turns: this.options.writer,
+      decode: createBrowserDecoder(),
+      resample: offlineResample,
+      encode: createEncoderClient(),
+    };
     if (onProgress) deps.onProgress = onProgress;
     return buildRecording(this.sessionId, deps);
   }
@@ -349,14 +496,40 @@ class Runtime implements LiveSessionRuntime {
     const transport = this.transport as FakeSessionTransport;
     const controller = this.controller;
     return {
-      emit: (type, payload, epoch = controller.snapshot().epoch) => transport.emit(fakeHostEvent(this.sessionId, epoch, type, payload)),
-      partial: text => transport.emit(createEnvelope({ sessionId: this.sessionId, epoch: controller.snapshot().epoch, type: 'transcript.partial', payload: { utteranceId: uuidV7(), sequence: 0, text, replacedCharacters: 0 } })),
-      audio: async (playbackId, sampleOffset, samples) => { transport.emitAudio({ playbackId, sequence: 0, sampleOffset, pcm16: new Int16Array(samples) }); await new Promise(resolve => setTimeout(resolve, 0)); },
-      capture: () => (window as unknown as { __podcasterFakeWorkletNode?: { port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } } }).__podcasterFakeWorkletNode?.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>),
-      degrade: message => controller.degrade(message),
-      stats: () => ({ ...this.stats, playbackStops: [...this.stats.playbackStops], captureFrames: transport.captureFrames.length, progressReports: transport.progressReports.length, terminalReceipts: transport.terminalReceipts.size, commands: [...transport.commands] }),
+      emit: (type, payload, epoch = controller.snapshot().epoch) =>
+        transport.emit(fakeHostEvent(this.sessionId, epoch, type, payload)),
+      partial: (text) =>
+        transport.emit(
+          createEnvelope({
+            sessionId: this.sessionId,
+            epoch: controller.snapshot().epoch,
+            type: 'transcript.partial',
+            payload: { utteranceId: uuidV7(), sequence: 0, text, replacedCharacters: 0 },
+          }),
+        ),
+      audio: async (playbackId, sampleOffset, samples) => {
+        transport.emitAudio({ playbackId, sequence: 0, sampleOffset, pcm16: new Int16Array(samples) });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+      capture: () =>
+        (
+          window as unknown as {
+            __podcasterFakeWorkletNode?: { port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } };
+          }
+        ).__podcasterFakeWorkletNode?.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>),
+      degrade: (message) => controller.degrade(message),
+      stats: () => ({
+        ...this.stats,
+        playbackStops: [...this.stats.playbackStops],
+        captureFrames: transport.captureFrames.length,
+        progressReports: transport.progressReports.length,
+        terminalReceipts: transport.terminalReceipts.size,
+        commands: [...transport.commands],
+      }),
     };
   }
 }
 
-export function createLiveSessionRuntime(options: LiveRuntimeOptions): Promise<LiveSessionRuntime> { return Runtime.create(options); }
+export function createLiveSessionRuntime(options: LiveRuntimeOptions): Promise<LiveSessionRuntime> {
+  return Runtime.create(options);
+}

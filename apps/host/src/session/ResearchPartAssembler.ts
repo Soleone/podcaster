@@ -20,7 +20,7 @@ export interface PartChunk {
   partIndex: number;
 }
 
-export type ResearchPartPosture = "riff" | "question" | "challenge";
+export type ResearchPartPosture = 'riff' | 'question' | 'challenge';
 
 export interface ResearchPartLimits {
   maxPartWords: number;
@@ -51,7 +51,7 @@ export function researchPartLimits(posture: ResearchPartPosture): ResearchPartLi
 }
 
 export class ResearchPartAssembler {
-  private raw = "";
+  private raw = '';
   private processed = 0;
   private pendingSentences: string[] = [];
   private currentPart: string[] = [];
@@ -64,7 +64,7 @@ export class ResearchPartAssembler {
     private readonly maxPartSentences = 3,
     private readonly maxParts = 7,
   ) {
-    this.segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
+    this.segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
   }
 
   private segments(): Intl.SegmentData[] {
@@ -85,16 +85,20 @@ export class ResearchPartAssembler {
     for (let index = this.processed; index < segments.length; index++) this.addSentence(segments[index]!.segment);
     const released = [...this.flushComplete()];
     if (this.currentPart.length) released.push(this.emitPart());
-    const result: ResearchAssemblerResult = { raw: this.raw, canonical: this.canonicalize(this.raw), parts: [...this.parts] };
+    const result: ResearchAssemblerResult = {
+      raw: this.raw,
+      canonical: this.canonicalize(this.raw),
+      parts: [...this.parts],
+    };
     return { parts: released, result };
   }
 
   private addSentence(segmentText: string): void {
-    const text = segmentText.trim().replace(/\s+/gu, " ");
+    const text = segmentText.trim().replace(/\s+/gu, ' ');
     this.processed++;
     if (text.length === 0) return;
     this.pendingSentences.push(text);
-    if (this.pendingSentences.length > 1000) throw new InvalidPartError("research body exceeded sentence bound");
+    if (this.pendingSentences.length > 1000) throw new InvalidPartError('research body exceeded sentence bound');
   }
 
   private flushComplete(): PartChunk[] {
@@ -102,17 +106,22 @@ export class ResearchPartAssembler {
     while (this.pendingSentences.length > 0) {
       const sentence = this.pendingSentences[0]!;
       if (this.currentPart.length === 0) {
-        if (this.wordCount(sentence) > this.maxPartWords || this.charCount(sentence) > this.maxPartChars) throw new InvalidPartError("a single research sentence exceeds the part limits");
+        if (this.wordCount(sentence) > this.maxPartWords || this.charCount(sentence) > this.maxPartChars)
+          throw new InvalidPartError('a single research sentence exceeds the part limits');
         this.currentPart.push(sentence);
         this.pendingSentences.shift();
-        if (this.currentPart.length >= this.maxPartSentences) { released.push(this.emitPart()); }
+        if (this.currentPart.length >= this.maxPartSentences) {
+          released.push(this.emitPart());
+        }
         continue;
       }
       const candidate = [...this.currentPart, sentence];
       if (this.wordCount(candidate) <= this.maxPartWords && this.charCount(candidate) <= this.maxPartChars) {
         this.currentPart.push(sentence);
         this.pendingSentences.shift();
-        if (this.currentPart.length >= this.maxPartSentences) { released.push(this.emitPart()); }
+        if (this.currentPart.length >= this.maxPartSentences) {
+          released.push(this.emitPart());
+        }
         continue;
       }
       released.push(this.emitPart());
@@ -121,10 +130,10 @@ export class ResearchPartAssembler {
   }
 
   private emitPart(): PartChunk {
-    if (this.currentPart.length === 0) throw new InvalidPartError("cannot emit an empty part");
+    if (this.currentPart.length === 0) throw new InvalidPartError('cannot emit an empty part');
     const nextIndex = this.parts.length + 1;
-    if (nextIndex > this.maxParts) throw new InvalidPartError("research body exceeds the part count bound");
-    const text = this.currentPart.join(" ").trim();
+    if (nextIndex > this.maxParts) throw new InvalidPartError('research body exceeds the part count bound');
+    const text = this.currentPart.join(' ').trim();
     this.currentPart = [];
     const chunk: PartChunk = { text, partIndex: nextIndex };
     this.parts.push(chunk);
@@ -132,14 +141,14 @@ export class ResearchPartAssembler {
   }
 
   private canonicalize(text: string): string {
-    return text.trim().replace(/\s+/gu, " ");
+    return text.trim().replace(/\s+/gu, ' ');
   }
   private wordCount(text: string | string[]): number {
-    const joined = Array.isArray(text) ? text.join(" ") : text;
+    const joined = Array.isArray(text) ? text.join(' ') : text;
     return joined.split(/\s+/u).filter(Boolean).length;
   }
   private charCount(text: string | string[]): number {
-    return (Array.isArray(text) ? text.join(" ") : text).length;
+    return (Array.isArray(text) ? text.join(' ') : text).length;
   }
 }
 
@@ -148,7 +157,7 @@ export class MismatchedFinalError extends Error {
     readonly finalText: string,
     readonly accumulatedDeltas: string,
   ) {
-    super("Pi research final text does not match accumulated deltas");
+    super('Pi research final text does not match accumulated deltas');
   }
 }
 

@@ -3,7 +3,9 @@ import { CUSTOM_VOICE_SAMPLE_RATE } from '@app/contracts/settings';
 export function encodeWavPcm16(pcm16: Int16Array, sampleRate = CUSTOM_VOICE_SAMPLE_RATE): Uint8Array {
   const bytes = new Uint8Array(44 + pcm16.byteLength);
   const view = new DataView(bytes.buffer);
-  const text = (offset: number, value: string) => { for (let index = 0; index < value.length; index++) view.setUint8(offset + index, value.charCodeAt(index)); };
+  const text = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index++) view.setUint8(offset + index, value.charCodeAt(index));
+  };
   text(0, 'RIFF');
   view.setUint32(4, 36 + pcm16.byteLength, true);
   text(8, 'WAVE');
@@ -33,15 +35,16 @@ export function floatToPcm16(samples: Float32Array): Int16Array {
 export function uint8ToBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunk = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunk) binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
+  for (let offset = 0; offset < bytes.length; offset += chunk)
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
   return btoa(binary);
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
 export function blobToUint8Array(blob: Blob): Promise<Uint8Array> {
-  return blob.arrayBuffer().then(value => new Uint8Array(value));
+  return blob.arrayBuffer().then((value) => new Uint8Array(value));
 }

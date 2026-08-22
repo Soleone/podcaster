@@ -6,12 +6,20 @@ import { SettingsStore } from './settings-store';
 let dbName = '';
 afterEach(async () => {
   if (dbName) {
-    await new Promise<void>(resolve => { const request = indexedDB.deleteDatabase(dbName); request.onsuccess = request.onerror = request.onblocked = () => resolve(); });
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(dbName);
+      request.onsuccess = request.onerror = request.onblocked = () => resolve();
+    });
     dbName = '';
   }
 });
 
-const settings = () => ({ version: 1 as const, agentName: 'Ada', persona: 'You are a sharp skeptic.', voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 } });
+const settings = () => ({
+  version: 1 as const,
+  agentName: 'Ada',
+  persona: 'You are a sharp skeptic.',
+  voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 },
+});
 
 describe('SettingsStore', () => {
   it('closes safely and idempotently', async () => {
@@ -42,7 +50,9 @@ describe('SettingsStore', () => {
     const db = await openPodcasterDatabase(indexedDB, dbName);
     const transaction = db.transaction(STORES.meta, 'readwrite');
     transaction.objectStore(STORES.meta).put({ key: 'settings:v1', notTheRightShape: true });
-    await new Promise<void>(resolve => { transaction.oncomplete = () => resolve(); });
+    await new Promise<void>((resolve) => {
+      transaction.oncomplete = () => resolve();
+    });
     const store = await SettingsStore.open(indexedDB, dbName);
     expect(await store.load()).toBeUndefined();
   });
@@ -51,7 +61,12 @@ describe('SettingsStore', () => {
     dbName = 'settings-test-c';
     const store = await SettingsStore.open(indexedDB, dbName);
     expect(await store.save(settings())).toBe(true);
-    const oversized = { version: 1 as const, agentName: 'Ada', persona: 'x'.repeat(9000), voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 } };
+    const oversized = {
+      version: 1 as const,
+      agentName: 'Ada',
+      persona: 'x'.repeat(9000),
+      voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 },
+    };
     expect(await store.save(oversized)).toBe(false);
     expect(await store.load()).toEqual(settings());
   });
@@ -66,8 +81,20 @@ describe('SettingsStore', () => {
       selectedModel: { backendId: 'qwen3', modelId: 'qwen3-tts-0.6b' },
       voice: { backendId: 'qwen3', modelId: 'qwen3-tts-0.6b', catalogId: 'q1', voiceId: 'Serena', speedModifier: 1.0 },
       voiceProfiles: {
-        'kokoro:kokoro-82m-onnx': { backendId: 'kokoro', modelId: 'kokoro-82m-onnx', catalogId: 'k1', voiceId: 'af_bella', speedModifier: 1.4 },
-        'qwen3:qwen3-tts-0.6b': { backendId: 'qwen3', modelId: 'qwen3-tts-0.6b', catalogId: 'q1', voiceId: 'Serena', speedModifier: 1.0 },
+        'kokoro:kokoro-82m-onnx': {
+          backendId: 'kokoro',
+          modelId: 'kokoro-82m-onnx',
+          catalogId: 'k1',
+          voiceId: 'af_bella',
+          speedModifier: 1.4,
+        },
+        'qwen3:qwen3-tts-0.6b': {
+          backendId: 'qwen3',
+          modelId: 'qwen3-tts-0.6b',
+          catalogId: 'q1',
+          voiceId: 'Serena',
+          speedModifier: 1.0,
+        },
       },
     };
     expect(await store.save(value)).toBe(true);
@@ -78,7 +105,12 @@ describe('SettingsStore', () => {
   it('rejects an agent name over the byte limit', async () => {
     dbName = 'settings-test-d';
     const store = await SettingsStore.open(indexedDB, dbName);
-    const longName = { version: 1 as const, agentName: 'x'.repeat(65), persona: 'You are a sharp skeptic.', voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 } };
+    const longName = {
+      version: 1 as const,
+      agentName: 'x'.repeat(65),
+      persona: 'You are a sharp skeptic.',
+      voice: { catalogId: 'c1', voiceId: 'af_heart', speedModifier: 1.0 },
+    };
     expect(await store.save(longName)).toBe(false);
     expect(await store.load()).toBeUndefined();
   });
@@ -86,8 +118,25 @@ describe('SettingsStore', () => {
   it('rejects empty or cross-key model identities in persisted profiles', async () => {
     dbName = 'settings-test-invalid-model-profile';
     const store = await SettingsStore.open(indexedDB, dbName);
-    const base = { version: 1 as const, agentName: 'Ada', persona: 'You are a sharp skeptic.', voice: { backendId: 'qwen3', modelId: 'qwen3-model', catalogId: 'q1', voiceId: 'Ryan', speedModifier: 1.0 } };
-    expect(await store.save({ ...base, selectedModel: { backendId: 'qwen3', modelId: 'qwen3-model' }, voiceProfiles: { 'qwen3:qwen3-model': { ...base.voice, backendId: '', modelId: 'qwen3-model' } } })).toBe(false);
-    expect(await store.save({ ...base, selectedModel: { backendId: 'qwen3', modelId: 'qwen3-model' }, voiceProfiles: { 'kokoro:kokoro-82m-onnx': base.voice } })).toBe(false);
+    const base = {
+      version: 1 as const,
+      agentName: 'Ada',
+      persona: 'You are a sharp skeptic.',
+      voice: { backendId: 'qwen3', modelId: 'qwen3-model', catalogId: 'q1', voiceId: 'Ryan', speedModifier: 1.0 },
+    };
+    expect(
+      await store.save({
+        ...base,
+        selectedModel: { backendId: 'qwen3', modelId: 'qwen3-model' },
+        voiceProfiles: { 'qwen3:qwen3-model': { ...base.voice, backendId: '', modelId: 'qwen3-model' } },
+      }),
+    ).toBe(false);
+    expect(
+      await store.save({
+        ...base,
+        selectedModel: { backendId: 'qwen3', modelId: 'qwen3-model' },
+        voiceProfiles: { 'kokoro:kokoro-82m-onnx': base.voice },
+      }),
+    ).toBe(false);
   });
 });

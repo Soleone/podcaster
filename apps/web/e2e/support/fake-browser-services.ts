@@ -1,6 +1,8 @@
 import type { Page } from '@playwright/test';
 
-export interface FakeBrowserOptions { decodeDelayMs?: number }
+export interface FakeBrowserOptions {
+  decodeDelayMs?: number;
+}
 
 export async function installFakeMicrophone(page: Page, options: FakeBrowserOptions = {}): Promise<void> {
   await page.addInitScript((initOptions: FakeBrowserOptions) => {
@@ -14,9 +16,16 @@ export async function installFakeMicrophone(page: Page, options: FakeBrowserOpti
     }
     class FakeAudioBuffer {
       readonly channel = new Float32Array(this.length);
-      constructor(readonly length: number, readonly sampleRate: number) {}
-      get duration(): number { return this.length / this.sampleRate; }
-      getChannelData(): Float32Array { return this.channel; }
+      constructor(
+        readonly length: number,
+        readonly sampleRate: number,
+      ) {}
+      get duration(): number {
+        return this.length / this.sampleRate;
+      }
+      getChannelData(): Float32Array {
+        return this.channel;
+      }
     }
     class FakeAudioContext {
       currentTime = 0;
@@ -56,7 +65,7 @@ export async function installFakeMicrophone(page: Page, options: FakeBrowserOpti
         // fake returns one second of silence at 16 kHz. The optional delay lets
         // the export-progress UI observe the decoding phase.
         if ((initOptions.decodeDelayMs ?? 0) > 0) {
-          await new Promise<void>(resolve => setTimeout(resolve, initOptions.decodeDelayMs));
+          await new Promise<void>((resolve) => setTimeout(resolve, initOptions.decodeDelayMs));
         }
         return new FakeAudioBuffer(16_000, 16_000);
       }
@@ -97,7 +106,10 @@ export async function enterFakeSession(page: Page, origin: string, options: Fake
 }
 
 export async function emit(page: Page, type: string, payload: Record<string, unknown>): Promise<void> {
-  await page.evaluate(async ([eventType, eventPayload]) => {
-    await window.__podcasterTest!.emit(eventType, eventPayload);
-  }, [type, payload] as const);
+  await page.evaluate(
+    async ([eventType, eventPayload]) => {
+      await window.__podcasterTest!.emit(eventType, eventPayload);
+    },
+    [type, payload] as const,
+  );
 }

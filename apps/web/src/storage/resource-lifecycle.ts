@@ -11,7 +11,10 @@ export interface ResourceLease<T> {
  * React StrictMode's setup/cleanup/setup sequence without retaining a handle
  * after an actual unmount.
  */
-export function createResourceOwner<T>(open: () => Promise<T>, close: (resource: T) => void): { acquire(): ResourceLease<T> } {
+export function createResourceOwner<T>(
+  open: () => Promise<T>,
+  close: (resource: T) => void,
+): { acquire(): ResourceLease<T> } {
   let pending: Promise<T> | undefined;
   let resource: T | undefined;
   let leaseCount = 0;
@@ -38,8 +41,12 @@ export function createResourceOwner<T>(open: () => Promise<T>, close: (resource:
       const opening = pending;
       if (!opening) return;
       void opening.then(
-        () => { if (leaseCount === 0 && pending === opening) closeResource(); },
-        () => { if (leaseCount === 0 && pending === opening) pending = undefined; },
+        () => {
+          if (leaseCount === 0 && pending === opening) closeResource();
+        },
+        () => {
+          if (leaseCount === 0 && pending === opening) pending = undefined;
+        },
       );
     });
   };
@@ -48,11 +55,11 @@ export function createResourceOwner<T>(open: () => Promise<T>, close: (resource:
     if (resource !== undefined) return pending ?? Promise.resolve(resource);
     if (pending) return pending;
     const opening = open().then(
-      value => {
+      (value) => {
         if (pending === opening) resource = value;
         return value;
       },
-      error => {
+      (error) => {
         if (pending === opening) pending = undefined;
         throw error;
       },

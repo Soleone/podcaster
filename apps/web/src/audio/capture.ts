@@ -7,7 +7,9 @@ export interface CaptureSink {
   degraded(message: string): void;
 }
 
-export interface CaptureHandle { stop(): Promise<void> }
+export interface CaptureHandle {
+  stop(): Promise<void>;
+}
 
 export interface CapturedAudio {
   streamId: number;
@@ -30,7 +32,10 @@ export class BrowserCapture {
   async start(sink: CaptureSink): Promise<CaptureHandle> {
     const mediaDevices = this.dependencies.mediaDevices ?? navigator.mediaDevices;
     if (!mediaDevices?.getUserMedia) throw new Error('Microphone capture is not supported by this browser.');
-    const stream = await mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false });
+    const stream = await mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      video: false,
+    });
     let context: AudioContext | undefined;
     let stopped = false;
     try {
@@ -40,10 +45,13 @@ export class BrowserCapture {
       const node = this.dependencies.createWorkletNode?.(context) ?? new AudioWorkletNode(context, 'podcaster-capture');
       const silent = context.createGain();
       silent.gain.value = 0;
-      source.connect(node); node.connect(silent); silent.connect(context.destination);
+      source.connect(node);
+      node.connect(silent);
+      silent.connect(context.destination);
       const resampler = new StreamingResampler(context.sampleRate);
-      const random = new Uint32Array(1); crypto.getRandomValues(random);
-      const packer = new AudioFramePacker(this.dependencies.streamId?.() ?? (random[0] ?? 0));
+      const random = new Uint32Array(1);
+      crypto.getRandomValues(random);
+      const packer = new AudioFramePacker(this.dependencies.streamId?.() ?? random[0] ?? 0);
       let sending = false;
       const pending: Uint8Array[] = [];
       const flush = async () => {
@@ -54,12 +62,19 @@ export class BrowserCapture {
         } catch {
           sink.degraded('Microphone audio could not be sent. Capture was stopped.');
           await stop();
-        } finally { sending = false; }
+        } finally {
+          sending = false;
+        }
       };
-      node.port.onmessage = event => {
+      node.port.onmessage = (event) => {
         if (stopped || !(event.data instanceof Float32Array)) return;
         for (const frame of packer.push(floatToPcm16(resampler.push(event.data)))) {
-          this.dependencies.onAudio?.({ streamId: packer.streamId, sequence: frame.sequence, sampleOffset: frame.sampleOffset, pcm16: frame.pcm16 });
+          this.dependencies.onAudio?.({
+            streamId: packer.streamId,
+            sequence: frame.sequence,
+            sampleOffset: frame.sampleOffset,
+            pcm16: frame.pcm16,
+          });
           pending.push(frame.bytes);
         }
         if (pending.length > 50) {
@@ -70,16 +85,24 @@ export class BrowserCapture {
       const stop = async () => {
         if (stopped) return;
         stopped = true;
-        packer.stop(); resampler.reset();
+        packer.stop();
+        resampler.reset();
         node.port.onmessage = null;
-        source.disconnect(); node.disconnect(); silent.disconnect();
+        source.disconnect();
+        node.disconnect();
+        silent.disconnect();
         for (const track of stream.getTracks()) track.stop();
         await context!.close();
       };
-      for (const track of stream.getTracks()) track.addEventListener('ended', () => {
-        if (!stopped) sink.degraded('Microphone connection was lost. Choose retry or stop the session.');
-        void stop();
-      }, { once: true });
+      for (const track of stream.getTracks())
+        track.addEventListener(
+          'ended',
+          () => {
+            if (!stopped) sink.degraded('Microphone connection was lost. Choose retry or stop the session.');
+            void stop();
+          },
+          { once: true },
+        );
       return { stop };
     } catch (error) {
       for (const track of stream.getTracks()) track.stop();

@@ -1,13 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { CLASSIFIER_SYSTEM_PROMPT, fallbackInterruptionDecision, hasCorrectionIntent, hasLexicalContent, isBareRedirection, parseInterruptionDecision, PiInterruptionIntentClassifier } from '../../src/session/InterruptionIntentClassifier.js';
+import {
+  CLASSIFIER_SYSTEM_PROMPT,
+  fallbackInterruptionDecision,
+  hasCorrectionIntent,
+  hasLexicalContent,
+  isBareRedirection,
+  parseInterruptionDecision,
+  PiInterruptionIntentClassifier,
+} from '../../src/session/InterruptionIntentClassifier.js';
 import type { PiClient, PiEvent, PiRequestInput } from '../../src/pi/PiClient.js';
 
 class FakeClassifierPi implements PiClient {
   readonly inputs: PiRequestInput[] = [];
-  async probe() { return { status: 'ready' as const, detail: '', correctiveAction: 'None.' }; }
+  async probe() {
+    return { status: 'ready' as const, detail: '', correctiveAction: 'None.' };
+  }
   async *request(input: PiRequestInput): AsyncIterable<PiEvent> {
     this.inputs.push(input);
-    yield { type: 'final', text: JSON.stringify({ action: 'resume', intent: 'non_substantive', confidence: 'high', reason: 'No lexical content.' }) };
+    yield {
+      type: 'final',
+      text: JSON.stringify({
+        action: 'resume',
+        intent: 'non_substantive',
+        confidence: 'high',
+        reason: 'No lexical content.',
+      }),
+    };
   }
   async shutdown() {}
 }
@@ -16,15 +34,22 @@ describe('interruption intent contract', () => {
   it.each([
     ['{"action":"resume","intent":"continue_previous","confidence":"high","reason":"Asked to carry on."}', 'resume'],
     ['{"action":"accept","intent":"correction","confidence":"medium","reason":"Corrects the premise."}', 'accept'],
-  ])('accepts a strict bounded decision', (json, action) => expect(parseInterruptionDecision(json)?.action).toBe(action));
+  ])('accepts a strict bounded decision', (json, action) =>
+    expect(parseInterruptionDecision(json)?.action).toBe(action),
+  );
 
   it.each([
     '{"action":"accept","intent":"new_request","confidence":"low","reason":"Ambiguous.","extra":true}',
     '{"action":"accept","intent":"continue_previous","confidence":"high","reason":"Contradiction."}',
     'not json',
-  ])('rejects invalid classifier output %s', json => expect(parseInterruptionDecision(json)).toBeUndefined());
+  ])('rejects invalid classifier output %s', (json) => expect(parseInterruptionDecision(json)).toBeUndefined());
 
-  it.each([['', false], ['…', false], ['uh', true], ['¿podrías seguir?', true]])('uses only lexical preflight for %j', (text, expected) => expect(hasLexicalContent(text)).toBe(expected));
+  it.each([
+    ['', false],
+    ['…', false],
+    ['uh', true],
+    ['¿podrías seguir?', true],
+  ])('uses only lexical preflight for %j', (text, expected) => expect(hasLexicalContent(text)).toBe(expected));
 
   it.each([
     ['', 'resume'],
@@ -124,7 +149,13 @@ describe('interruption intent contract', () => {
     const pi = new FakeClassifierPi();
     const classifier = new PiInterruptionIntentClassifier(pi);
     const decision = await classifier.decide(
-      { interruptedResponseText: 'Some paused answer', deliveredSampleOffset: 10, generatedSamples: 100, transcript: 'uh', boundedContext: '' },
+      {
+        interruptedResponseText: 'Some paused answer',
+        deliveredSampleOffset: 10,
+        generatedSamples: 100,
+        transcript: 'uh',
+        boundedContext: '',
+      },
       new AbortController().signal,
     );
     const input = pi.inputs[0]!;

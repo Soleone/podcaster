@@ -1,4 +1,9 @@
-import type { CustomVoiceMetadata, PlanningDepth, SessionPlanningSnapshot, SessionSettingsSnapshot } from '@app/contracts/settings';
+import type {
+  CustomVoiceMetadata,
+  PlanningDepth,
+  SessionPlanningSnapshot,
+  SessionSettingsSnapshot,
+} from '@app/contracts/settings';
 
 export const PODCASTER_DB_NAME = 'podcaster-local-v1';
 export const PODCASTER_DB_VERSION = 5;
@@ -70,7 +75,14 @@ export interface StoredTurn {
   interrupted: boolean;
   pausedSampleOffset: number | null;
   interruptionDisposition: 'resume_noise' | 'resume_fragment' | 'resume_requested' | 'accept_takeover' | null;
-  interruptionIntent: 'non_substantive' | 'continue_previous' | 'new_request' | 'correction' | 'topic_change' | 'stop_previous' | null;
+  interruptionIntent:
+    | 'non_substantive'
+    | 'continue_previous'
+    | 'new_request'
+    | 'correction'
+    | 'topic_change'
+    | 'stop_previous'
+    | null;
   interruptedResponseId: string | null;
   controlOnly: boolean;
   continuationState: 'none' | 'paused' | 'resumed' | 'discarded';
@@ -86,10 +98,13 @@ function ensureIndex(store: IDBObjectStore, name: string, keyPath: string): void
   if (!store.indexNames.contains(name)) store.createIndex(name, keyPath, { unique: false });
 }
 
-export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name = PODCASTER_DB_NAME): Promise<IDBDatabase> {
+export function openPodcasterDatabase(
+  factory: DatabaseFactory = indexedDB,
+  name = PODCASTER_DB_NAME,
+): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(name, PODCASTER_DB_VERSION);
-    request.onupgradeneeded = event => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
       const transaction = request.transaction!;
       const sessions = db.objectStoreNames.contains(STORES.sessions)
@@ -107,7 +122,7 @@ export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name
         const rowsRequest = turns.getAll();
         rowsRequest.onsuccess = () => {
           const rows = (rowsRequest.result as Array<Record<string, unknown>>).sort((left, right) => {
-            const compare = (a: unknown, b: unknown) => String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+            const compare = (a: unknown, b: unknown) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0);
             const sessionOrder = compare(left.sessionId, right.sessionId);
             if (sessionOrder !== 0) return sessionOrder;
             const chronology = compare(left.createdAt, right.createdAt);
@@ -117,13 +132,27 @@ export function openPodcasterDatabase(factory: DatabaseFactory = indexedDB, name
           let sequence = 0;
           for (const value of rows) {
             const rowSessionId = String(value.sessionId);
-            if (rowSessionId !== sessionId) { sessionId = rowSessionId; sequence = 0; }
-            turns.put({ ...value, pausedSampleOffset: null, interruptionDisposition: null, interruptionIntent: null, interruptedResponseId: null, controlOnly: false, continuationState: value.interrupted ? 'discarded' : 'none', timelineSequence: ++sequence });
+            if (rowSessionId !== sessionId) {
+              sessionId = rowSessionId;
+              sequence = 0;
+            }
+            turns.put({
+              ...value,
+              pausedSampleOffset: null,
+              interruptionDisposition: null,
+              interruptionIntent: null,
+              interruptedResponseId: null,
+              controlOnly: false,
+              continuationState: value.interrupted ? 'discarded' : 'none',
+              timelineSequence: ++sequence,
+            });
           }
         };
       }
-      if (!db.objectStoreNames.contains(STORES.appliedEvents)) db.createObjectStore(STORES.appliedEvents, { keyPath: 'eventId' });
-      if (!db.objectStoreNames.contains(STORES.terminalReceipts)) db.createObjectStore(STORES.terminalReceipts, { keyPath: 'playbackId' });
+      if (!db.objectStoreNames.contains(STORES.appliedEvents))
+        db.createObjectStore(STORES.appliedEvents, { keyPath: 'eventId' });
+      if (!db.objectStoreNames.contains(STORES.terminalReceipts))
+        db.createObjectStore(STORES.terminalReceipts, { keyPath: 'playbackId' });
       if (!db.objectStoreNames.contains(STORES.meta)) db.createObjectStore(STORES.meta, { keyPath: 'key' });
       if (!db.objectStoreNames.contains(STORES.recordingItems)) {
         const recordingItems = db.createObjectStore(STORES.recordingItems, { keyPath: 'itemId' });

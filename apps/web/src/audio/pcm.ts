@@ -1,6 +1,6 @@
 export function foldToMono(channels: readonly Float32Array[]): Float32Array {
   if (channels.length === 0) return new Float32Array();
-  const length = Math.min(...channels.map(channel => channel.length));
+  const length = Math.min(...channels.map((channel) => channel.length));
   const mono = new Float32Array(length);
   for (let sample = 0; sample < length; sample++) {
     let total = 0;

@@ -39,16 +39,48 @@ const qwenCatalog = {
 function readinessSnapshot() {
   return {
     capabilities: [
-      { id: 'voice_input', label: 'Voice input', state: 'ready', reason: 'Microphone access is allowed.', action: 'No action needed.' },
-      { id: 'voice_output', label: 'Voice output', state: 'ready', reason: 'Kokoro CUDA is ready. Your local audio engine is running.', action: 'No action needed.' },
-      { id: 'cloud_reasoning', label: 'Cloud reasoning', state: 'ready', reason: 'Pi is ready.', action: 'No action needed.' },
+      {
+        id: 'voice_input',
+        label: 'Voice input',
+        state: 'ready',
+        reason: 'Microphone access is allowed.',
+        action: 'No action needed.',
+      },
+      {
+        id: 'voice_output',
+        label: 'Voice output',
+        state: 'ready',
+        reason: 'Kokoro CUDA is ready. Your local audio engine is running.',
+        action: 'No action needed.',
+      },
+      {
+        id: 'cloud_reasoning',
+        label: 'Cloud reasoning',
+        state: 'ready',
+        reason: 'Pi is ready.',
+        action: 'No action needed.',
+      },
     ],
     sidecar: 'ready',
     reasoning: 'ready',
     voiceCatalog: kokoroCatalog,
     ttsModels: [
-      { backendId: 'kokoro', modelId: 'kokoro-82m-onnx', label: 'Kokoro CUDA', status: 'ready', speed: kokoroCatalog.speed, voiceCatalog: kokoroCatalog },
-      { backendId: 'qwen3', modelId: 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice', label: 'Qwen CustomVoice', status: 'ready', speed: qwenCatalog.speed, voiceCatalog: qwenCatalog },
+      {
+        backendId: 'kokoro',
+        modelId: 'kokoro-82m-onnx',
+        label: 'Kokoro CUDA',
+        status: 'ready',
+        speed: kokoroCatalog.speed,
+        voiceCatalog: kokoroCatalog,
+      },
+      {
+        backendId: 'qwen3',
+        modelId: 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
+        label: 'Qwen CustomVoice',
+        status: 'ready',
+        speed: qwenCatalog.speed,
+        voiceCatalog: qwenCatalog,
+      },
     ],
     activeTtsModel: { backendId: 'kokoro', modelId: 'kokoro-82m-onnx' },
   };
@@ -77,17 +109,24 @@ function silentWav(): Buffer {
 
 async function openSettings(page: Page, origin: string): Promise<void> {
   await page.goto(origin);
-  await page.getByRole('button', { name: /Open settings/ }).first().click();
+  await page
+    .getByRole('button', { name: /Open settings/ })
+    .first()
+    .click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
   await page.getByRole('tab', { name: 'Voice' }).click();
 }
 
-
-test('switching the TTS backend reconciles voice and speed controls and previews through the selected backend', async ({ page, origin }) => {
+test('switching the TTS backend reconciles voice and speed controls and previews through the selected backend', async ({
+  page,
+  origin,
+}) => {
   await installFakeMicrophone(page);
   const previewRequests: Array<Record<string, unknown>> = [];
-  await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
-  await page.route('**/api/voice-preview', async route => {
+  await page.route('**/api/readiness', async (route) => {
+    await route.fulfill({ json: readinessSnapshot() });
+  });
+  await page.route('**/api/voice-preview', async (route) => {
     previewRequests.push(route.request().postDataJSON() as Record<string, unknown>);
     await route.fulfill({ contentType: 'audio/wav', body: silentWav() });
   });
@@ -107,7 +146,11 @@ test('switching the TTS backend reconciles voice and speed controls and previews
   await expect(page.getByRole('combobox', { name: 'Voice' })).not.toContainText('Bella');
   await expect(page.getByLabel('Speed modifier')).toBeDisabled();
   await expect(page.getByLabel('Speed modifier')).toHaveValue('1');
-  await expect(page.getByText('Your saved voice is no longer available on the current audio engine. The verified default was selected instead.')).toBeVisible();
+  await expect(
+    page.getByText(
+      'Your saved voice is no longer available on the current audio engine. The verified default was selected instead.',
+    ),
+  ).toBeVisible();
 
   // The preview request carries the Qwen backend, model, catalog, and the
   // fixed speed, proving the selected backend reaches the adapter contract.
@@ -132,7 +175,9 @@ test('switching the TTS backend reconciles voice and speed controls and previews
 
 test('a stored custom voice is appended only to Qwen and survives backend switching', async ({ page, origin }) => {
   await installFakeMicrophone(page);
-  await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
+  await page.route('**/api/readiness', async (route) => {
+    await route.fulfill({ json: readinessSnapshot() });
+  });
   await page.goto(origin);
   await page.evaluate(async () => {
     await new Promise<void>((resolve, reject) => {
@@ -153,13 +198,19 @@ test('a stored custom voice is appended only to Qwen and survives backend switch
           updatedAt: '2026-08-17T00:00:00.000Z',
           wav: new Blob([bytes], { type: 'audio/wav' }),
         });
-        transaction.oncomplete = () => { db.close(); resolve(); };
+        transaction.oncomplete = () => {
+          db.close();
+          resolve();
+        };
         transaction.onerror = () => reject(transaction.error);
       };
     });
   });
   await page.reload();
-  await page.getByRole('button', { name: /Open settings/ }).first().click();
+  await page
+    .getByRole('button', { name: /Open settings/ })
+    .first()
+    .click();
   await page.getByRole('tab', { name: 'Voice' }).click();
   await page.getByRole('combobox', { name: 'Speech model' }).click();
   await page.getByRole('option', { name: 'Qwen CustomVoice' }).click();
@@ -174,10 +225,17 @@ test('a stored custom voice is appended only to Qwen and survives backend switch
   await expect(page.getByRole('combobox', { name: 'Voice' })).toContainText('Local Me');
 });
 
-test('a selected Qwen backend persists across reload and survives with its own voice profile', async ({ page, origin }) => {
+test('a selected Qwen backend persists across reload and survives with its own voice profile', async ({
+  page,
+  origin,
+}) => {
   await installFakeMicrophone(page);
-  await page.route('**/api/readiness', async route => { await route.fulfill({ json: readinessSnapshot() }); });
-  await page.route('**/api/voice-preview', async route => { await route.fulfill({ contentType: 'audio/wav', body: silentWav() }); });
+  await page.route('**/api/readiness', async (route) => {
+    await route.fulfill({ json: readinessSnapshot() });
+  });
+  await page.route('**/api/voice-preview', async (route) => {
+    await route.fulfill({ contentType: 'audio/wav', body: silentWav() });
+  });
   await openSettings(page, origin);
 
   await page.getByRole('combobox', { name: 'Speech model' }).click();
@@ -189,7 +247,10 @@ test('a selected Qwen backend persists across reload and survives with its own v
 
   // The selection is a stored per-backend profile, not an in-memory choice.
   await page.reload();
-  await page.getByRole('button', { name: /Open settings/ }).first().click();
+  await page
+    .getByRole('button', { name: /Open settings/ })
+    .first()
+    .click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
   await page.getByRole('tab', { name: 'Voice' }).click();
   await expect(page.getByRole('combobox', { name: 'Speech model' })).toContainText('Qwen CustomVoice');

@@ -1,12 +1,20 @@
 import type { StableEvent } from '../storage/stable-turn-writer';
-import type { RecordingSampleRate, RecordingStore, StoredRecordingItem, TerminalReason } from '../storage/recording-store';
+import type {
+  RecordingSampleRate,
+  RecordingStore,
+  StoredRecordingItem,
+  TerminalReason,
+} from '../storage/recording-store';
 import { uuidV7 } from '../session/envelope';
 import type { EncodeMp3 } from './encode';
 
 export type { EncodeMp3 } from './encode';
 export const PER_TURN_KBPS = 64;
 
-interface FrameChunk { sequence: number; pcm16: Int16Array }
+interface FrameChunk {
+  sequence: number;
+  pcm16: Int16Array;
+}
 interface OpenUserSlice {
   utteranceId: string;
   streamId: string;
@@ -14,7 +22,10 @@ interface OpenUserSlice {
   frames: FrameChunk[];
   itemId: string;
 }
-interface PendingUserItem { itemId: string; turnId: string | null }
+interface PendingUserItem {
+  itemId: string;
+  turnId: string | null;
+}
 interface AgentBuffer {
   playbackId: string;
   responseId: string;
@@ -34,7 +45,10 @@ function concatFrames(frames: Array<{ pcm16: Int16Array }>): Int16Array {
   const total = frames.reduce((sum, frame) => sum + frame.pcm16.length, 0);
   const pcm = new Int16Array(total);
   let offset = 0;
-  for (const frame of frames) { pcm.set(frame.pcm16, offset); offset += frame.pcm16.length; }
+  for (const frame of frames) {
+    pcm.set(frame.pcm16, offset);
+    offset += frame.pcm16.length;
+  }
   return pcm;
 }
 
@@ -76,9 +90,11 @@ export class RecordingRecorder {
     // Keep a lookback window so a slice can backfill frames tapped before the
     // speech_start relay arrived (VAD needs a few frames before declaring start).
     this.recentFrames.push({ sequence: capture.sequence, pcm16: capture.pcm16.slice() });
-    if (this.recentFrames.length > RECENT_FRAME_LIMIT) this.recentFrames.splice(0, this.recentFrames.length - RECENT_FRAME_LIMIT);
+    if (this.recentFrames.length > RECENT_FRAME_LIMIT)
+      this.recentFrames.splice(0, this.recentFrames.length - RECENT_FRAME_LIMIT);
     for (const slice of this.userSlices.values()) {
-      if (capture.sequence >= slice.startSeq) slice.frames.push({ sequence: capture.sequence, pcm16: capture.pcm16.slice() });
+      if (capture.sequence >= slice.startSeq)
+        slice.frames.push({ sequence: capture.sequence, pcm16: capture.pcm16.slice() });
     }
   }
 
@@ -97,7 +113,14 @@ export class RecordingRecorder {
         const streamId = String(event.payload.streamId ?? '');
         const utteranceId = String(event.payload.utteranceId ?? '');
         const startSeq = Number(event.payload.captureStartSequence);
-        if (!streamId || !utteranceId || !Number.isSafeInteger(startSeq) || startSeq < 0 || this.userSlices.has(utteranceId)) return;
+        if (
+          !streamId ||
+          !utteranceId ||
+          !Number.isSafeInteger(startSeq) ||
+          startSeq < 0 ||
+          this.userSlices.has(utteranceId)
+        )
+          return;
         const slice: OpenUserSlice = { utteranceId, streamId, startSeq, frames: [], itemId: uuidV7() };
         for (const frame of this.recentFrames) {
           if (frame.sequence >= startSeq) slice.frames.push({ sequence: frame.sequence, pcm16: frame.pcm16.slice() });
@@ -111,7 +134,11 @@ export class RecordingRecorder {
         const slice = this.userSlices.get(utteranceId);
         if (!slice) return;
         const captureEndSequence = Number(event.payload.captureEndSequence);
-        this.commitUserSlice(slice, Number.isSafeInteger(captureEndSequence) && captureEndSequence >= 0 ? captureEndSequence : null, false);
+        this.commitUserSlice(
+          slice,
+          Number.isSafeInteger(captureEndSequence) && captureEndSequence >= 0 ? captureEndSequence : null,
+          false,
+        );
         break;
       }
       case 'transcript.final': {
@@ -144,7 +171,13 @@ export class RecordingRecorder {
         const playbackId = String(event.payload.playbackId ?? '');
         const responseId = String(event.payload.responseId ?? '');
         const sampleRate = Number(event.payload.sampleRate);
-        if (!playbackId || !responseId || (sampleRate !== 16000 && sampleRate !== 24000) || this.agentBuffers.has(playbackId)) return;
+        if (
+          !playbackId ||
+          !responseId ||
+          (sampleRate !== 16000 && sampleRate !== 24000) ||
+          this.agentBuffers.has(playbackId)
+        )
+          return;
         this.agentBuffers.set(playbackId, {
           playbackId,
           responseId,
@@ -173,7 +206,12 @@ export class RecordingRecorder {
         const cancelledEpoch = Number(event.payload.cancelledEpoch);
         const finalPlayedSampleOffset = Number(event.payload.finalPlayedSampleOffset);
         const reason = String(event.payload.reason ?? '');
-        if (!Number.isSafeInteger(cancelledEpoch) || !Number.isSafeInteger(finalPlayedSampleOffset) || finalPlayedSampleOffset < 0) return;
+        if (
+          !Number.isSafeInteger(cancelledEpoch) ||
+          !Number.isSafeInteger(finalPlayedSampleOffset) ||
+          finalPlayedSampleOffset < 0
+        )
+          return;
         this.commitAgentBuffer(buffer, { cancelledEpoch, finalPlayedSampleOffset, reason });
         break;
       }
@@ -197,12 +235,20 @@ export class RecordingRecorder {
 
   private commitUserSlice(slice: OpenUserSlice, captureEndSequence: number | null, truncated: boolean): void {
     this.userSlices.delete(slice.utteranceId);
-    const entry: PendingUserItem = { itemId: slice.itemId, turnId: this.pendingTranscriptTurns.get(slice.utteranceId) ?? null };
+    const entry: PendingUserItem = {
+      itemId: slice.itemId,
+      turnId: this.pendingTranscriptTurns.get(slice.utteranceId) ?? null,
+    };
     this.pendingTranscriptTurns.delete(slice.utteranceId);
     this.pendingUserItems.set(slice.utteranceId, entry);
     const commit = (async () => {
-      const endSeq = captureEndSequence ?? Math.max(slice.startSeq, slice.frames.length ? slice.frames[slice.frames.length - 1]!.sequence : slice.startSeq);
-      const frames = slice.frames.filter(frame => frame.sequence >= slice.startSeq && frame.sequence <= endSeq);
+      const endSeq =
+        captureEndSequence ??
+        Math.max(
+          slice.startSeq,
+          slice.frames.length ? slice.frames[slice.frames.length - 1]!.sequence : slice.startSeq,
+        );
+      const frames = slice.frames.filter((frame) => frame.sequence >= slice.startSeq && frame.sequence <= endSeq);
       const pcm = concatFrames(frames);
       if (pcm.length === 0) return;
       const mp3 = await this.deps.encode(pcm, 16000, PER_TURN_KBPS);
@@ -233,18 +279,24 @@ export class RecordingRecorder {
       };
       await this.deps.store.put(item);
       this.committedUserItems.set(slice.utteranceId, slice.itemId);
-    })().catch(() => undefined)
+    })()
+      .catch(() => undefined)
       .finally(() => this.pendingUserItems.delete(slice.utteranceId));
     this.trackPending(commit);
   }
 
-  private commitAgentBuffer(buffer: AgentBuffer, terminal: { cancelledEpoch: number; finalPlayedSampleOffset: number; reason: string }): void {
+  private commitAgentBuffer(
+    buffer: AgentBuffer,
+    terminal: { cancelledEpoch: number; finalPlayedSampleOffset: number; reason: string },
+  ): void {
     this.agentBuffers.delete(buffer.playbackId);
     const commit = (async () => {
-      const pcm = concatFrames(buffer.frames.map(pcm16 => ({ pcm16 })));
+      const pcm = concatFrames(buffer.frames.map((pcm16) => ({ pcm16 })));
       if (pcm.length === 0) return;
       const mp3 = await this.deps.encode(pcm, buffer.sampleRate, PER_TURN_KBPS);
-      const reason = TERMINAL_REASONS.includes(terminal.reason as TerminalReason) ? terminal.reason as NonNullable<TerminalReason> : 'cancelled';
+      const reason = TERMINAL_REASONS.includes(terminal.reason as TerminalReason)
+        ? (terminal.reason as NonNullable<TerminalReason>)
+        : 'cancelled';
       const monotonicMs = this.now();
       const item: StoredRecordingItem = {
         itemId: buffer.itemId,

@@ -5,14 +5,21 @@ import type { PiClient, PiEvent, PiReadiness } from '../../src/pi/PiClient.js';
 
 const settingsA: PiSettings = { model: 'provider/model-a', thinkingLevel: 'medium' };
 const settingsB: PiSettings = { model: 'provider/model-b', thinkingLevel: 'high' };
-const ready = (model: string): PiReadiness => ({ status: 'ready', detail: `${model} is ready.`, correctiveAction: 'None.' });
+const ready = (model: string): PiReadiness => ({
+  status: 'ready',
+  detail: `${model} is ready.`,
+  correctiveAction: 'None.',
+});
 const unavailable: PiReadiness = { status: 'unavailable', detail: 'Pi is unavailable.', correctiveAction: 'Retry.' };
 
 class FakeProbeClient implements PiClient {
   probeCalls = 0;
   shutdownCalls = 0;
 
-  constructor(readonly settings: PiSettings, private readonly results: PiReadiness[]) {}
+  constructor(
+    readonly settings: PiSettings,
+    private readonly results: PiReadiness[],
+  ) {}
 
   async probe(): Promise<PiReadiness> {
     this.probeCalls++;
@@ -26,15 +33,19 @@ class FakeProbeClient implements PiClient {
   }
 }
 
-const flush = async (): Promise<void> => { await new Promise<void>(resolve => setImmediate(resolve)); };
+const flush = async (): Promise<void> => {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+};
 const owners: PiReadinessProbe[] = [];
-afterEach(async () => { await Promise.all(owners.splice(0).map(owner => owner.shutdown())); });
+afterEach(async () => {
+  await Promise.all(owners.splice(0).map((owner) => owner.shutdown()));
+});
 
 describe('settings-keyed Pi readiness probe', () => {
   it('isolates model caches, passes factory settings, and shuts down each owned client once', async () => {
     const clients: FakeProbeClient[] = [];
     const owner = new PiReadinessProbe({
-      createClient: settings => {
+      createClient: (settings) => {
         const client = new FakeProbeClient(settings, [ready(settings.model)]);
         clients.push(client);
         return client;
@@ -51,7 +62,7 @@ describe('settings-keyed Pi readiness probe', () => {
     await flush();
     expect((await owner.probe(settingsB)).status).toBe('ready');
 
-    expect(clients.map(client => client.settings)).toEqual([settingsA, settingsB]);
+    expect(clients.map((client) => client.settings)).toEqual([settingsA, settingsB]);
     expect(clients[0]?.shutdownCalls).toBe(1);
     await owner.shutdown();
     expect(clients[1]?.shutdownCalls).toBe(1);
@@ -62,10 +73,11 @@ describe('settings-keyed Pi readiness probe', () => {
     const clients: FakeProbeClient[] = [];
     const owner = new PiReadinessProbe({
       now: () => clock,
-      createClient: settings => {
-        const results = settings.model === settingsA.model
-          ? [ready(settings.model), unavailable]
-          : [ready(settings.model), unavailable];
+      createClient: (settings) => {
+        const results =
+          settings.model === settingsA.model
+            ? [ready(settings.model), unavailable]
+            : [ready(settings.model), unavailable];
         const client = new FakeProbeClient(settings, results);
         clients.push(client);
         return client;

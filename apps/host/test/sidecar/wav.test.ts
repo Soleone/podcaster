@@ -26,7 +26,8 @@ describe('encodeWav', () => {
     expect(view.getUint16(34, true)).toBe(16); // bits per sample
     expect(ascii(view, 36, 4)).toBe('data');
     expect(view.getUint32(40, true)).toBe(pcm.byteLength);
-    for (let index = 0; index < pcm.length; index++) expect(view.getInt16(WAV_HEADER_BYTES + index * 2, true)).toBe(pcm[index]);
+    for (let index = 0; index < pcm.length; index++)
+      expect(view.getInt16(WAV_HEADER_BYTES + index * 2, true)).toBe(pcm[index]);
   });
 
   it('copies the exact PCM bytes even when the Int16Array is a view into a larger buffer', () => {

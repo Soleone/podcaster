@@ -1,15 +1,19 @@
 // Runtime validators associated with the generated contract model names.
-import Ajv2020Module, { type ValidateFunction } from "ajv/dist/2020.js";
-import addFormatsModule from "ajv-formats";
-import { CONTRACT_SCHEMAS, type ContractModelName } from "./generated/contracts.js";
+import Ajv2020Module, { type ValidateFunction } from 'ajv/dist/2020.js';
+import addFormatsModule from 'ajv-formats';
+import { CONTRACT_SCHEMAS, type ContractModelName } from './generated/contracts.js';
 
 type AjvInstance = {
   addKeyword(value: Record<string, unknown>): void;
   addSchema(value: unknown): void;
   getSchema(id: string): ValidateFunction | undefined;
 };
-const Ajv2020 = ((Ajv2020Module as unknown as { default?: unknown }).default ?? Ajv2020Module) as unknown as new (options: Record<string, unknown>) => AjvInstance;
-const addFormats = ((addFormatsModule as unknown as { default?: unknown }).default ?? addFormatsModule) as unknown as (ajv: AjvInstance) => void;
+const Ajv2020 = ((Ajv2020Module as unknown as { default?: unknown }).default ?? Ajv2020Module) as unknown as new (
+  options: Record<string, unknown>,
+) => AjvInstance;
+const addFormats = ((addFormatsModule as unknown as { default?: unknown }).default ?? addFormatsModule) as unknown as (
+  ajv: AjvInstance,
+) => void;
 function hasUnpairedSurrogate(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const unit = value.charCodeAt(index);
@@ -24,10 +28,10 @@ function hasUnpairedSurrogate(value: string): boolean {
 const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
 addFormats(ajv);
 ajv.addKeyword({
-  keyword: "maxUtf8Bytes",
-  type: "string",
-  schemaType: "number",
-  validate: (limit: number, value: string) => !hasUnpairedSurrogate(value) && Buffer.byteLength(value, "utf8") <= limit,
+  keyword: 'maxUtf8Bytes',
+  type: 'string',
+  schemaType: 'number',
+  validate: (limit: number, value: string) => !hasUnpairedSurrogate(value) && Buffer.byteLength(value, 'utf8') <= limit,
 });
 for (const schema of Object.values(CONTRACT_SCHEMAS)) ajv.addSchema(schema);
 

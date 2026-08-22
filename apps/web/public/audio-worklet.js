@@ -2,7 +2,7 @@ class PodcasterCaptureProcessor extends AudioWorkletProcessor {
   process(inputs) {
     const channels = inputs[0];
     if (!channels || channels.length === 0 || channels[0].length === 0) return true;
-    const length = Math.min(...channels.map(channel => channel.length));
+    const length = Math.min(...channels.map((channel) => channel.length));
     const mono = new Float32Array(length);
     for (let sample = 0; sample < length; sample++) {
       let sum = 0;

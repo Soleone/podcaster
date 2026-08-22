@@ -59,14 +59,17 @@ export interface SpliceDependencies {
 
 export function createBrowserDecoder(): DecodeMp3 {
   const context = new AudioContext();
-  return async bytes => {
-    const buffer = await context.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  return async (bytes) => {
+    const buffer = await context.decodeAudioData(
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    );
     return { sampleRate: buffer.sampleRate, channelData: buffer.getChannelData(0) };
   };
 }
 
 function orderItems(items: StoredRecordingItem[], turnSequences: Map<string, number>): StoredRecordingItem[] {
-  const sequenceOf = (item: StoredRecordingItem): number | undefined => item.turnId === null ? undefined : turnSequences.get(item.turnId);
+  const sequenceOf = (item: StoredRecordingItem): number | undefined =>
+    item.turnId === null ? undefined : turnSequences.get(item.turnId);
   return [...items].sort((left, right) => {
     const leftSequence = sequenceOf(left);
     const rightSequence = sequenceOf(right);
@@ -101,11 +104,11 @@ export async function buildRecording(sessionId: string, deps: SpliceDependencies
   const [items, turns] = await Promise.all([deps.store.getSessionItems(sessionId), deps.turns.getTurns(sessionId)]);
   // Trimmed bubbles are excluded before ordering, decoding, resampling, or gap
   // insertion so their Blobs are never touched during export.
-  const survivors = items.filter(item => !item.trimmed);
+  const survivors = items.filter((item) => !item.trimmed);
   if (survivors.length === 0) return null;
   reportProgress({ phase: 'reading', message: 'Reading recording…', value: READ_END });
-  const turnSequences = new Map(turns.map(turn => [turn.turnId, turn.timelineSequence]));
-  const gapSamples = Math.round(FINAL_SAMPLE_RATE * Math.max(0, deps.gapMs ?? EXPORT_GAP_MS) / 1000);
+  const turnSequences = new Map(turns.map((turn) => [turn.turnId, turn.timelineSequence]));
+  const gapSamples = Math.round((FINAL_SAMPLE_RATE * Math.max(0, deps.gapMs ?? EXPORT_GAP_MS)) / 1000);
   const segments: Float32Array[] = [];
   let totalSamples = 0;
   let completed = 0;
@@ -118,9 +121,15 @@ export async function buildRecording(sessionId: string, deps: SpliceDependencies
         const trim = Math.max(0, Math.min(item.deliveredSamples, samples.length));
         samples = samples.subarray(0, trim);
       }
-      if (samples.length === 0) { completedNormally = true; continue; }
+      if (samples.length === 0) {
+        completedNormally = true;
+        continue;
+      }
       const resampled = deps.resample(samples, sampleRate, FINAL_SAMPLE_RATE);
-      if (resampled.length === 0) { completedNormally = true; continue; }
+      if (resampled.length === 0) {
+        completedNormally = true;
+        continue;
+      }
       const normalized = normalizeSegment(resampled, normalizeMode);
       if (segments.length > 0) totalSamples += gapSamples;
       segments.push(normalized);
@@ -144,7 +153,7 @@ export async function buildRecording(sessionId: string, deps: SpliceDependencies
   }
   const pcm16 = floatToPcm16(joined);
   let lastEncodeFraction = 0;
-  const mp3 = await deps.encode(pcm16, FINAL_SAMPLE_RATE, FINAL_KBPS, fraction => {
+  const mp3 = await deps.encode(pcm16, FINAL_SAMPLE_RATE, FINAL_KBPS, (fraction) => {
     const clamped = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : lastEncodeFraction;
     const eff = clamped < lastEncodeFraction ? lastEncodeFraction : clamped;
     lastEncodeFraction = eff;

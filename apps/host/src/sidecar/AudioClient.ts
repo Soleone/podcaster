@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { decodeBinaryAudioFrame, CONTRACT_VALIDATORS, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER } from '@app/contracts';
+import {
+  decodeBinaryAudioFrame,
+  CONTRACT_VALIDATORS,
+  DEFAULT_TTS_MODEL,
+  DEFAULT_VOICE_SPEED_MODIFIER,
+} from '@app/contracts';
 import WebSocket, { type RawData } from 'ws';
 import type { SidecarProcess } from './process.js';
 import type { SpeechOutputPort, SpeechOutputStream, SpeechSynthesisStart } from '../session/SessionOrchestrator.js';
@@ -18,14 +23,39 @@ const CLOSE_PROTOCOL_VIOLATION = 4001;
 const CLOSE_SIDECAR_FAILURE = 4002;
 function rawBytes(raw: RawData): Uint8Array {
   if (Buffer.isBuffer(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
-  if (Array.isArray(raw)) { const value = Buffer.concat(raw); return new Uint8Array(value.buffer, value.byteOffset, value.byteLength); }
+  if (Array.isArray(raw)) {
+    const value = Buffer.concat(raw);
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
   return new Uint8Array(raw);
 }
 type JsonObject = Record<string, unknown>;
-export interface VadStartEvent { streamId: string; utteranceId: string; captureStartSequence: number }
-export interface VadEndEvent { streamId: string; utteranceId: string; captureStartSequence: number; captureEndSequence: number }
-export interface SttPartial { streamId: string; utteranceId: string; epoch: number; sequence: number; text: string; replacedCharacters: number }
-export interface SttFinal { streamId: string; utteranceId: string; epoch: number; text: string; endpointComplete: true }
+export interface VadStartEvent {
+  streamId: string;
+  utteranceId: string;
+  captureStartSequence: number;
+}
+export interface VadEndEvent {
+  streamId: string;
+  utteranceId: string;
+  captureStartSequence: number;
+  captureEndSequence: number;
+}
+export interface SttPartial {
+  streamId: string;
+  utteranceId: string;
+  epoch: number;
+  sequence: number;
+  text: string;
+  replacedCharacters: number;
+}
+export interface SttFinal {
+  streamId: string;
+  utteranceId: string;
+  epoch: number;
+  text: string;
+  endpointComplete: true;
+}
 export type AudioEngineSubstep = 'starting' | 'warming' | 'ready' | 'failed';
 export type AudioEngineStatus = 'starting' | 'warming' | 'ready' | 'failed' | 'retrying';
 export interface AudioEngineStatusSnapshot {
@@ -35,7 +65,15 @@ export interface AudioEngineStatusSnapshot {
   tts: AudioEngineSubstep;
   detail?: string;
 }
-export interface AudioClientVoiceSelection { catalogId: string; voiceId: string; speedModifier?: number; tonePrompt?: string; language?: string; backendId?: string; modelId?: string }
+export interface AudioClientVoiceSelection {
+  catalogId: string;
+  voiceId: string;
+  speedModifier?: number;
+  tonePrompt?: string;
+  language?: string;
+  backendId?: string;
+  modelId?: string;
+}
 export interface AudioClientEvents {
   status?(snapshot: AudioEngineStatusSnapshot): void;
   speechStart?(event: VadStartEvent): void;
@@ -79,7 +117,10 @@ interface ActiveUtterance {
   expectedPartialSequence: number;
   speechEnded: boolean;
 }
-interface OpenWaiter { resolve(): void; reject(error: Error): void }
+interface OpenWaiter {
+  resolve(): void;
+  reject(error: Error): void;
+}
 
 function pendingKey(responseId: string, partIndex?: number): string {
   return partIndex === undefined ? responseId : `${responseId}:${partIndex}`;
@@ -144,23 +185,50 @@ export class AudioClient implements SpeechOutputPort {
         perMessageDeflate: false,
       });
       this.socket = socket;
-      const timer = setTimeout(() => { socket.terminate(); reject(new Error('audio sidecar connection timed out')); }, 5_000);
-      socket.once('open', () => { clearTimeout(timer); resolve(); });
+      const timer = setTimeout(() => {
+        socket.terminate();
+        reject(new Error('audio sidecar connection timed out'));
+      }, 5_000);
+      socket.once('open', () => {
+        clearTimeout(timer);
+        resolve();
+      });
       socket.on('message', (data, binary) => this.handleMessage(data, binary));
-      socket.once('error', error => { clearTimeout(timer); this.connectionFailure('audio sidecar unavailable'); reject(error); });
-      socket.once('close', () => { if (!this.closing) this.connectionFailure('audio sidecar closed'); });
+      socket.once('error', (error) => {
+        clearTimeout(timer);
+        this.connectionFailure('audio sidecar unavailable');
+        reject(error);
+      });
+      socket.once('close', () => {
+        if (!this.closing) this.connectionFailure('audio sidecar closed');
+      });
     });
     return this.connectPromise;
   }
 
-  readiness(): 'starting' | 'ready' | 'failed' { return this.readyStatus; }
+  readiness(): 'starting' | 'ready' | 'failed' {
+    return this.readyStatus;
+  }
 
   async open(captureStreamId: number, streamMode: 'capture' | 'preview' = 'capture'): Promise<string> {
     await this.connect();
-    this.reportStatus({ status: this.streamId ? 'retrying' : 'warming', capture: 'starting', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts, detail: this.streamId ? 'Re-initializing the microphone stream.' : 'Opening the microphone stream.' });
-    try { await this.waitUntilReady(); }
-    catch (error) {
-      this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts, detail: error instanceof Error ? error.message : 'The local audio engine is not ready.' });
+    this.reportStatus({
+      status: this.streamId ? 'retrying' : 'warming',
+      capture: 'starting',
+      vad: this.sidecarWarmup.vad,
+      tts: this.sidecarWarmup.tts,
+      detail: this.streamId ? 'Re-initializing the microphone stream.' : 'Opening the microphone stream.',
+    });
+    try {
+      await this.waitUntilReady();
+    } catch (error) {
+      this.reportStatus({
+        status: 'failed',
+        capture: 'failed',
+        vad: this.sidecarWarmup.vad,
+        tts: this.sidecarWarmup.tts,
+        detail: error instanceof Error ? error.message : 'The local audio engine is not ready.',
+      });
       throw error;
     }
     if (this.failed || this.readyStatus !== 'ready') throw new Error('audio sidecar is not ready for a stream');
@@ -171,14 +239,21 @@ export class AudioClient implements SpeechOutputPort {
       if (streamMode !== 'capture') throw new Error('audio sidecar stream mode cannot change');
       this.captureStreamId = captureStreamId;
       this.reset();
-      this.reportStatus({ status: 'ready', capture: 'ready', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts });
+      this.reportStatus({
+        status: 'ready',
+        capture: 'ready',
+        vad: this.sidecarWarmup.vad,
+        tts: this.sidecarWarmup.tts,
+      });
       return this.streamId;
     }
     if (this.streamId) throw new Error('audio sidecar stream is still opening');
     const streamId = randomUUID();
     this.streamId = streamId;
     this.captureStreamId = captureStreamId;
-    const opened = new Promise<void>((resolve, reject) => { this.openWaiter = { resolve, reject }; });
+    const opened = new Promise<void>((resolve, reject) => {
+      this.openWaiter = { resolve, reject };
+    });
     this.send('stream.open', {
       streamId,
       captureStreamId,
@@ -189,8 +264,14 @@ export class AudioClient implements SpeechOutputPort {
       // the legacy Kokoro stream shape unchanged for older sidecars; Qwen and
       // other non-default backends must carry it so the sidecar can reject
       // stale catalog-bound preferences before TTS admission.
-      ...(this.selection && (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) ? { catalogId: this.selection.catalogId } : {}),
-      ...(this.explicitModelSelection && (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) ? { backendId: this.backendId, modelId: this.modelId } : {}),
+      ...(this.selection &&
+      (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)
+        ? { catalogId: this.selection.catalogId }
+        : {}),
+      ...(this.explicitModelSelection &&
+      (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)
+        ? { backendId: this.backendId, modelId: this.modelId }
+        : {}),
     });
     await opened;
     this.reportStatus({ status: 'ready', capture: 'ready', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts });
@@ -204,13 +285,15 @@ export class AudioClient implements SpeechOutputPort {
     if (this.failed) return;
     if (!this.streamId || !this.streamOpened) throw new Error('audio stream is not open');
     const decoded = decodeBinaryAudioFrame(frame, MAX_PAYLOAD - 20);
-    if (decoded.channel !== 1 || decoded.streamId !== this.captureStreamId || decoded.pcm16.length !== 320) throw new Error('invalid capture frame');
+    if (decoded.channel !== 1 || decoded.streamId !== this.captureStreamId || decoded.pcm16.length !== 320)
+      throw new Error('invalid capture frame');
     this.readySocket().send(frame, { binary: true });
   }
 
   bindEpoch(utteranceId: string, epoch: number): void {
     const utterance = this.utterance;
-    if (!utterance || utterance.utteranceId !== utteranceId || utterance.epoch !== undefined) throw new Error('unknown, stale, or bound utterance');
+    if (!utterance || utterance.utteranceId !== utteranceId || utterance.epoch !== undefined)
+      throw new Error('unknown, stale, or bound utterance');
     utterance.epoch = epoch;
     this.sendForStream('stt.bind_epoch', { utteranceId, epoch });
   }
@@ -220,14 +303,39 @@ export class AudioClient implements SpeechOutputPort {
     this.sendForStream('stream.reset', {});
   }
 
-  synthesize(input: { sessionId: string; epoch: number; responseId: string; partIndex?: number; partId?: string; text: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): Promise<SpeechSynthesisStart> {
-    const stream = this.begin({ sessionId: input.sessionId, epoch: input.epoch, responseId: input.responseId, signal: input.signal, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}), ...(input.onGeneratedSamples ? { onGeneratedSamples: input.onGeneratedSamples } : {}) });
+  synthesize(input: {
+    sessionId: string;
+    epoch: number;
+    responseId: string;
+    partIndex?: number;
+    partId?: string;
+    text: string;
+    signal: AbortSignal;
+    onGeneratedSamples?: (total: number) => void;
+  }): Promise<SpeechSynthesisStart> {
+    const stream = this.begin({
+      sessionId: input.sessionId,
+      epoch: input.epoch,
+      responseId: input.responseId,
+      signal: input.signal,
+      ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
+      ...(input.partId ? { partId: input.partId } : {}),
+      ...(input.onGeneratedSamples ? { onGeneratedSamples: input.onGeneratedSamples } : {}),
+    });
     stream.append(input.text);
     stream.finish();
     return stream.started;
   }
 
-  begin(input: { sessionId: string; epoch: number; responseId: string; partIndex?: number; partId?: string; signal: AbortSignal; onGeneratedSamples?: (total: number) => void }): SpeechOutputStream {
+  begin(input: {
+    sessionId: string;
+    epoch: number;
+    responseId: string;
+    partIndex?: number;
+    partId?: string;
+    signal: AbortSignal;
+    onGeneratedSamples?: (total: number) => void;
+  }): SpeechOutputStream {
     void input.sessionId;
     this.requireOpened();
     const key = pendingKey(input.responseId, input.partIndex);
@@ -236,20 +344,45 @@ export class AudioClient implements SpeechOutputPort {
     let rejectStart!: (error: Error) => void;
     let resolveCompletion!: (value: { generatedSamples: number }) => void;
     let rejectCompletion!: (error: Error) => void;
-    const started = new Promise<SpeechSynthesisStart>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; });
+    const started = new Promise<SpeechSynthesisStart>((resolve, reject) => {
+      resolveStart = resolve;
+      rejectStart = reject;
+    });
     // Mirror the completion guard: started can be rejected before any caller
     // attaches a handler (cancel/failAll races, or an aborted signal that makes
     // synthesize() throw out of append() before returning started). Swallow the
     // potential unhandled rejection; awaited copies still surface errors.
     void started.catch(() => undefined);
-    const completion = new Promise<{ generatedSamples: number }>((resolve, reject) => { resolveCompletion = resolve; rejectCompletion = reject; });
+    const completion = new Promise<{ generatedSamples: number }>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
     void completion.catch(() => undefined);
     const abort = () => this.cancel(input.responseId, input.partIndex);
     const pending: PendingTts = {
-      key, responseId: input.responseId, epoch: input.epoch, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}),
-      resolveStart, rejectStart, resolveCompletion, rejectCompletion,
-      startSettled: false, sidecarStarted: false, completionSettled: false, remoteTerminal: false, expectedSequence: 0, receivedSamples: 0,
-      cutoff: false, onGeneratedSamples: input.onGeneratedSamples, released: false, chunks: [], queued: false, bufferedAppends: [], bufferedCommit: undefined, detachAbort: () => input.signal.removeEventListener('abort', abort),
+      key,
+      responseId: input.responseId,
+      epoch: input.epoch,
+      ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
+      ...(input.partId ? { partId: input.partId } : {}),
+      resolveStart,
+      rejectStart,
+      resolveCompletion,
+      rejectCompletion,
+      startSettled: false,
+      sidecarStarted: false,
+      completionSettled: false,
+      remoteTerminal: false,
+      expectedSequence: 0,
+      receivedSamples: 0,
+      cutoff: false,
+      onGeneratedSamples: input.onGeneratedSamples,
+      released: false,
+      chunks: [],
+      queued: false,
+      bufferedAppends: [],
+      bufferedCommit: undefined,
+      detachAbort: () => input.signal.removeEventListener('abort', abort),
     };
     this.pending.set(key, pending);
     input.signal.addEventListener('abort', abort, { once: true });
@@ -286,7 +419,14 @@ export class AudioClient implements SpeechOutputPort {
           pending.bufferedAppends.push(text);
           return;
         }
-        client.sendForStream('tts.append', { responseId: input.responseId, epoch: input.epoch, sequence: appendSequence, text, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
+        client.sendForStream('tts.append', {
+          responseId: input.responseId,
+          epoch: input.epoch,
+          sequence: appendSequence,
+          text,
+          ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
+          ...(input.partId ? { partId: input.partId } : {}),
+        });
         appendSequence++;
       },
       finish(): void {
@@ -296,15 +436,36 @@ export class AudioClient implements SpeechOutputPort {
           pending.bufferedCommit = { nextSequence: pending.bufferedAppends.length, textSha256: sha256 };
           return;
         }
-        client.sendForStream('tts.commit', { responseId: input.responseId, epoch: input.epoch, nextSequence: appendSequence, textSha256: sha256, ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) });
+        client.sendForStream('tts.commit', {
+          responseId: input.responseId,
+          epoch: input.epoch,
+          nextSequence: appendSequence,
+          textSha256: sha256,
+          ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
+          ...(input.partId ? { partId: input.partId } : {}),
+        });
       },
     };
 
     return stream;
   }
 
-  private ttsFields(input: { responseId: string; epoch: number; partIndex?: number; partId?: string }): Record<string, unknown> {
-    return { responseId: input.responseId, epoch: input.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}), ...(this.language && this.backendId === 'qwen3' ? { language: this.language } : {}), ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}), ...(input.partId ? { partId: input.partId } : {}) };
+  private ttsFields(input: {
+    responseId: string;
+    epoch: number;
+    partIndex?: number;
+    partId?: string;
+  }): Record<string, unknown> {
+    return {
+      responseId: input.responseId,
+      epoch: input.epoch,
+      voiceId: this.voiceId,
+      speedModifier: this.speedModifier,
+      ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}),
+      ...(this.language && this.backendId === 'qwen3' ? { language: this.language } : {}),
+      ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
+      ...(input.partId ? { partId: input.partId } : {}),
+    };
   }
 
   private removeAdmitted(pending: PendingTts): void {
@@ -317,12 +478,35 @@ export class AudioClient implements SpeechOutputPort {
       const pending = this.queued.shift()!;
       pending.queued = false;
       this.admitted.push(pending);
-      this.sendForStream('tts.open', { responseId: pending.responseId, epoch: pending.epoch, voiceId: this.voiceId, speedModifier: this.speedModifier, ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}), ...(this.language && this.backendId === 'qwen3' ? { language: this.language } : {}), ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+      this.sendForStream('tts.open', {
+        responseId: pending.responseId,
+        epoch: pending.epoch,
+        voiceId: this.voiceId,
+        speedModifier: this.speedModifier,
+        ...(this.tonePrompt ? { tonePrompt: this.tonePrompt } : {}),
+        ...(this.language && this.backendId === 'qwen3' ? { language: this.language } : {}),
+        ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}),
+        ...(pending.partId ? { partId: pending.partId } : {}),
+      });
       for (let index = 0; index < pending.bufferedAppends.length; index++) {
-        this.sendForStream('tts.append', { responseId: pending.responseId, epoch: pending.epoch, sequence: index, text: pending.bufferedAppends[index]!, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+        this.sendForStream('tts.append', {
+          responseId: pending.responseId,
+          epoch: pending.epoch,
+          sequence: index,
+          text: pending.bufferedAppends[index]!,
+          ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}),
+          ...(pending.partId ? { partId: pending.partId } : {}),
+        });
       }
       if (pending.bufferedCommit) {
-        this.sendForStream('tts.commit', { responseId: pending.responseId, epoch: pending.epoch, nextSequence: pending.bufferedCommit.nextSequence, textSha256: pending.bufferedCommit.textSha256, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}) });
+        this.sendForStream('tts.commit', {
+          responseId: pending.responseId,
+          epoch: pending.epoch,
+          nextSequence: pending.bufferedCommit.nextSequence,
+          textSha256: pending.bufferedCommit.textSha256,
+          ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}),
+          ...(pending.partId ? { partId: pending.partId } : {}),
+        });
       }
     }
   }
@@ -336,8 +520,12 @@ export class AudioClient implements SpeechOutputPort {
     pending.chunks.length = 0;
   }
 
-  pause(_responseId: string): void { /* browser is the audible pause authority */ }
-  resume(_responseId: string, _rewindMs?: number): void { /* browser is the audible resume authority */ }
+  pause(_responseId: string): void {
+    /* browser is the audible pause authority */
+  }
+  resume(_responseId: string, _rewindMs?: number): void {
+    /* browser is the audible resume authority */
+  }
   cancel(responseId: string, partIndex?: number): void {
     if (partIndex !== undefined) {
       const pending = this.pending.get(pendingKey(responseId, partIndex));
@@ -350,7 +538,8 @@ export class AudioClient implements SpeechOutputPort {
         this.pending.delete(pending.key);
         return;
       }
-      if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch, partIndex });
+      if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN)
+        this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch, partIndex });
       this.rejectPending(pending, new Error('TTS cancelled'));
       return;
     }
@@ -364,7 +553,12 @@ export class AudioClient implements SpeechOutputPort {
         this.pending.delete(pending.key);
         continue;
       }
-      if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('tts.cancel', { responseId, epoch: pending.epoch, ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}) });
+      if (this.streamOpened && this.socket?.readyState === WebSocket.OPEN)
+        this.sendForStream('tts.cancel', {
+          responseId,
+          epoch: pending.epoch,
+          ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}),
+        });
       this.rejectPending(pending, new Error('TTS cancelled'));
     }
   }
@@ -376,7 +570,8 @@ export class AudioClient implements SpeechOutputPort {
 
   async close(): Promise<void> {
     this.closing = true;
-    if (this.streamId && this.streamOpened && this.socket?.readyState === WebSocket.OPEN) this.sendForStream('stream.close', {});
+    if (this.streamId && this.streamOpened && this.socket?.readyState === WebSocket.OPEN)
+      this.sendForStream('stream.close', {});
     this.streamId = undefined;
     this.captureStreamId = undefined;
     this.streamOpened = false;
@@ -385,17 +580,37 @@ export class AudioClient implements SpeechOutputPort {
     const socket = this.socket;
     this.socket = undefined;
     if (!socket || socket.readyState === WebSocket.CLOSED) return;
-    await new Promise<void>(resolve => { socket.once('close', () => resolve()); socket.close(1000, 'stream closed'); setTimeout(() => { socket.terminate(); resolve(); }, 500); });
+    await new Promise<void>((resolve) => {
+      socket.once('close', () => resolve());
+      socket.close(1000, 'stream closed');
+      setTimeout(() => {
+        socket.terminate();
+        resolve();
+      }, 500);
+    });
   }
 
-  private reportStatus(snapshot: AudioEngineStatusSnapshot): void { this.events.status?.(snapshot); }
+  private reportStatus(snapshot: AudioEngineStatusSnapshot): void {
+    this.events.status?.(snapshot);
+  }
 
   private handleMessage(raw: RawData, binary: boolean): void {
     if (this.failed || this.closing) return;
-    if (binary) { this.handleBinary(rawBytes(raw)); return; }
+    if (binary) {
+      this.handleBinary(rawBytes(raw));
+      return;
+    }
     let value: unknown;
-    try { value = JSON.parse(raw.toString()); } catch { this.protocolFailure(); return; }
-    if (!CONTRACT_VALIDATORS.SidecarMessage(value)) { this.protocolFailure(); return; }
+    try {
+      value = JSON.parse(raw.toString());
+    } catch {
+      this.protocolFailure();
+      return;
+    }
+    if (!CONTRACT_VALIDATORS.SidecarMessage(value)) {
+      this.protocolFailure();
+      return;
+    }
     const message = value as { type: string; payload: JsonObject };
     const payload = message.payload;
     if (message.type === 'readiness.snapshot') {
@@ -403,7 +618,11 @@ export class AudioClient implements SpeechOutputPort {
       this.readinessSeen = true;
       this.readyStatus = payload.status as typeof this.readyStatus;
       const warmup = payload.warmup as { vad?: unknown; tts?: unknown } | undefined;
-      if (warmup && (warmup.vad === 'starting' || warmup.vad === 'warming' || warmup.vad === 'ready' || warmup.vad === 'failed') && (warmup.tts === 'starting' || warmup.tts === 'warming' || warmup.tts === 'ready' || warmup.tts === 'failed')) {
+      if (
+        warmup &&
+        (warmup.vad === 'starting' || warmup.vad === 'warming' || warmup.vad === 'ready' || warmup.vad === 'failed') &&
+        (warmup.tts === 'starting' || warmup.tts === 'warming' || warmup.tts === 'ready' || warmup.tts === 'failed')
+      ) {
         this.sidecarWarmup = { vad: warmup.vad, tts: warmup.tts };
       } else if (this.readyStatus === 'ready') {
         this.sidecarWarmup = { vad: 'ready', tts: 'ready' };
@@ -421,49 +640,91 @@ export class AudioClient implements SpeechOutputPort {
       // legacy clients.
       if (this.readyStatus === 'ready' && this.selection) {
         const selection = this.selection;
-        const models = Array.isArray(payload.ttsModels) ? payload.ttsModels as Array<{
-          backendId?: unknown;
-          modelId?: unknown;
-          status?: unknown;
-          speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown };
-          voiceCatalog?: { catalogId?: unknown; backendId?: unknown; modelId?: unknown; speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown }; voices?: Array<{ id?: unknown }> };
-        }> : [];
-        const descriptor = models.find(model => model.backendId === this.backendId && model.modelId === this.modelId);
-        const catalog = descriptor?.voiceCatalog ?? (this.backendId === DEFAULT_TTS_MODEL.backendId && this.modelId === DEFAULT_TTS_MODEL.modelId
-          ? payload.voiceCatalog as { catalogId?: unknown; backendId?: unknown; modelId?: unknown; speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown }; voices?: Array<{ id?: unknown }> } | undefined
-          : undefined);
+        const models = Array.isArray(payload.ttsModels)
+          ? (payload.ttsModels as Array<{
+              backendId?: unknown;
+              modelId?: unknown;
+              status?: unknown;
+              speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown };
+              voiceCatalog?: {
+                catalogId?: unknown;
+                backendId?: unknown;
+                modelId?: unknown;
+                speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown };
+                voices?: Array<{ id?: unknown }>;
+              };
+            }>)
+          : [];
+        const descriptor = models.find((model) => model.backendId === this.backendId && model.modelId === this.modelId);
+        const catalog =
+          descriptor?.voiceCatalog ??
+          (this.backendId === DEFAULT_TTS_MODEL.backendId && this.modelId === DEFAULT_TTS_MODEL.modelId
+            ? (payload.voiceCatalog as
+                | {
+                    catalogId?: unknown;
+                    backendId?: unknown;
+                    modelId?: unknown;
+                    speed?: { supported?: unknown; min?: unknown; max?: unknown; default?: unknown };
+                    voices?: Array<{ id?: unknown }>;
+                  }
+                | undefined)
+            : undefined);
         const voices = catalog?.voices;
         const speed = descriptor?.speed ?? catalog?.speed;
         const modelAvailable = descriptor === undefined || descriptor.status === 'ready';
         const catalogMatches = typeof catalog?.catalogId === 'string' && catalog.catalogId === selection.catalogId;
-        const voicePresent = Array.isArray(voices) && voices.some(voice => voice.id === selection.voiceId);
-        const speedValid = speed === undefined || (
-          typeof speed === 'object' && speed !== null
-          && typeof speed.supported === 'boolean'
-          && typeof speed.min === 'number' && typeof speed.max === 'number' && typeof speed.default === 'number'
-          && Number.isFinite(speed.min) && Number.isFinite(speed.max) && Number.isFinite(speed.default)
-          && Number.isFinite(this.speedModifier)
-          && this.speedModifier >= speed.min && this.speedModifier <= speed.max
-          && (speed.supported || this.speedModifier === speed.default)
-        );
+        const voicePresent = Array.isArray(voices) && voices.some((voice) => voice.id === selection.voiceId);
+        const speedValid =
+          speed === undefined ||
+          (typeof speed === 'object' &&
+            speed !== null &&
+            typeof speed.supported === 'boolean' &&
+            typeof speed.min === 'number' &&
+            typeof speed.max === 'number' &&
+            typeof speed.default === 'number' &&
+            Number.isFinite(speed.min) &&
+            Number.isFinite(speed.max) &&
+            Number.isFinite(speed.default) &&
+            Number.isFinite(this.speedModifier) &&
+            this.speedModifier >= speed.min &&
+            this.speedModifier <= speed.max &&
+            (speed.supported || this.speedModifier === speed.default));
         if (!modelAvailable) {
           this.failed = true;
           this.readyStatus = 'failed';
-          this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The selected voice engine is unavailable.' });
+          this.reportStatus({
+            status: 'failed',
+            capture: 'failed',
+            vad: this.sidecarWarmup.vad,
+            tts: 'failed',
+            detail: 'The selected voice engine is unavailable.',
+          });
           this.events.failure?.('tts_model_unavailable');
           this.failAll(new Error('selected TTS model is unavailable; Kokoro remains available as the fallback'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'selected TTS model unavailable');
         } else if (!catalogMatches || !voicePresent) {
           this.failed = true;
           this.readyStatus = 'failed';
-          this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The selected voice catalog changed.' });
+          this.reportStatus({
+            status: 'failed',
+            capture: 'failed',
+            vad: this.sidecarWarmup.vad,
+            tts: 'failed',
+            detail: 'The selected voice catalog changed.',
+          });
           this.events.failure?.('catalog_mismatch');
           this.failAll(new Error('audio sidecar catalog drifted from the session voice selection'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio voice catalog mismatch');
         } else if (!speedValid) {
           this.failed = true;
           this.readyStatus = 'failed';
-          this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The selected voice speed is unsupported.' });
+          this.reportStatus({
+            status: 'failed',
+            capture: 'failed',
+            vad: this.sidecarWarmup.vad,
+            tts: 'failed',
+            detail: 'The selected voice speed is unsupported.',
+          });
           this.events.failure?.('unsupported_speed');
           this.failAll(new Error('selected TTS speed is not supported by the active model'));
           this.socket?.close(CLOSE_SIDECAR_FAILURE, 'unsupported TTS speed');
@@ -471,12 +732,21 @@ export class AudioClient implements SpeechOutputPort {
       }
       return;
     }
-    if (message.type === 'stream.opened') { this.streamOpenedMessage(payload); return; }
+    if (message.type === 'stream.opened') {
+      this.streamOpenedMessage(payload);
+      return;
+    }
     if (message.type === 'stream.closed') return this.protocolFailure();
     if (message.type === 'sidecar.failure') {
       this.failed = true;
       this.readyStatus = 'failed';
-      this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The local audio engine failed.' });
+      this.reportStatus({
+        status: 'failed',
+        capture: 'failed',
+        vad: this.sidecarWarmup.vad,
+        tts: 'failed',
+        detail: 'The local audio engine failed.',
+      });
       this.events.failure?.(String(payload.code));
       this.failAll(new Error('audio sidecar runtime failed'));
       this.socket?.close(CLOSE_SIDECAR_FAILURE, 'audio sidecar runtime failed');
@@ -494,16 +764,23 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   private streamOpenedMessage(payload: JsonObject): void {
-    if (!this.streamId || this.streamOpened || !this.openWaiter || payload.streamId !== this.streamId) return this.protocolFailure();
+    if (!this.streamId || this.streamOpened || !this.openWaiter || payload.streamId !== this.streamId)
+      return this.protocolFailure();
     if (payload.backendId !== undefined && payload.backendId !== this.backendId) return this.protocolFailure();
     if (payload.modelId !== undefined && payload.modelId !== this.modelId) return this.protocolFailure();
-    if ((this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)
-      && (payload.backendId !== this.backendId || payload.modelId !== this.modelId)) return this.protocolFailure();
+    if (
+      (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) &&
+      (payload.backendId !== this.backendId || payload.modelId !== this.modelId)
+    )
+      return this.protocolFailure();
     if (this.selection && payload.voiceCatalog !== undefined) {
       const catalog = payload.voiceCatalog as JsonObject;
-      if (catalog.catalogId !== this.selection.catalogId
-        || catalog.backendId !== this.backendId
-        || catalog.modelId !== this.modelId) return this.protocolFailure();
+      if (
+        catalog.catalogId !== this.selection.catalogId ||
+        catalog.backendId !== this.backendId ||
+        catalog.modelId !== this.modelId
+      )
+        return this.protocolFailure();
     }
     this.streamOpened = true;
     const waiter = this.openWaiter;
@@ -512,40 +789,81 @@ export class AudioClient implements SpeechOutputPort {
   }
   private speechStart(payload: JsonObject): void {
     if (this.utterance) return this.protocolFailure();
-    this.utterance = { utteranceId: String(payload.utteranceId), captureStartSequence: Number(payload.captureStartSequence), expectedPartialSequence: 0, speechEnded: false };
+    this.utterance = {
+      utteranceId: String(payload.utteranceId),
+      captureStartSequence: Number(payload.captureStartSequence),
+      expectedPartialSequence: 0,
+      speechEnded: false,
+    };
     this.events.speechStart?.(payload as unknown as VadStartEvent);
   }
   private speechEnd(payload: JsonObject): void {
     const utterance = this.utterance;
     const captureEndSequence = payload.captureEndSequence;
-    if (!utterance || utterance.speechEnded || payload.utteranceId !== utterance.utteranceId || payload.captureStartSequence !== utterance.captureStartSequence) return this.protocolFailure();
-    if (!Number.isSafeInteger(captureEndSequence) || Number(captureEndSequence) < 0 || Number(captureEndSequence) < utterance.captureStartSequence) return this.protocolFailure();
+    if (
+      !utterance ||
+      utterance.speechEnded ||
+      payload.utteranceId !== utterance.utteranceId ||
+      payload.captureStartSequence !== utterance.captureStartSequence
+    )
+      return this.protocolFailure();
+    if (
+      !Number.isSafeInteger(captureEndSequence) ||
+      Number(captureEndSequence) < 0 ||
+      Number(captureEndSequence) < utterance.captureStartSequence
+    )
+      return this.protocolFailure();
     utterance.speechEnded = true;
     this.events.speechEnd?.(payload as unknown as VadEndEvent);
   }
   private sttPartial(payload: JsonObject): void {
     const utterance = this.utterance;
-    if (!utterance || utterance.epoch === undefined || payload.utteranceId !== utterance.utteranceId || payload.epoch !== utterance.epoch || payload.sequence !== utterance.expectedPartialSequence) return this.protocolFailure();
+    if (
+      !utterance ||
+      utterance.epoch === undefined ||
+      payload.utteranceId !== utterance.utteranceId ||
+      payload.epoch !== utterance.epoch ||
+      payload.sequence !== utterance.expectedPartialSequence
+    )
+      return this.protocolFailure();
     utterance.expectedPartialSequence++;
     this.events.partial?.(payload as unknown as SttPartial);
   }
   private sttFinal(payload: JsonObject): void {
     const utterance = this.utterance;
-    if (!utterance || !utterance.speechEnded || utterance.epoch === undefined || payload.utteranceId !== utterance.utteranceId || payload.epoch !== utterance.epoch) return this.protocolFailure();
+    if (
+      !utterance ||
+      !utterance.speechEnded ||
+      utterance.epoch === undefined ||
+      payload.utteranceId !== utterance.utteranceId ||
+      payload.epoch !== utterance.epoch
+    )
+      return this.protocolFailure();
     this.events.final?.(payload as unknown as SttFinal);
     this.utterance = undefined;
   }
 
   private ttsStarted(payload: JsonObject): void {
-    const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
+    const pending = this.pending.get(
+      pendingKey(String(payload.responseId), typeof payload.partIndex === 'number' ? payload.partIndex : undefined),
+    );
     const outputStreamId = Number(payload.outputStreamId);
-    if (!pending || pending.sidecarStarted || pending.epoch !== payload.epoch || this.usedOutputStreams.has(outputStreamId)) return this.protocolFailure();
+    if (
+      !pending ||
+      pending.sidecarStarted ||
+      pending.epoch !== payload.epoch ||
+      this.usedOutputStreams.has(outputStreamId)
+    )
+      return this.protocolFailure();
     if (this.selection && payload.voiceId !== this.selection.voiceId) return this.protocolFailure();
     if ((payload.backendId === undefined) !== (payload.modelId === undefined)) return this.protocolFailure();
     if (payload.backendId !== undefined && payload.backendId !== this.backendId) return this.protocolFailure();
     if (payload.modelId !== undefined && payload.modelId !== this.modelId) return this.protocolFailure();
-    if ((this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId)
-      && (payload.backendId !== this.backendId || payload.modelId !== this.modelId)) return this.protocolFailure();
+    if (
+      (this.backendId !== DEFAULT_TTS_MODEL.backendId || this.modelId !== DEFAULT_TTS_MODEL.modelId) &&
+      (payload.backendId !== this.backendId || payload.modelId !== this.modelId)
+    )
+      return this.protocolFailure();
     pending.playbackId = String(payload.playbackId);
     pending.outputStreamId = outputStreamId;
     pending.sampleRate = Number(payload.sampleRate);
@@ -554,15 +872,36 @@ export class AudioClient implements SpeechOutputPort {
     if (!pending.cutoff) {
       pending.startSettled = true;
       const completion = (pending as PendingTts & { completion: Promise<{ generatedSamples: number }> }).completion;
-      pending.resolveStart({ playbackId: pending.playbackId, sampleRate: pending.sampleRate, completion, ...(payload.backendId !== undefined ? { backendId: String(payload.backendId) } : {}), ...(payload.modelId !== undefined ? { modelId: String(payload.modelId) } : {}), ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}), ...(pending.partId ? { partId: pending.partId } : {}), ...(pending.outputStreamId !== undefined ? { outputStreamId: pending.outputStreamId } : {}) });
+      pending.resolveStart({
+        playbackId: pending.playbackId,
+        sampleRate: pending.sampleRate,
+        completion,
+        ...(payload.backendId !== undefined ? { backendId: String(payload.backendId) } : {}),
+        ...(payload.modelId !== undefined ? { modelId: String(payload.modelId) } : {}),
+        ...(pending.partIndex !== undefined ? { partIndex: pending.partIndex } : {}),
+        ...(pending.partId ? { partId: pending.partId } : {}),
+        ...(pending.outputStreamId !== undefined ? { outputStreamId: pending.outputStreamId } : {}),
+      });
     }
   }
 
   private handleBinary(frame: Uint8Array): void {
     let decoded;
-    try { decoded = decodeBinaryAudioFrame(frame, MAX_PAYLOAD - 20); } catch { this.protocolFailure(); return; }
-    const pending = [...this.pending.values()].find(item => item.outputStreamId === decoded.streamId);
-    if (!pending || !pending.sidecarStarted || pending.remoteTerminal || decoded.channel !== 2 || decoded.sequence !== pending.expectedSequence) return this.protocolFailure();
+    try {
+      decoded = decodeBinaryAudioFrame(frame, MAX_PAYLOAD - 20);
+    } catch {
+      this.protocolFailure();
+      return;
+    }
+    const pending = [...this.pending.values()].find((item) => item.outputStreamId === decoded.streamId);
+    if (
+      !pending ||
+      !pending.sidecarStarted ||
+      pending.remoteTerminal ||
+      decoded.channel !== 2 ||
+      decoded.sequence !== pending.expectedSequence
+    )
+      return this.protocolFailure();
     pending.expectedSequence++;
     pending.receivedSamples += decoded.pcm16.length;
     if (pending.cutoff) return;
@@ -575,10 +914,25 @@ export class AudioClient implements SpeechOutputPort {
   }
 
   private ttsEnded(payload: JsonObject): void {
-    const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
-    if (!pending || pending.remoteTerminal || !pending.playbackId || pending.playbackId !== payload.playbackId || pending.epoch !== payload.epoch || !pending.sampleRate) return this.protocolFailure();
+    const pending = this.pending.get(
+      pendingKey(String(payload.responseId), typeof payload.partIndex === 'number' ? payload.partIndex : undefined),
+    );
+    if (
+      !pending ||
+      pending.remoteTerminal ||
+      !pending.playbackId ||
+      pending.playbackId !== payload.playbackId ||
+      pending.epoch !== payload.epoch ||
+      !pending.sampleRate
+    )
+      return this.protocolFailure();
     const generatedSamples = Number(payload.generatedSamples);
-    if (!Number.isSafeInteger(generatedSamples) || generatedSamples <= 0 || generatedSamples !== pending.receivedSamples) return this.protocolFailure();
+    if (
+      !Number.isSafeInteger(generatedSamples) ||
+      generatedSamples <= 0 ||
+      generatedSamples !== pending.receivedSamples
+    )
+      return this.protocolFailure();
     pending.remoteTerminal = true;
     pending.detachAbort();
     if (pending.cutoff) {
@@ -601,8 +955,11 @@ export class AudioClient implements SpeechOutputPort {
     this.flushQueue();
   }
   private ttsCancelled(payload: JsonObject): void {
-    const pending = this.pending.get(pendingKey(String(payload.responseId), typeof payload.partIndex === "number" ? payload.partIndex : undefined));
-    if (!pending || !pending.cutoff || pending.remoteTerminal || payload.epoch !== pending.epoch) return this.protocolFailure();
+    const pending = this.pending.get(
+      pendingKey(String(payload.responseId), typeof payload.partIndex === 'number' ? payload.partIndex : undefined),
+    );
+    if (!pending || !pending.cutoff || pending.remoteTerminal || payload.epoch !== pending.epoch)
+      return this.protocolFailure();
     pending.remoteTerminal = true;
     pending.chunks.length = 0;
     this.rejectPending(pending, new Error('TTS cancelled'));
@@ -615,9 +972,16 @@ export class AudioClient implements SpeechOutputPort {
     if (!this.streamId) throw new Error('audio stream is not open');
     this.send(type, { streamId: this.streamId, ...payload });
   }
-  private send(type: string, payload: JsonObject): void { this.readySocket().send(JSON.stringify({ type, payload })); }
-  private readySocket(): WebSocket { if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('audio sidecar is not connected'); return this.socket; }
-  private requireOpened(): void { if (this.failed || !this.streamId || !this.streamOpened) throw new Error('audio stream is not open'); }
+  private send(type: string, payload: JsonObject): void {
+    this.readySocket().send(JSON.stringify({ type, payload }));
+  }
+  private readySocket(): WebSocket {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('audio sidecar is not connected');
+    return this.socket;
+  }
+  private requireOpened(): void {
+    if (this.failed || !this.streamId || !this.streamOpened) throw new Error('audio stream is not open');
+  }
   private async waitUntilReady(): Promise<void> {
     // A sidecar can announce `starting` once when its background prepare thread
     // begins. Poll health while waiting so starting never races stream admission.
@@ -626,21 +990,46 @@ export class AudioClient implements SpeechOutputPort {
       if (this.readinessSeen && this.readyStatus === 'ready') return;
       if (this.readinessSeen && this.readyStatus === 'starting') {
         try {
-          const response = await fetch(`${this.sidecar.origin}/health`, { headers: { authorization: `Bearer ${this.sidecar.secret}` }, signal: AbortSignal.timeout(500) });
+          const response = await fetch(`${this.sidecar.origin}/health`, {
+            headers: { authorization: `Bearer ${this.sidecar.secret}` },
+            signal: AbortSignal.timeout(500),
+          });
           if (response.ok) {
-            const value = await response.json() as { status?: unknown; warmup?: unknown };
+            const value = (await response.json()) as { status?: unknown; warmup?: unknown };
             if (value.status === 'ready' || value.status === 'failed') {
               this.readyStatus = value.status;
               const warmup = value.warmup as { vad?: unknown; tts?: unknown } | undefined;
-              if (warmup && (warmup.vad === 'starting' || warmup.vad === 'warming' || warmup.vad === 'ready' || warmup.vad === 'failed') && (warmup.tts === 'starting' || warmup.tts === 'warming' || warmup.tts === 'ready' || warmup.tts === 'failed')) this.sidecarWarmup = { vad: warmup.vad, tts: warmup.tts };
-              this.reportStatus({ status: value.status === 'ready' ? 'warming' : 'failed', capture: 'starting', vad: this.sidecarWarmup.vad, tts: this.sidecarWarmup.tts, detail: value.status === 'ready' ? 'Speech models are ready; opening the microphone stream.' : 'The local speech engine failed to warm up.' });
+              if (
+                warmup &&
+                (warmup.vad === 'starting' ||
+                  warmup.vad === 'warming' ||
+                  warmup.vad === 'ready' ||
+                  warmup.vad === 'failed') &&
+                (warmup.tts === 'starting' ||
+                  warmup.tts === 'warming' ||
+                  warmup.tts === 'ready' ||
+                  warmup.tts === 'failed')
+              )
+                this.sidecarWarmup = { vad: warmup.vad, tts: warmup.tts };
+              this.reportStatus({
+                status: value.status === 'ready' ? 'warming' : 'failed',
+                capture: 'starting',
+                vad: this.sidecarWarmup.vad,
+                tts: this.sidecarWarmup.tts,
+                detail:
+                  value.status === 'ready'
+                    ? 'Speech models are ready; opening the microphone stream.'
+                    : 'The local speech engine failed to warm up.',
+              });
               if (this.readyStatus === 'failed') break;
               continue;
             }
           }
-        } catch { /* keep waiting; the websocket failure path remains authoritative */ }
+        } catch {
+          /* keep waiting; the websocket failure path remains authoritative */
+        }
       }
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
     if (!this.readinessSeen || this.readyStatus !== 'ready') throw new Error('audio sidecar is not ready');
   }
@@ -648,7 +1037,13 @@ export class AudioClient implements SpeechOutputPort {
     if (this.failed) return;
     this.failed = true;
     this.readyStatus = 'failed';
-    this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: 'The local audio engine sent an invalid status.' });
+    this.reportStatus({
+      status: 'failed',
+      capture: 'failed',
+      vad: this.sidecarWarmup.vad,
+      tts: 'failed',
+      detail: 'The local audio engine sent an invalid status.',
+    });
     this.events.failure?.('invalid_message');
     this.failAll(new Error('invalid sidecar protocol'));
     this.socket?.close(CLOSE_PROTOCOL_VIOLATION, 'invalid sidecar protocol');
@@ -657,19 +1052,34 @@ export class AudioClient implements SpeechOutputPort {
     if (this.failed) return;
     this.failed = true;
     this.readyStatus = 'failed';
-    this.reportStatus({ status: 'failed', capture: 'failed', vad: this.sidecarWarmup.vad, tts: 'failed', detail: message });
+    this.reportStatus({
+      status: 'failed',
+      capture: 'failed',
+      vad: this.sidecarWarmup.vad,
+      tts: 'failed',
+      detail: message,
+    });
     this.events.failure?.('sidecar_unavailable');
     this.failAll(new Error(message));
   }
   private rejectPending(pending: PendingTts, error: Error): void {
     pending.detachAbort();
-    if (!pending.startSettled) { pending.startSettled = true; pending.rejectStart(error); }
-    if (!pending.completionSettled) { pending.completionSettled = true; pending.rejectCompletion(error); }
+    if (!pending.startSettled) {
+      pending.startSettled = true;
+      pending.rejectStart(error);
+    }
+    if (!pending.completionSettled) {
+      pending.completionSettled = true;
+      pending.rejectCompletion(error);
+    }
   }
   private failAll(error: Error): void {
     this.openWaiter?.reject(error);
     this.openWaiter = undefined;
-    for (const pending of this.pending.values()) { pending.cutoff = true; this.rejectPending(pending, error); }
+    for (const pending of this.pending.values()) {
+      pending.cutoff = true;
+      this.rejectPending(pending, error);
+    }
     this.pending.clear();
     this.admitted.length = 0;
     this.queued.length = 0;

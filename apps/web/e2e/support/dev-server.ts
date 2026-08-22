@@ -5,21 +5,29 @@ import { createInterface } from 'node:readline';
 const STARTUP_TIMEOUT_MS = 20_000;
 const MAX_STARTUP_STDERR = 64 * 1024;
 
-export interface DevServer { child: ChildProcess; origin: string }
+export interface DevServer {
+  child: ChildProcess;
+  origin: string;
+}
 
 type TestFixtures = { origin: string };
 type WorkerFixtures = { devServer: DevServer };
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
-  devServer: [async ({}, use, workerInfo) => {
-    const server = await startDevServer({ fakeServices: workerInfo.project.name === 'fake-services' });
-    try {
-      await use(server);
-    } finally {
-      await stopDevServer(server);
-    }
-  }, { scope: 'worker' }],
-  origin: async ({ devServer }, use) => { await use(devServer.origin); },
+  devServer: [
+    async ({}, use, workerInfo) => {
+      const server = await startDevServer({ fakeServices: workerInfo.project.name === 'fake-services' });
+      try {
+        await use(server);
+      } finally {
+        await stopDevServer(server);
+      }
+    },
+    { scope: 'worker' },
+  ],
+  origin: async ({ devServer }, use) => {
+    await use(devServer.origin);
+  },
 });
 export { expect };
 
@@ -28,12 +36,20 @@ export async function startDevServer(options: { fakeServices?: boolean } = {}): 
   if (options.fakeServices) env.PODCASTER_WEB_BUILD_ENTRY = 'scripts/build-web-fake.mjs';
   else delete env.PODCASTER_WEB_BUILD_ENTRY;
 
-  const child = spawn('node', ['scripts/dev.mjs'], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], shell: false, env });
+  const child = spawn('node', ['scripts/dev.mjs'], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: false,
+    env,
+  });
   let stderr = '';
   const startup = new Promise<string>((resolve, reject) => {
     let settled = false;
     const lines = createInterface({ input: child.stdout! });
-    const timer = setTimeout(() => finish(new Error(`dev startup timeout after ${STARTUP_TIMEOUT_MS}ms`)), STARTUP_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => finish(new Error(`dev startup timeout after ${STARTUP_TIMEOUT_MS}ms`)),
+      STARTUP_TIMEOUT_MS,
+    );
     const onStderr = (chunk: unknown) => {
       stderr = `${stderr}${String(chunk)}`.slice(-MAX_STARTUP_STDERR);
     };
@@ -88,7 +104,7 @@ function hasExited(child: ChildProcess): boolean {
 
 function waitForExit(child: ChildProcess): Promise<void> {
   if (hasExited(child)) return Promise.resolve();
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const finish = () => {
       child.removeListener('exit', finish);
       child.removeListener('close', finish);

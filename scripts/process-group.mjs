@@ -3,18 +3,27 @@ import { spawn } from 'node:child_process';
 const defaultShutdownTimeoutMs = 3_000;
 
 function groupExists(pgid) {
-  try { process.kill(-pgid, 0); return true; }
-  catch (error) { if (error?.code === 'ESRCH') return false; if (error?.code === 'EPERM') return true; throw error; }
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    if (error?.code === 'EPERM') return true;
+    throw error;
+  }
 }
 
 function signalGroup(pgid, signal) {
-  try { process.kill(-pgid, signal); }
-  catch (error) { if (error?.code !== 'ESRCH') throw error; }
+  try {
+    process.kill(-pgid, signal);
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
 }
 
 async function waitForGroupExit(pgid, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  while (groupExists(pgid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  while (groupExists(pgid) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
   return !groupExists(pgid);
 }
 
@@ -28,7 +37,7 @@ export function createProcessGroupManager({
   async function terminateGroup(pgid, initialSignal = 'SIGTERM') {
     if (!groupExists(pgid)) return;
     signalGroup(pgid, initialSignal);
-    if (!await waitForGroupExit(pgid, shutdownTimeoutMs)) {
+    if (!(await waitForGroupExit(pgid, shutdownTimeoutMs))) {
       onEscalate();
       signalGroup(pgid, 'SIGKILL');
       await waitForGroupExit(pgid, shutdownTimeoutMs);
@@ -48,17 +57,19 @@ export function createProcessGroupManager({
     active.set(pgid, { child, pgid });
     if (pipeStdout) {
       child.stdout.setEncoding('utf8');
-      child.stdout.on('data', chunk => onStdout?.(String(chunk)));
+      child.stdout.on('data', (chunk) => onStdout?.(String(chunk)));
     }
     return child;
   }
 
   async function terminateActive(initialSignal = 'SIGTERM') {
     const groups = [...active.values()];
-    await Promise.all(groups.map(async ({ pgid }) => {
-      await terminateGroup(pgid, initialSignal);
-      active.delete(pgid);
-    }));
+    await Promise.all(
+      groups.map(async ({ pgid }) => {
+        await terminateGroup(pgid, initialSignal);
+        active.delete(pgid);
+      }),
+    );
   }
 
   async function finishGroup(child) {

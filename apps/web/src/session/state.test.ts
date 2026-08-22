@@ -3,14 +3,35 @@ import { canSafelyResume, initialSessionState, reduceSessionState } from './stat
 import type { StableEvent } from '../storage/stable-turn-writer';
 
 let sequence = 0;
-const event = <T extends StableEvent['type']>(type: T, payload: Record<string, unknown> = {}, epoch = 0): StableEvent => ({ protocolVersion: 1, eventId: `e-${++sequence}`, sessionId: 's', epoch, monotonicMs: sequence, type, payload } as StableEvent);
+const event = <T extends StableEvent['type']>(type: T, payload: Record<string, unknown> = {}, epoch = 0): StableEvent =>
+  ({
+    protocolVersion: 1,
+    eventId: `e-${++sequence}`,
+    sessionId: 's',
+    epoch,
+    monotonicMs: sequence,
+    type,
+    payload,
+  }) as StableEvent;
 
 describe('session presentation state', () => {
   it('shows bounded planning progress and preserves notes when live capture starts', () => {
-    let state = reduceSessionState(initialSessionState, event('session.state', { phase: 'planning', planning: { status: 'planning', topic: 'radio', depth: 'light', progress: 35, detail: 'Researching' } }));
+    let state = reduceSessionState(
+      initialSessionState,
+      event('session.state', {
+        phase: 'planning',
+        planning: { status: 'planning', topic: 'radio', depth: 'light', progress: 35, detail: 'Researching' },
+      }),
+    );
     expect(state.dominant).toBe('planning');
     expect(state.planning).toMatchObject({ status: 'planning', topic: 'radio', depth: 'light', progress: 35 });
-    state = reduceSessionState(state, event('session.state', { phase: 'ready', planning: { status: 'ready', topic: 'radio', depth: 'light', progress: 100, notes: 'Talking points' } }));
+    state = reduceSessionState(
+      state,
+      event('session.state', {
+        phase: 'ready',
+        planning: { status: 'ready', topic: 'radio', depth: 'light', progress: 100, notes: 'Talking points' },
+      }),
+    );
     expect(state.dominant).toBe('ready');
     expect(state.planning.notes).toBe('Talking points');
     state = reduceSessionState(state, event('session.state', { phase: 'listening' }));
@@ -28,10 +49,22 @@ describe('session presentation state', () => {
 
   it('surfaces audio warmup progress and clears the degraded copy when healthy', () => {
     let state = reduceSessionState(initialSessionState, event('failure', { detail: 'Audio engine is retrying.' }));
-    state = reduceSessionState(state, event('session.state', { phase: 'idle', audio: { status: 'warming', capture: 'starting', vad: 'warming', tts: 'ready', detail: 'Loading VAD.' } }));
+    state = reduceSessionState(
+      state,
+      event('session.state', {
+        phase: 'idle',
+        audio: { status: 'warming', capture: 'starting', vad: 'warming', tts: 'ready', detail: 'Loading VAD.' },
+      }),
+    );
     expect(state.audioEngine).toMatchObject({ status: 'warming', capture: 'starting', vad: 'warming', tts: 'ready' });
     expect(state.dominant).toBe('degraded');
-    state = reduceSessionState(state, event('session.state', { phase: 'idle', audio: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' } }));
+    state = reduceSessionState(
+      state,
+      event('session.state', {
+        phase: 'idle',
+        audio: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' },
+      }),
+    );
     expect(state.audioEngine.status).toBe('ready');
     expect(state.degradedMessage).toBe('');
   });
@@ -44,26 +77,82 @@ describe('session presentation state', () => {
   });
 
   it('accumulates multi-part responses into one assistant row with per-part tentative transitions', () => {
-    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 0 }));
-    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', partIndex: 0, text: 'Let me look that up.' }));
-    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 0, text: 'Let me look that up.' }));
-    state = reduceSessionState(state, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 1 }));
-    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', partIndex: 1, text: 'Paris is the capital. It sits on the Seine.' }));
-    const item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
-    expect(item).toMatchObject({ kind: 'assistant', text: 'Let me look that up.\n\nParis is the capital. It sits on the Seine.' });
+    let state = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 0 }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.delta', { turnId: 't', responseId: 'r', partIndex: 0, text: 'Let me look that up.' }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.final', {
+        turnId: 't',
+        responseId: 'r',
+        posture: 'riff',
+        partIndex: 0,
+        text: 'Let me look that up.',
+      }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 1 }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.delta', {
+        turnId: 't',
+        responseId: 'r',
+        partIndex: 1,
+        text: 'Paris is the capital. It sits on the Seine.',
+      }),
+    );
+    const item = state.conversationItems.find(
+      (candidate) => candidate.kind === 'assistant' && candidate.responseId === 'r',
+    );
+    expect(item).toMatchObject({
+      kind: 'assistant',
+      text: 'Let me look that up.\n\nParis is the capital. It sits on the Seine.',
+    });
     if (item?.kind === 'assistant') {
       expect(item.parts).toEqual([
         { partIndex: 0, text: 'Let me look that up.', tentative: false },
         { partIndex: 1, text: 'Paris is the capital. It sits on the Seine.', tentative: true },
       ]);
     }
-    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', partIndex: 1, text: 'Paris is the capital. It sits on the Seine.' }));
-    const finalized = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
-    expect(finalized).toMatchObject({ text: 'Let me look that up.\n\nParis is the capital. It sits on the Seine.', tentative: false });
+    state = reduceSessionState(
+      state,
+      event('reasoning.final', {
+        turnId: 't',
+        responseId: 'r',
+        posture: 'riff',
+        partIndex: 1,
+        text: 'Paris is the capital. It sits on the Seine.',
+      }),
+    );
+    const finalized = state.conversationItems.find(
+      (candidate) => candidate.kind === 'assistant' && candidate.responseId === 'r',
+    );
+    expect(finalized).toMatchObject({
+      text: 'Let me look that up.\n\nParis is the capital. It sits on the Seine.',
+      tentative: false,
+    });
   });
 
   it('requires every conservative safe-resume guard', () => {
-    const all = { hostResumable: true, responseMatches: true, playbackMatches: true, epochMatches: true, wasSpeaking: true, playbackTerminal: false, echoRecovered: true, newerStableTurn: false, stopped: false, confirmed: false };
+    const all = {
+      hostResumable: true,
+      responseMatches: true,
+      playbackMatches: true,
+      epochMatches: true,
+      wasSpeaking: true,
+      playbackTerminal: false,
+      echoRecovered: true,
+      newerStableTurn: false,
+      stopped: false,
+      confirmed: false,
+    };
     expect(canSafelyResume(all)).toBe(true);
     for (const key of Object.keys(all) as Array<keyof typeof all>) {
       const unsafe = { ...all, [key]: typeof all[key] === 'boolean' ? !all[key] : all[key] };
@@ -72,13 +161,32 @@ describe('session presentation state', () => {
   });
 
   it('holds a hidden placeholder until final text and never renders an empty bubble', () => {
-    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'question' }));
-    expect(state.conversationItems).toEqual([{ kind: 'assistant', id: 'assistant:r', responseId: 'r', text: '', playback: 'preparing', sequence: state.conversationItems[0]!.sequence }]);
+    let state = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'question' }),
+    );
+    expect(state.conversationItems).toEqual([
+      {
+        kind: 'assistant',
+        id: 'assistant:r',
+        responseId: 'r',
+        text: '',
+        playback: 'preparing',
+        sequence: state.conversationItems[0]!.sequence,
+      },
+    ]);
     state = reduceSessionState(state, event('tts.started', { responseId: 'r', playbackId: 'p', sampleRate: 24000 }));
     expect(state.dominant).toBe('speaking');
-    expect(state.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', playbackId: 'p', playback: 'playing', text: '' }));
-    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'question', text: 'Final answer' }));
-    const item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    expect(state.conversationItems).toContainEqual(
+      expect.objectContaining({ responseId: 'r', playbackId: 'p', playback: 'playing', text: '' }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'question', text: 'Final answer' }),
+    );
+    const item = state.conversationItems.find(
+      (candidate) => candidate.kind === 'assistant' && candidate.responseId === 'r',
+    );
     // Upsert preserves the already-known playbackId and playing status.
     expect(item).toMatchObject({ text: 'Final answer', playbackId: 'p', playback: 'playing' });
     expect(state.assistantText).toBe('Final answer');
@@ -107,58 +215,120 @@ describe('session presentation state', () => {
   });
 
   it('removes an empty placeholder and marks a partial response interrupted on failure', () => {
-    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
-    state = reduceSessionState(state, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'tts_failed' }));
-    expect(state.conversationItems.filter(item => item.kind === 'assistant')).toEqual([]);
+    let state = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }),
+    );
+    state = reduceSessionState(
+      state,
+      event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'tts_failed' }),
+    );
+    expect(state.conversationItems.filter((item) => item.kind === 'assistant')).toEqual([]);
 
-    let partial = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
-    partial = reduceSessionState(partial, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'Heard part of this' }));
-    partial = reduceSessionState(partial, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'reasoning_invalid' }));
-    expect(partial.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', text: 'Heard part of this', playback: 'interrupted' }));
+    let partial = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }),
+    );
+    partial = reduceSessionState(
+      partial,
+      event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'Heard part of this' }),
+    );
+    partial = reduceSessionState(
+      partial,
+      event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'reasoning_invalid' }),
+    );
+    expect(partial.conversationItems).toContainEqual(
+      expect.objectContaining({ responseId: 'r', text: 'Heard part of this', playback: 'interrupted' }),
+    );
   });
 
   it('accumulates reasoning.delta into a tentative row and materializes it on final', () => {
-    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
+    let state = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }),
+    );
     state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A short' }));
-    let item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    let item = state.conversationItems.find(
+      (candidate) => candidate.kind === 'assistant' && candidate.responseId === 'r',
+    );
     expect(item).toMatchObject({ text: 'A short', tentative: true });
-    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A short reply grows' }));
-    item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    state = reduceSessionState(
+      state,
+      event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A short reply grows' }),
+    );
+    item = state.conversationItems.find((candidate) => candidate.kind === 'assistant' && candidate.responseId === 'r');
     expect(item).toMatchObject({ text: 'A short reply grows', tentative: true });
-    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'A short reply grows complete.' }));
-    item = state.conversationItems.find(candidate => candidate.kind === 'assistant' && candidate.responseId === 'r');
+    state = reduceSessionState(
+      state,
+      event('reasoning.final', {
+        turnId: 't',
+        responseId: 'r',
+        posture: 'riff',
+        text: 'A short reply grows complete.',
+      }),
+    );
+    item = state.conversationItems.find((candidate) => candidate.kind === 'assistant' && candidate.responseId === 'r');
     expect(item).toMatchObject({ text: 'A short reply grows complete.', tentative: false });
     expect(state.assistantText).toBe('A short reply grows complete.');
   });
 
   it('drops a tentative-only assistant row when the response fails', () => {
-    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
-    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A preview that never lands' }));
-    expect(state.conversationItems.filter(item => item.kind === 'assistant')).toHaveLength(1);
-    state = reduceSessionState(state, event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'reasoning_invalid' }));
-    expect(state.conversationItems.filter(item => item.kind === 'assistant')).toEqual([]);
+    let state = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A preview that never lands' }),
+    );
+    expect(state.conversationItems.filter((item) => item.kind === 'assistant')).toHaveLength(1);
+    state = reduceSessionState(
+      state,
+      event('response.failed', { turnId: 't', responseId: 'r', reasonCode: 'reasoning_invalid' }),
+    );
+    expect(state.conversationItems.filter((item) => item.kind === 'assistant')).toEqual([]);
   });
 
   it('clears the tentative assistant row when the epoch advances', () => {
-    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
-    state = reduceSessionState(state, event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A preview mid-flight' }));
-    expect(state.conversationItems.filter(item => item.kind === 'assistant' && item.tentative)).toHaveLength(1);
+    let state = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.delta', { turnId: 't', responseId: 'r', text: 'A preview mid-flight' }),
+    );
+    expect(state.conversationItems.filter((item) => item.kind === 'assistant' && item.tentative)).toHaveLength(1);
     state = reduceSessionState(state, event('session.state', { phase: 'listening' }, 1));
     expect(state.epoch).toBe(1);
-    expect(state.conversationItems.filter(item => item.kind === 'assistant' && item.tentative)).toEqual([]);
+    expect(state.conversationItems.filter((item) => item.kind === 'assistant' && item.tentative)).toEqual([]);
   });
 
   it('keeps a finalized assistant row across an epoch advance', () => {
-    let state = reduceSessionState(initialSessionState, event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }));
-    state = reduceSessionState(state, event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'A complete answer' }));
+    let state = reduceSessionState(
+      initialSessionState,
+      event('reasoning.started', { turnId: 't', responseId: 'r', posture: 'riff' }),
+    );
+    state = reduceSessionState(
+      state,
+      event('reasoning.final', { turnId: 't', responseId: 'r', posture: 'riff', text: 'A complete answer' }),
+    );
     state = reduceSessionState(state, event('session.state', { phase: 'listening' }, 1));
-    expect(state.conversationItems).toContainEqual(expect.objectContaining({ responseId: 'r', text: 'A complete answer', tentative: false }));
+    expect(state.conversationItems).toContainEqual(
+      expect.objectContaining({ responseId: 'r', text: 'A complete answer', tentative: false }),
+    );
   });
 
   it('resumes the same assistant item in place without transcript notices', () => {
-    let state = reduceSessionState(initialSessionState, event('transcript.final', { turnId: 'original', text: 'Tell me more' }));
+    let state = reduceSessionState(
+      initialSessionState,
+      event('transcript.final', { turnId: 'original', text: 'Tell me more' }),
+    );
     state = reduceSessionState(state, event('reasoning.started', { turnId: 'original', responseId: 'r' }));
-    state = reduceSessionState(state, event('reasoning.final', { turnId: 'original', responseId: 'r', text: 'One complete answer' }));
+    state = reduceSessionState(
+      state,
+      event('reasoning.final', { turnId: 'original', responseId: 'r', text: 'One complete answer' }),
+    );
     state = reduceSessionState(state, event('tts.started', { responseId: 'r', playbackId: 'p' }));
     for (let index = 0; index < 10; index += 1) {
       const turnId = `control-${index}`;
@@ -166,11 +336,13 @@ describe('session presentation state', () => {
       state = reduceSessionState(state, event('barge_in.provisional', { responseId: 'r' }));
       state = reduceSessionState(state, event('interruption.decision', { action: 'resume', responseId: 'r', turnId }));
     }
-    expect(state.conversationItems.filter(item => item.kind === 'assistant' && item.responseId === 'r')).toEqual([
+    expect(state.conversationItems.filter((item) => item.kind === 'assistant' && item.responseId === 'r')).toEqual([
       expect.objectContaining({ text: 'One complete answer', playback: 'playing' }),
     ]);
     expect(state.conversationItems).not.toContainEqual(expect.objectContaining({ kind: 'notice' }));
-    expect(state.conversationItems.filter(item => item.kind === 'user' && item.status === 'control')).toHaveLength(10);
+    expect(state.conversationItems.filter((item) => item.kind === 'user' && item.status === 'control')).toHaveLength(
+      10,
+    );
     expect(state.playbackNotice).toBe('');
     expect(state.announcement).toBe('Continuing the response');
   });

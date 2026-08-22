@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CustomVoiceStore, type CustomVoiceRecord } from './custom-voice-store';
 
 let name = '';
-afterEach(async () => { if (name) await new Promise<void>(resolve => { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = () => resolve(); }); });
+afterEach(async () => {
+  if (name)
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = request.onerror = request.onblocked = () => resolve();
+    });
+});
 
 function voice(index = 0): CustomVoiceRecord {
   const hash = `${index.toString(16).padStart(2, '0')}${'a'.repeat(62)}`;

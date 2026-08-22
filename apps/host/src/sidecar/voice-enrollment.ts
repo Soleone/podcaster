@@ -38,7 +38,10 @@ function openVoiceSocket(sidecar: SidecarProcess, signal?: AbortSignal): Promise
     let settled = false;
     const abort = () => {
       socket.close();
-      if (!settled) { settled = true; reject(signal?.reason ?? new Error('voice enrollment cancelled')); }
+      if (!settled) {
+        settled = true;
+        reject(signal?.reason ?? new Error('voice enrollment cancelled'));
+      }
     };
     signal?.addEventListener('abort', abort, { once: true });
     socket.once('open', () => {
@@ -47,9 +50,12 @@ function openVoiceSocket(sidecar: SidecarProcess, signal?: AbortSignal): Promise
       signal?.removeEventListener('abort', abort);
       resolve(socket);
     });
-    socket.once('error', error => {
+    socket.once('error', (error) => {
       signal?.removeEventListener('abort', abort);
-      if (!settled) { settled = true; reject(error); }
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
     });
   });
 }
@@ -69,17 +75,30 @@ async function sendAndWait(
       const finish = (error?: Error) => {
         if (done) return;
         done = true;
-        if (error) reject(error); else resolve();
+        if (error) reject(error);
+        else resolve();
       };
       const onAbort = () => finish(new Error('voice enrollment cancelled'));
       signal?.addEventListener('abort', onAbort, { once: true });
-      socket.on('message', raw => {
-        if (done || typeof raw === 'string' || Buffer.isBuffer(raw) === false && Array.isArray(raw) === false && raw instanceof ArrayBuffer === false) return;
+      socket.on('message', (raw) => {
+        if (
+          done ||
+          typeof raw === 'string' ||
+          (Buffer.isBuffer(raw) === false && Array.isArray(raw) === false && raw instanceof ArrayBuffer === false)
+        )
+          return;
         let value: { type?: string; payload?: { voiceId?: string; code?: string; message?: string } };
-        try { value = JSON.parse(Buffer.from(bytesOf(raw)).toString('utf8')) as typeof value; } catch { return; }
+        try {
+          value = JSON.parse(Buffer.from(bytesOf(raw)).toString('utf8')) as typeof value;
+        } catch {
+          return;
+        }
         if (value.type === 'voice.enrolled' && value.payload?.voiceId === voiceId) finish();
         else if (value.type === 'voice.removed' && value.payload?.voiceId === voiceId) finish();
-        else if (value.type === 'voice.error' && value.payload?.voiceId === voiceId) finish(new Error(`${value.payload.code ?? 'voice_error'}: ${value.payload.message ?? 'voice operation failed'}`));
+        else if (value.type === 'voice.error' && value.payload?.voiceId === voiceId)
+          finish(
+            new Error(`${value.payload.code ?? 'voice_error'}: ${value.payload.message ?? 'voice operation failed'}`),
+          );
       });
       socket.once('close', () => {
         signal?.removeEventListener('abort', onAbort);
@@ -90,19 +109,21 @@ async function sendAndWait(
         return;
       }
       const enrollment = input as VoiceEnrollmentSidecarInput;
-      socket.send(JSON.stringify({
-        type: 'voice.enroll',
-        payload: {
-          enrollment: {
-            voiceId: enrollment.voiceId,
-            name: enrollment.name,
-            refSha256: enrollment.refSha256,
-            sampleRate: enrollment.sampleRate,
-            durationMs: enrollment.durationMs,
-            byteLength: enrollment.wav.byteLength,
+      socket.send(
+        JSON.stringify({
+          type: 'voice.enroll',
+          payload: {
+            enrollment: {
+              voiceId: enrollment.voiceId,
+              name: enrollment.name,
+              refSha256: enrollment.refSha256,
+              sampleRate: enrollment.sampleRate,
+              durationMs: enrollment.durationMs,
+              byteLength: enrollment.wav.byteLength,
+            },
           },
-        },
-      }));
+        }),
+      );
       for (let offset = 0; offset < enrollment.wav.byteLength; offset += CHUNK_BYTES) {
         socket.send(enrollment.wav.subarray(offset, Math.min(offset + CHUNK_BYTES, enrollment.wav.byteLength)));
       }
@@ -113,10 +134,18 @@ async function sendAndWait(
   }
 }
 
-export function enrollCustomVoiceInSidecar(sidecar: SidecarProcess, input: VoiceEnrollmentSidecarInput, signal?: AbortSignal): Promise<void> {
+export function enrollCustomVoiceInSidecar(
+  sidecar: SidecarProcess,
+  input: VoiceEnrollmentSidecarInput,
+  signal?: AbortSignal,
+): Promise<void> {
   return sendAndWait(sidecar, input, false, signal);
 }
 
-export function removeCustomVoiceFromSidecar(sidecar: SidecarProcess, voiceId: string, signal?: AbortSignal): Promise<void> {
+export function removeCustomVoiceFromSidecar(
+  sidecar: SidecarProcess,
+  voiceId: string,
+  signal?: AbortSignal,
+): Promise<void> {
   return sendAndWait(sidecar, { voiceId }, true, signal);
 }

@@ -2,16 +2,19 @@ import { expect, test } from './support/dev-server';
 import { installFakeMicrophone } from './support/fake-browser-services';
 
 async function openSettings(page: import('@playwright/test').Page, origin: string): Promise<void> {
-  await page.route('**/api/readiness', async route => {
+  await page.route('**/api/readiness', async (route) => {
     const response = await route.fetch();
-    const snapshot = await response.json() as Record<string, unknown>;
+    const snapshot = (await response.json()) as Record<string, unknown>;
     delete snapshot.voiceCatalog;
     delete snapshot.ttsModels;
     delete snapshot.activeTtsModel;
     await route.fulfill({ json: snapshot });
   });
   await page.goto(origin);
-  await page.getByRole('button', { name: /Open settings/ }).first().click();
+  await page
+    .getByRole('button', { name: /Open settings/ })
+    .first()
+    .click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 }
 
@@ -37,7 +40,7 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   await page.getByLabel('Thinking level').click();
   await page.getByRole('option', { name: 'high', exact: true }).click();
   await agentName.fill('Ada');
-  const agentFocus = await agentName.evaluate(element => {
+  const agentFocus = await agentName.evaluate((element) => {
     const panel = element.closest('[data-slot="tabs-content"]');
     return {
       boxShadow: getComputedStyle(element).boxShadow,
@@ -53,7 +56,10 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
 
   // Oversized persona disables Save with an inline error.
   await persona.fill('x'.repeat(9000));
-  const personaScroll = await persona.evaluate(element => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+  const personaScroll = await persona.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
   expect(personaScroll.scrollHeight).toBeGreaterThan(personaScroll.clientHeight);
   await expect(page.getByText('Persona exceeds the 8 KiB limit.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save settings' })).toBeDisabled();
@@ -67,7 +73,9 @@ test('settings dialog edits persona with a byte counter and inspects the base pr
   await expect(basePrompt).toHaveCSS('overflow-y', 'auto');
   await expect(basePrompt).toHaveCSS('cursor', 'default');
   await expect(basePrompt).toHaveValue(/You are the voice of a live podcast companion\./);
-  const baseDescription = page.getByText('Your saved persona is appended to this base prompt when the next session starts.');
+  const baseDescription = page.getByText(
+    'Your saved persona is appended to this base prompt when the next session starts.',
+  );
   await baseDescription.scrollIntoViewIfNeeded();
   await expect(baseDescription).toBeVisible();
 
@@ -104,7 +112,10 @@ test('settings survive a reload on the same browser', async ({ page, origin }) =
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   await page.reload();
-  await page.getByRole('button', { name: /Open settings/ }).first().click();
+  await page
+    .getByRole('button', { name: /Open settings/ })
+    .first()
+    .click();
   await expect(page.getByLabel('Agent name')).toHaveValue('Lin');
   await expect(page.getByLabel('Persona')).toHaveValue('You are a gentle storyteller.');
   await expect(page.getByRole('heading', { name: 'Pi service' })).toBeVisible();

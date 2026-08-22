@@ -3,7 +3,10 @@ export class StreamingResampler {
   private samples: number[] = [];
   private position = 0;
 
-  constructor(readonly inputRate: number, readonly outputRate = 16_000) {
+  constructor(
+    readonly inputRate: number,
+    readonly outputRate = 16_000,
+  ) {
     if (!Number.isFinite(inputRate) || inputRate <= 0 || !Number.isFinite(outputRate) || outputRate <= 0) {
       throw new RangeError('sample rates must be positive');
     }

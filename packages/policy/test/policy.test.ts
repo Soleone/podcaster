@@ -1,24 +1,24 @@
-import { describe, expect, it } from "vitest";
-import type { PersonaInterpretation } from "@app/contracts";
-import { decide, POLICY_VERSION, type PolicyInput } from "../src/index.js";
+import { describe, expect, it } from 'vitest';
+import type { PersonaInterpretation } from '@app/contracts';
+import { decide, POLICY_VERSION, type PolicyInput } from '../src/index.js';
 
 const persona: PersonaInterpretation = {
   version: 1,
-  name: "Companion",
+  name: 'Companion',
   invitation_only: false,
   posture_weights: { riff: 50, question: 35, challenge: 15 },
   challenge_enabled: true,
   interests: [],
-  body: "Be thoughtful.",
+  body: 'Be thoughtful.',
 };
 function input(overrides: Partial<PolicyInput> = {}): PolicyInput {
   return {
     policyVersion: POLICY_VERSION,
-    personaDigest: "a".repeat(64),
+    personaDigest: 'a'.repeat(64),
     persona,
-    sessionSeed: "seed",
-    turnId: "turn-1",
-    transcript: "This is a complete thought",
+    sessionSeed: 'seed',
+    turnId: 'turn-1',
+    transcript: 'This is a complete thought',
     endpointComplete: true,
     stableUserTurnCount: 3,
     recentDecisions: [],
@@ -27,72 +27,85 @@ function input(overrides: Partial<PolicyInput> = {}): PolicyInput {
   };
 }
 
-describe("deterministic posture policy", () => {
-  it("is byte-deterministic for normalized equivalent input", () => {
-    const first = decide(input({ transcript: "  This  is a complete thought  " }));
-    const second = decide(input({ transcript: "This is a complete thought" }));
+describe('deterministic posture policy', () => {
+  it('is byte-deterministic for normalized equivalent input', () => {
+    const first = decide(input({ transcript: '  This  is a complete thought  ' }));
+    const second = decide(input({ transcript: 'This is a complete thought' }));
     expect(first).toEqual(second);
     expect(JSON.stringify(first)).toBe(JSON.stringify(second));
     expect(first.posture).toMatch(/^(riff|question|challenge)$/u);
   });
 
   it.each([
-    ["empty", { transcript: "" }, "empty"],
-    ["filler", { transcript: "uh um" }, "non_substantive"],
-    ["unfinished", { endpointComplete: false }, "unfinished"],
-    ["invitation", { persona: { ...persona, invitation_only: true } }, "invitation_required"],
-  ] as const)("silences %s input", (_name, override, reason) => {
-    expect(decide(input(override))).toMatchObject({ eligible: false, posture: "silence", reasonCodes: [reason] });
+    ['empty', { transcript: '' }, 'empty'],
+    ['filler', { transcript: 'uh um' }, 'non_substantive'],
+    ['unfinished', { endpointComplete: false }, 'unfinished'],
+    ['invitation', { persona: { ...persona, invitation_only: true } }, 'invitation_required'],
+  ] as const)('silences %s input', (_name, override, reason) => {
+    expect(decide(input(override))).toMatchObject({ eligible: false, posture: 'silence', reasonCodes: [reason] });
   });
 
-  it("keeps short but meaningful turns eligible", () => {
-    for (const transcript of ["ok", "no", "Thinking about you"]) {
-      expect(decide(input({ transcript }))).toMatchObject({ eligible: true, posture: expect.not.stringMatching(/^silence$/u), reasonCodes: ["selected"] });
+  it('keeps short but meaningful turns eligible', () => {
+    for (const transcript of ['ok', 'no', 'Thinking about you']) {
+      expect(decide(input({ transcript }))).toMatchObject({
+        eligible: true,
+        posture: expect.not.stringMatching(/^silence$/u),
+        reasonCodes: ['selected'],
+      });
     }
   });
 
-  it("recognizes only clearly addressee-directed invitations", () => {
+  it('recognizes only clearly addressee-directed invitations', () => {
     const invitationOnly = { ...persona, invitation_only: true };
-    for (const transcript of ["Could you share what you think?", "What’s your take on this idea?"]) {
-      expect(decide(input({ persona: invitationOnly, transcript })).posture).not.toBe("silence");
+    for (const transcript of ['Could you share what you think?', 'What’s your take on this idea?']) {
+      expect(decide(input({ persona: invitationOnly, transcript })).posture).not.toBe('silence');
     }
-    for (const transcript of ["I keep asking myself why?", "They tell me this always happens."]) {
-      expect(decide(input({ persona: invitationOnly, transcript }))).toMatchObject({ posture: "silence", reasonCodes: ["invitation_required"] });
+    for (const transcript of ['I keep asking myself why?', 'They tell me this always happens.']) {
+      expect(decide(input({ persona: invitationOnly, transcript }))).toMatchObject({
+        posture: 'silence',
+        reasonCodes: ['invitation_required'],
+      });
     }
   });
 
-  it("keeps responding throughout a long eligible conversation", () => {
+  it('keeps responding throughout a long eligible conversation', () => {
     const recentDecisions = Array.from({ length: 20 }, (_, index) => ({
       turnId: String(index),
       eligible: true,
-      posture: index % 2 === 0 ? "riff" as const : "question" as const,
+      posture: index % 2 === 0 ? ('riff' as const) : ('question' as const),
     }));
-    expect(decide(input({ recentDecisions })).posture).not.toBe("silence");
+    expect(decide(input({ recentDecisions })).posture).not.toBe('silence');
   });
 
-  it("lets an explicit short invitation hand the turn to the agent", () => {
-    expect(decide(input({ transcript: "Hello, please respond" })).posture).not.toBe("silence");
-    expect(decide(input({ transcript: "Please respond" })).posture).not.toBe("silence");
-    expect(decide(input({ transcript: "Respond please" })).posture).not.toBe("silence");
+  it('lets an explicit short invitation hand the turn to the agent', () => {
+    expect(decide(input({ transcript: 'Hello, please respond' })).posture).not.toBe('silence');
+    expect(decide(input({ transcript: 'Please respond' })).posture).not.toBe('silence');
+    expect(decide(input({ transcript: 'Respond please' })).posture).not.toBe('silence');
   });
 
-  it("never selects challenge until every challenge guard passes", () => {
+  it('never selects challenge until every challenge guard passes', () => {
     for (let index = 0; index < 200; index++) {
       const turnId = `turn-${index}`;
-      expect(decide(input({ turnId, stableUserTurnCount: 1 })).posture).not.toBe("challenge");
-      expect(decide(input({ turnId, eligibleTurnsSinceChallenge: 2 })).posture).not.toBe("challenge");
-      expect(decide(input({ turnId, persona: { ...persona, challenge_enabled: false } })).posture).not.toBe("challenge");
+      expect(decide(input({ turnId, stableUserTurnCount: 1 })).posture).not.toBe('challenge');
+      expect(decide(input({ turnId, eligibleTurnsSinceChallenge: 2 })).posture).not.toBe('challenge');
+      expect(decide(input({ turnId, persona: { ...persona, challenge_enabled: false } })).posture).not.toBe(
+        'challenge',
+      );
     }
-    expect(Array.from({ length: 500 }, (_, index) => decide(input({ turnId: `eligible-${index}` })).posture)).toContain("challenge");
+    expect(Array.from({ length: 500 }, (_, index) => decide(input({ turnId: `eligible-${index}` })).posture)).toContain(
+      'challenge',
+    );
   });
 
-  it("always returns exactly one allowed posture under generated histories", () => {
+  it('always returns exactly one allowed posture under generated histories', () => {
     let seed = 17;
     for (let index = 0; index < 500; index++) {
       seed = (seed * 1103515245 + 12345) >>> 0;
-      const result = decide(input({ turnId: String(seed), stableUserTurnCount: seed % 10, eligibleTurnsSinceChallenge: seed % 6 }));
-      expect(["riff", "question", "challenge", "silence"]).toContain(result.posture);
-      expect(typeof result.posture).toBe("string");
+      const result = decide(
+        input({ turnId: String(seed), stableUserTurnCount: seed % 10, eligibleTurnsSinceChallenge: seed % 6 }),
+      );
+      expect(['riff', 'question', 'challenge', 'silence']).toContain(result.posture);
+      expect(typeof result.posture).toBe('string');
       expect(result.inputDigest).toMatch(/^[a-f0-9]{64}$/u);
     }
   });

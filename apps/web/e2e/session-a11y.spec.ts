@@ -5,12 +5,18 @@ test('restrains live announcements and resolves interruptions automatically', as
   await enterFakeSession(page, origin);
   const live = page.getByRole('status');
   await expect(live).toHaveText('Listening');
-  for (let index = 0; index < 12; index++) await page.evaluate(async text => window.__podcasterTest!.partial(text), `revision ${index}`);
+  for (let index = 0; index < 12; index++)
+    await page.evaluate(async (text) => window.__podcasterTest!.partial(text), `revision ${index}`);
   await expect(page.getByText('revision 11')).toBeVisible();
   await expect(live).toHaveText('Listening');
   await expect(live).not.toContainText('revision');
 
-  await emit(page, 'reasoning.final', { turnId: 'turn', responseId: 'response', posture: 'question', text: 'A concise answer' });
+  await emit(page, 'reasoning.final', {
+    turnId: 'turn',
+    responseId: 'response',
+    posture: 'question',
+    text: 'A concise answer',
+  });
   await emit(page, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 });
   await expect(page.getByRole('button', { name: 'Stop speaking' })).toBeVisible();
   await page.keyboard.press('Escape');
@@ -24,7 +30,17 @@ test('restrains live announcements and resolves interruptions automatically', as
   await emit(page, 'barge_in.provisional', { responseId: 'response-2', outputEpoch: 0, resumable: true });
   // No pause dialog: the host resolves the interruption automatically.
   await expect(page.getByText('The previous response is paused while your intent is considered.')).toHaveCount(0);
-  await emit(page, 'interruption.decision', { turnId: 'interruption', responseId: 'response-2', playbackId: 'playback-2', outputEpoch: 0, action: 'resume', intent: 'continue_previous', confidence: 'high', disposition: 'resume_requested', pausedSampleOffset: 0 });
+  await emit(page, 'interruption.decision', {
+    turnId: 'interruption',
+    responseId: 'response-2',
+    playbackId: 'playback-2',
+    outputEpoch: 0,
+    action: 'resume',
+    intent: 'continue_previous',
+    confidence: 'high',
+    disposition: 'resume_requested',
+    pausedSampleOffset: 0,
+  });
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().playbackResumes)).toBe(1);
   await expect(page.getByRole('heading', { name: 'Speaking' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Pause session' })).toBeVisible();

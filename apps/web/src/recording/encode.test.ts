@@ -4,7 +4,8 @@ import { createEncoderClient } from './encoder-client';
 
 function tone(samples: number, sampleRate: number): Int16Array {
   const pcm = new Int16Array(samples);
-  for (let index = 0; index < samples; index++) pcm[index] = Math.round(8000 * Math.sin((2 * Math.PI * 440 * index) / sampleRate));
+  for (let index = 0; index < samples; index++)
+    pcm[index] = Math.round(8000 * Math.sin((2 * Math.PI * 440 * index) / sampleRate));
   return pcm;
 }
 function hasMp3FrameHeader(bytes: Uint8Array): boolean {
@@ -33,7 +34,7 @@ describe('encodeMp3', () => {
   it('reports monotonic progress that ends at exactly 1', () => {
     const pcm = tone(24000, 24000);
     const fractions: number[] = [];
-    encodeMp3(pcm, 24000, 64, fraction => fractions.push(fraction));
+    encodeMp3(pcm, 24000, 64, (fraction) => fractions.push(fraction));
     expect(fractions.length).toBeGreaterThan(1);
     for (let index = 1; index < fractions.length; index++) {
       expect(fractions[index]!).toBeGreaterThanOrEqual(fractions[index - 1]!);
@@ -43,7 +44,7 @@ describe('encodeMp3', () => {
 
   it('reports a final 1 even for a tiny input', () => {
     const fractions: number[] = [];
-    encodeMp3(tone(100, 16000), 16000, 64, fraction => fractions.push(fraction));
+    encodeMp3(tone(100, 16000), 16000, 64, (fraction) => fractions.push(fraction));
     expect(fractions[fractions.length - 1]).toBe(1);
   });
 });
@@ -58,7 +59,11 @@ function fakeWorker(): { worker: FakeWorker; encode: ReturnType<typeof createEnc
   const encode = createEncoderClient(() => worker as unknown as Worker);
   return { worker, encode };
 }
-function respond(worker: FakeWorker, request: { requestId: number; pcm16: Int16Array; sampleRate: number; bitrateKbps: number }, mp3: Uint8Array): void {
+function respond(
+  worker: FakeWorker,
+  request: { requestId: number; pcm16: Int16Array; sampleRate: number; bitrateKbps: number },
+  mp3: Uint8Array,
+): void {
   worker.onmessage?.({ data: { requestId: request.requestId, mp3 } } as MessageEvent);
 }
 
@@ -66,7 +71,12 @@ describe('encoder worker client', () => {
   it('resolves the encoded bytes routed by request id', async () => {
     const { worker, encode } = fakeWorker();
     const request = encode(tone(8000, 16000), 16000, 64);
-    const posted = worker.postMessage.mock.calls[0]![0] as { requestId: number; pcm16: Int16Array; sampleRate: number; bitrateKbps: number };
+    const posted = worker.postMessage.mock.calls[0]![0] as {
+      requestId: number;
+      pcm16: Int16Array;
+      sampleRate: number;
+      bitrateKbps: number;
+    };
     expect(posted).toMatchObject({ sampleRate: 16000, bitrateKbps: 64 });
     expect(posted.pcm16).toHaveLength(8000);
     const mp3 = new Uint8Array([0xff, 0xfb, 0x90, 0x64, 1, 2, 3]);
@@ -78,8 +88,18 @@ describe('encoder worker client', () => {
     const { worker, encode } = fakeWorker();
     const first = encode(tone(8000, 16000), 16000, 64);
     const second = encode(tone(8000, 24000), 24000, 64);
-    const firstPost = worker.postMessage.mock.calls[0]![0] as { requestId: number; pcm16: Int16Array; sampleRate: number; bitrateKbps: number };
-    const secondPost = worker.postMessage.mock.calls[1]![0] as { requestId: number; pcm16: Int16Array; sampleRate: number; bitrateKbps: number };
+    const firstPost = worker.postMessage.mock.calls[0]![0] as {
+      requestId: number;
+      pcm16: Int16Array;
+      sampleRate: number;
+      bitrateKbps: number;
+    };
+    const secondPost = worker.postMessage.mock.calls[1]![0] as {
+      requestId: number;
+      pcm16: Int16Array;
+      sampleRate: number;
+      bitrateKbps: number;
+    };
     expect(secondPost.requestId).not.toBe(firstPost.requestId);
     expect(secondPost.sampleRate).toBe(24000);
     respond(worker, secondPost, new Uint8Array([2]));
@@ -92,7 +112,10 @@ describe('encoder worker client', () => {
     const { worker, encode } = fakeWorker();
     const request = encode(new Int16Array(320), 16000, 64);
     const posted = worker.postMessage.mock.calls[0]![0] as { requestId: number };
-    const settled = request.then(() => 'resolved', error => `rejected:${(error as Error).message}`);
+    const settled = request.then(
+      () => 'resolved',
+      (error) => `rejected:${(error as Error).message}`,
+    );
     worker.onerror?.({ message: 'boom' } as ErrorEvent);
     worker.onmessage?.({ data: { requestId: posted.requestId, mp3: new Uint8Array([0xff, 0xfb]) } } as MessageEvent);
     await expect(settled).resolves.toMatch(/^rejected:/);
@@ -102,7 +125,10 @@ describe('encoder worker client', () => {
     const { worker, encode } = fakeWorker();
     const request = encode(new Int16Array(320), 16000, 64);
     const posted = worker.postMessage.mock.calls[0]![0] as { requestId: number };
-    const settled = request.then(() => 'resolved', error => `rejected:${(error as Error).message}`);
+    const settled = request.then(
+      () => 'resolved',
+      (error) => `rejected:${(error as Error).message}`,
+    );
     worker.onmessage?.({ data: { requestId: posted.requestId, error: 'encoder exploded' } } as MessageEvent);
     await expect(settled).resolves.toMatch(/^rejected:encoder exploded$/);
   });

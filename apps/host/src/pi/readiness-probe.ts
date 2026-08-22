@@ -79,7 +79,8 @@ export class PiReadinessProbe {
     }
 
     const current = this.current;
-    if (!current || current.key !== requested.key || this.desired?.key !== requested.key) return Promise.resolve(PI_CHECKING);
+    if (!current || current.key !== requested.key || this.desired?.key !== requested.key)
+      return Promise.resolve(PI_CHECKING);
     if (!current.client) {
       if (!current.value || this.now() - current.checkedAt >= this.ttlMs) this.scheduleReconcile();
       return Promise.resolve(current.value ?? PI_CHECKING);
@@ -163,7 +164,7 @@ export class PiReadinessProbe {
     inFlight = Promise.resolve()
       .then(() => client.probe())
       .catch(() => PI_UNAVAILABLE)
-      .then(value => {
+      .then((value) => {
         if (this.current === entry && !this.closed && this.desired?.key === entry.key) this.accept(entry, value);
       })
       .finally(() => {

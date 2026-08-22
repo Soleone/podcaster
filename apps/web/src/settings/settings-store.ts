@@ -2,7 +2,26 @@
 // store (no schema version bump), validated on every read. A failed save
 // preserves the last committed row and reports failure to the caller.
 
-import { DEFAULT_AGENT_NAME, DEFAULT_AGENT_PERSONA, DEFAULT_PI_SETTINGS, DEFAULT_TTS_MODEL, DEFAULT_VOICE_SPEED_MODIFIER, MAX_AGENT_NAME_BYTES, MAX_PERSONA_BYTES, MAX_VOICE_SPEED_MODIFIER, MAX_VOICE_TONE_PROMPT_BYTES, MAX_PI_MODEL_BYTES, MIN_VOICE_SPEED_MODIFIER, PI_THINKING_LEVELS, QWEN_VOICE_LANGUAGES, SETTINGS_VERSION, ttsModelKey, type PiSettings, type TtsModelSelection, type VoicePreference } from '@app/contracts/settings';
+import {
+  DEFAULT_AGENT_NAME,
+  DEFAULT_AGENT_PERSONA,
+  DEFAULT_PI_SETTINGS,
+  DEFAULT_TTS_MODEL,
+  DEFAULT_VOICE_SPEED_MODIFIER,
+  MAX_AGENT_NAME_BYTES,
+  MAX_PERSONA_BYTES,
+  MAX_VOICE_SPEED_MODIFIER,
+  MAX_VOICE_TONE_PROMPT_BYTES,
+  MAX_PI_MODEL_BYTES,
+  MIN_VOICE_SPEED_MODIFIER,
+  PI_THINKING_LEVELS,
+  QWEN_VOICE_LANGUAGES,
+  SETTINGS_VERSION,
+  ttsModelKey,
+  type PiSettings,
+  type TtsModelSelection,
+  type VoicePreference,
+} from '@app/contracts/settings';
 import { openPodcasterDatabase, requestResult, STORES, transactionDone, type DatabaseFactory } from '../storage/schema';
 
 export const SETTINGS_KEY = 'settings:v1';
@@ -23,21 +42,52 @@ export interface StoredSettings {
   voiceProfiles?: Record<string, VoicePreference>;
 }
 
-export const DEFAULT_SETTINGS: StoredSettings = { version: 1, agentName: DEFAULT_AGENT_NAME, persona: DEFAULT_AGENT_PERSONA, pi: { ...DEFAULT_PI_SETTINGS }, selectedModel: { ...DEFAULT_TTS_MODEL }, voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER, ...DEFAULT_TTS_MODEL }, voiceProfiles: {} };
+export const DEFAULT_SETTINGS: StoredSettings = {
+  version: 1,
+  agentName: DEFAULT_AGENT_NAME,
+  persona: DEFAULT_AGENT_PERSONA,
+  pi: { ...DEFAULT_PI_SETTINGS },
+  selectedModel: { ...DEFAULT_TTS_MODEL },
+  voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER, ...DEFAULT_TTS_MODEL },
+  voiceProfiles: {},
+};
 
 function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const voice = value as Record<string, unknown>;
   const speedModifier = voice.speedModifier === undefined ? DEFAULT_VOICE_SPEED_MODIFIER : voice.speedModifier;
-  if (typeof voice.catalogId !== 'string' || typeof voice.voiceId !== 'string' || typeof speedModifier !== 'number' || !Number.isFinite(speedModifier) || speedModifier < MIN_VOICE_SPEED_MODIFIER || speedModifier > MAX_VOICE_SPEED_MODIFIER) return undefined;
+  if (
+    typeof voice.catalogId !== 'string' ||
+    typeof voice.voiceId !== 'string' ||
+    typeof speedModifier !== 'number' ||
+    !Number.isFinite(speedModifier) ||
+    speedModifier < MIN_VOICE_SPEED_MODIFIER ||
+    speedModifier > MAX_VOICE_SPEED_MODIFIER
+  )
+    return undefined;
   const tonePrompt = voice.tonePrompt === undefined ? undefined : voice.tonePrompt;
-  if (tonePrompt !== undefined && (typeof tonePrompt !== 'string' || !tonePrompt.trim() || new TextEncoder().encode(tonePrompt).length > MAX_VOICE_TONE_PROMPT_BYTES)) return undefined;
+  if (
+    tonePrompt !== undefined &&
+    (typeof tonePrompt !== 'string' ||
+      !tonePrompt.trim() ||
+      new TextEncoder().encode(tonePrompt).length > MAX_VOICE_TONE_PROMPT_BYTES)
+  )
+    return undefined;
   const language = voice.language === undefined ? undefined : voice.language;
-  if (language !== undefined && (typeof language !== 'string' || !(QWEN_VOICE_LANGUAGES as readonly string[]).includes(language))) return undefined;
+  if (
+    language !== undefined &&
+    (typeof language !== 'string' || !(QWEN_VOICE_LANGUAGES as readonly string[]).includes(language))
+  )
+    return undefined;
   const hasBackend = voice.backendId !== undefined || voice.modelId !== undefined;
-  if (hasBackend
-    && (typeof voice.backendId !== 'string' || voice.backendId.length === 0
-      || typeof voice.modelId !== 'string' || voice.modelId.length === 0)) return undefined;
+  if (
+    hasBackend &&
+    (typeof voice.backendId !== 'string' ||
+      voice.backendId.length === 0 ||
+      typeof voice.modelId !== 'string' ||
+      voice.modelId.length === 0)
+  )
+    return undefined;
   return {
     catalogId: voice.catalogId,
     voiceId: voice.voiceId,
@@ -51,15 +101,24 @@ function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
 function normalizePiSettings(value: unknown): PiSettings | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const pi = value as Record<string, unknown>;
-  if (typeof pi.model !== 'string' || !pi.model || pi.model.startsWith('-') || new TextEncoder().encode(pi.model).length > MAX_PI_MODEL_BYTES || /\s/u.test(pi.model)) return undefined;
-  if (typeof pi.thinkingLevel !== 'string' || !(PI_THINKING_LEVELS as readonly string[]).includes(pi.thinkingLevel)) return undefined;
+  if (
+    typeof pi.model !== 'string' ||
+    !pi.model ||
+    pi.model.startsWith('-') ||
+    new TextEncoder().encode(pi.model).length > MAX_PI_MODEL_BYTES ||
+    /\s/u.test(pi.model)
+  )
+    return undefined;
+  if (typeof pi.thinkingLevel !== 'string' || !(PI_THINKING_LEVELS as readonly string[]).includes(pi.thinkingLevel))
+    return undefined;
   return { model: pi.model, thinkingLevel: pi.thinkingLevel as PiSettings['thinkingLevel'] };
 }
 
 function normalizeSelectedModel(value: unknown): TtsModelSelection | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const model = value as Record<string, unknown>;
-  if (typeof model.backendId !== 'string' || !model.backendId || typeof model.modelId !== 'string' || !model.modelId) return undefined;
+  if (typeof model.backendId !== 'string' || !model.backendId || typeof model.modelId !== 'string' || !model.modelId)
+    return undefined;
   return { backendId: model.backendId, modelId: model.modelId };
 }
 
@@ -94,8 +153,15 @@ export function isValidStoredSettings(value: unknown): value is StoredSettings {
   const selectedModel = normalizeSelectedModel(record.selectedModel);
   if (record.selectedModel !== undefined && !selectedModel) return false;
   const activeVoice = normalizeStoredVoice(record.voice);
-  if (selectedModel && activeVoice && ((activeVoice.backendId === undefined) !== (activeVoice.modelId === undefined))) return false;
-  if (selectedModel && activeVoice?.backendId && activeVoice.modelId && ttsModelKey(selectedModel) !== ttsModelKey({ backendId: activeVoice.backendId, modelId: activeVoice.modelId })) return false;
+  if (selectedModel && activeVoice && (activeVoice.backendId === undefined) !== (activeVoice.modelId === undefined))
+    return false;
+  if (
+    selectedModel &&
+    activeVoice?.backendId &&
+    activeVoice.modelId &&
+    ttsModelKey(selectedModel) !== ttsModelKey({ backendId: activeVoice.backendId, modelId: activeVoice.modelId })
+  )
+    return false;
   if (record.voiceProfiles !== undefined && !normalizeVoiceProfiles(record.voiceProfiles)) return false;
   if (utf8ByteLength(record.agentName) > MAX_AGENT_NAME_BYTES) return false;
   if (utf8ByteLength(record.persona) > MAX_PERSONA_BYTES) return false;
@@ -116,7 +182,9 @@ export class SettingsStore {
   async load(): Promise<StoredSettings | undefined> {
     try {
       const transaction = this.db.transaction(STORES.meta, 'readonly');
-      const row = await requestResult(transaction.objectStore(STORES.meta).get(SETTINGS_KEY)) as (StoredSettings & { key: string }) | undefined;
+      const row = (await requestResult(transaction.objectStore(STORES.meta).get(SETTINGS_KEY))) as
+        | (StoredSettings & { key: string })
+        | undefined;
       if (!row) return undefined;
       const { key: _key, ...settings } = row;
       if (!isValidStoredSettings(settings)) return undefined;
@@ -131,7 +199,9 @@ export class SettingsStore {
         ...(selectedModel ? { selectedModel } : {}),
         ...(voiceProfiles ? { voiceProfiles } : {}),
       };
-    } catch { return undefined; }
+    } catch {
+      return undefined;
+    }
   }
 
   /** Returns false (and leaves the committed row untouched) on any failure. */
@@ -142,6 +212,8 @@ export class SettingsStore {
       transaction.objectStore(STORES.meta).put({ key: SETTINGS_KEY, ...settings });
       await transactionDone(transaction);
       return true;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 }

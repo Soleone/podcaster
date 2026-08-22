@@ -48,7 +48,9 @@ export class RecordingStore {
     return new RecordingStore(await openPodcasterDatabase(factory, name));
   }
 
-  close(): void { this.db.close(); }
+  close(): void {
+    this.db.close();
+  }
 
   // Recording is always on for every session; there is no user toggle to persist.
   async getRecordingEnabled(): Promise<boolean> {
@@ -70,19 +72,21 @@ export class RecordingStore {
   async updateTurnId(itemId: string, turnId: string): Promise<void> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
     const store = transaction.objectStore(STORES.recordingItems);
-    const item = await requestResult(store.get(itemId)) as StoredRecordingItem | undefined;
+    const item = (await requestResult(store.get(itemId))) as StoredRecordingItem | undefined;
     if (item && item.turnId !== turnId) store.put({ ...item, turnId });
     await transactionDone(transaction);
   }
 
   async getSessionItems(sessionId: string): Promise<StoredRecordingItem[]> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readonly');
-    return await requestResult(transaction.objectStore(STORES.recordingItems).index('sessionId').getAll(sessionId)) as StoredRecordingItem[];
+    return (await requestResult(
+      transaction.objectStore(STORES.recordingItems).index('sessionId').getAll(sessionId),
+    )) as StoredRecordingItem[];
   }
 
   async getSessionItemSummaries(sessionId: string): Promise<RecordingItemSummary[]> {
     const items = await this.getSessionItems(sessionId);
-    return items.map(item => ({
+    return items.map((item) => ({
       itemId: item.itemId,
       sessionId: item.sessionId,
       recordSeq: item.recordSeq,
@@ -97,7 +101,7 @@ export class RecordingStore {
   async setItemTrimmed(itemId: string, trimmed: boolean): Promise<void> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
     const store = transaction.objectStore(STORES.recordingItems);
-    const item = await requestResult(store.get(itemId)) as StoredRecordingItem | undefined;
+    const item = (await requestResult(store.get(itemId))) as StoredRecordingItem | undefined;
     if (item) store.put({ ...item, trimmed });
     await transactionDone(transaction);
   }
@@ -113,7 +117,7 @@ export class RecordingStore {
     const store = transaction.objectStore(STORES.recordingItems);
     const updates: StoredRecordingItem[] = [];
     for (const itemId of itemIds) {
-      const item = await requestResult(store.get(itemId)) as StoredRecordingItem | undefined;
+      const item = (await requestResult(store.get(itemId))) as StoredRecordingItem | undefined;
       if (!item || item.sessionId !== sessionId) {
         transaction.abort();
         await transactionDone(transaction).catch(() => undefined);
@@ -127,13 +131,15 @@ export class RecordingStore {
 
   async countSessionItems(sessionId: string): Promise<number> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readonly');
-    return await requestResult(transaction.objectStore(STORES.recordingItems).index('sessionId').count(sessionId)) as number;
+    return (await requestResult(
+      transaction.objectStore(STORES.recordingItems).index('sessionId').count(sessionId),
+    )) as number;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
     const store = transaction.objectStore(STORES.recordingItems);
-    const items = await requestResult(store.index('sessionId').getAll(sessionId)) as StoredRecordingItem[];
+    const items = (await requestResult(store.index('sessionId').getAll(sessionId))) as StoredRecordingItem[];
     for (const item of items) store.delete(item.itemId);
     await transactionDone(transaction);
   }

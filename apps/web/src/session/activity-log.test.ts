@@ -10,7 +10,8 @@ describe('activity log', () => {
   });
 
   it('keeps at most 500 entries, dropping the oldest', () => {
-    for (let index = 0; index < 600; index++) activityLog.append({ level: 'info', source: 'test', message: `entry ${index}` });
+    for (let index = 0; index < 600; index++)
+      activityLog.append({ level: 'info', source: 'test', message: `entry ${index}` });
     const entries = activityLog.entries();
     expect(entries).toHaveLength(500);
     expect(entries[0]!.message).toBe('entry 100');
@@ -20,7 +21,12 @@ describe('activity log', () => {
   it('shapes entries with ts, level, source, message, and optional detail', () => {
     activityLog.append({ level: 'warn', source: 'transport', message: 'something odd', detail: 'detail text' });
     const [warned] = activityLog.entries();
-    expect(warned).toMatchObject({ level: 'warn', source: 'transport', message: 'something odd', detail: 'detail text' });
+    expect(warned).toMatchObject({
+      level: 'warn',
+      source: 'transport',
+      message: 'something odd',
+      detail: 'detail text',
+    });
     expect(typeof warned!.ts).toBe('number');
     activityLog.append({ level: 'error', source: 'controller', message: 'degraded' });
     expect(activityLog.entries()[1]!.detail).toBeUndefined();
@@ -29,7 +35,7 @@ describe('activity log', () => {
 
   it('notifies subscribers on append and stops after unsubscribe', () => {
     const seen: ActivityEntry[][] = [];
-    const unsubscribe = activityLog.subscribe(entries => seen.push(entries));
+    const unsubscribe = activityLog.subscribe((entries) => seen.push(entries));
     activityLog.append({ level: 'info', source: 'test', message: 'first' });
     activityLog.append({ level: 'info', source: 'test', message: 'second' });
     unsubscribe();
@@ -41,7 +47,12 @@ describe('activity log', () => {
   });
 
   it('formats toText and toJSON deterministically', () => {
-    activityLog.append({ level: 'error', source: 'transport', message: 'protocol failure', detail: 'the "vad.speech_start" event failed validation.' });
+    activityLog.append({
+      level: 'error',
+      source: 'transport',
+      message: 'protocol failure',
+      detail: 'the "vad.speech_start" event failed validation.',
+    });
     const text = activityLog.toText();
     expect(text).toContain('ERROR transport: protocol failure');
     expect(text).toContain('vad.speech_start');

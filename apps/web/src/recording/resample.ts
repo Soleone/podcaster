@@ -3,7 +3,7 @@ export function offlineResample(channelData: Float32Array, fromRate: number, toR
   if (fromRate <= 0 || toRate <= 0) throw new RangeError('resample rates must be positive');
   if (fromRate === toRate) return channelData.slice();
   const ratio = fromRate / toRate;
-  const outputLength = Math.max(1, Math.round(channelData.length * toRate / fromRate));
+  const outputLength = Math.max(1, Math.round((channelData.length * toRate) / fromRate));
   const output = new Float32Array(outputLength);
   const TAPS = 64;
   const cutoff = Math.min(1, ratio);

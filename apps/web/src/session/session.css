@@ -11,24 +11,24 @@
   box-shadow: 0 1px 2px oklch(0 0 0 / 0.08);
 }
 
-.session-controls > [data-slot="button"] {
+.session-controls > [data-slot='button'] {
   width: 2.25rem;
   height: 2.25rem;
   border: 0;
   border-radius: 0;
 }
 
-.session-controls > [data-slot="button"]:first-child {
+.session-controls > [data-slot='button']:first-child {
   border-top-left-radius: 9999px;
   border-bottom-left-radius: 9999px;
 }
 
-.session-controls > [data-slot="button"]:last-child {
+.session-controls > [data-slot='button']:last-child {
   border-top-right-radius: 9999px;
   border-bottom-right-radius: 9999px;
 }
 
-.session-controls > [data-slot="button-group-separator"] {
+.session-controls > [data-slot='button-group-separator'] {
   width: 1px;
   margin-block: 0.25rem;
   background: var(--border);
@@ -46,7 +46,7 @@
     transition: opacity 150ms ease;
   }
 
-  .conversation-bubble:has(.trim-action) [data-slot="bubble-actions"] {
+  .conversation-bubble:has(.trim-action) [data-slot='bubble-actions'] {
     pointer-events: none;
   }
 
@@ -55,8 +55,8 @@
     opacity: 1;
   }
 
-  .conversation-bubble:has(.trim-action):hover [data-slot="bubble-actions"],
-  .conversation-bubble:has(.trim-action):focus-within [data-slot="bubble-actions"] {
+  .conversation-bubble:has(.trim-action):hover [data-slot='bubble-actions'],
+  .conversation-bubble:has(.trim-action):focus-within [data-slot='bubble-actions'] {
     pointer-events: auto;
   }
 }

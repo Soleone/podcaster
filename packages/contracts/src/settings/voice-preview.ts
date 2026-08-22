@@ -21,22 +21,22 @@ export const VOICE_PREVIEW_MAX_TEXT_CHARS = 4000 as const;
  * voice beyond monotone reading.
  */
 export const VOICE_PREVIEW_PHRASES: readonly string[] = Object.freeze([
-  "Hello there! How are you today?",
+  'Hello there! How are you today?',
   "Welcome back. It's good to hear from you.",
-  "The quick brown fox jumps over the lazy dog.",
-  "Seventy-two percent of the votes were counted by nine thirty.",
-  "I was wondering, what made you think of that?",
+  'The quick brown fox jumps over the lazy dog.',
+  'Seventy-two percent of the votes were counted by nine thirty.',
+  'I was wondering, what made you think of that?',
   "Take a deep breath. We've got time.",
-  "Rainy mornings are my favorite time for a long conversation.",
-  "Could you say that again, a little slower this time?",
-  "Three, two, one. Here we go!",
+  'Rainy mornings are my favorite time for a long conversation.',
+  'Could you say that again, a little slower this time?',
+  'Three, two, one. Here we go!',
   "That's a great question. Let me think out loud for a moment.",
 ]);
 
 function assertPreviewPhrases(phrases: readonly string[]): void {
-  if (phrases.length < 1) throw new RangeError("at least one preview phrase is required");
+  if (phrases.length < 1) throw new RangeError('at least one preview phrase is required');
   const total = phrases.reduce((sum, phrase) => sum + phrase.length, 0);
-  if (phrases.some(phrase => phrase.length === 0 || phrase.length > VOICE_PREVIEW_MAX_PHRASE_CHARS)) {
+  if (phrases.some((phrase) => phrase.length === 0 || phrase.length > VOICE_PREVIEW_MAX_PHRASE_CHARS)) {
     throw new RangeError(`preview phrases must be 1..${VOICE_PREVIEW_MAX_PHRASE_CHARS} characters`);
   }
   if (total > VOICE_PREVIEW_MAX_TEXT_CHARS) {
@@ -68,5 +68,5 @@ export function randomVoicePreviewPhrases(count: number = VOICE_PREVIEW_PHRASE_C
 /** Joins preview phrases into the single speakable sentence sent to TTS. */
 export function joinPreviewPhrases(phrases: readonly string[]): string {
   assertPreviewPhrases(phrases);
-  return phrases.join(" ");
+  return phrases.join(' ');
 }

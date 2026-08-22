@@ -79,9 +79,7 @@ export const CUSTOM_VOICE_ERROR_COPY: Readonly<Record<CustomVoiceErrorCode, stri
 });
 
 export function isValidCustomVoiceId(value: unknown): value is string {
-  return typeof value === 'string'
-    && value.startsWith(CUSTOM_VOICE_PREFIX)
-    && /^custom:[0-9a-f]{24}$/.test(value);
+  return typeof value === 'string' && value.startsWith(CUSTOM_VOICE_PREFIX) && /^custom:[0-9a-f]{24}$/.test(value);
 }
 
 /** Derive the deterministic voice id for a reference's full WAV SHA-256. */
@@ -181,7 +179,7 @@ export function withCustomVoices(
   customs: readonly CustomVoiceMetadata[],
 ): VoiceCatalog | undefined {
   if (!catalog) return undefined;
-  const owned = new Set(catalog.voices.map(voice => voice.id));
+  const owned = new Set(catalog.voices.map((voice) => voice.id));
   const customVoices: VoiceInfo[] = [];
   for (const custom of customs) {
     if (!isValidCustomVoiceId(custom.voiceId) || owned.has(custom.voiceId)) continue;
@@ -205,13 +203,13 @@ export function customVoicesMissingFromCatalog<C extends CustomVoiceMetadata>(
   customs: readonly C[],
 ): C[] {
   if (!catalog) return customs.slice();
-  const known = new Set(catalog.voices.map(voice => voice.id));
-  return customs.filter(custom => !known.has(custom.voiceId));
+  const known = new Set(catalog.voices.map((voice) => voice.id));
+  return customs.filter((custom) => !known.has(custom.voiceId));
 }
 
 /** All stock voice ids from a catalog, excluding any user-enrolled entries. */
 export function stockVoiceIds(catalog: VoiceCatalog | undefined): Set<string> {
-  return new Set((catalog?.voices ?? []).filter(voice => !isValidCustomVoiceId(voice.id)).map(voice => voice.id));
+  return new Set((catalog?.voices ?? []).filter((voice) => !isValidCustomVoiceId(voice.id)).map((voice) => voice.id));
 }
 
 /** The wire/metadata shape sent to the host for enrollment or rename re-announce. */

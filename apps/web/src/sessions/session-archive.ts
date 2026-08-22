@@ -26,20 +26,29 @@ export async function bootstrapCapability(): Promise<string> {
     body: JSON.stringify({ disclosureAcknowledged: true }),
   });
   if (!response.ok) throw new Error('The secure session connection could not be established.');
-  const body = await response.json() as { capability?: string };
+  const body = (await response.json()) as { capability?: string };
   if (!body.capability) throw new Error('The host did not return a session capability.');
   return body.capability;
 }
 
 /** Every local session with per-session turn and recording counts, newest first. */
-export async function loadSessionArchive(writer: StableTurnWriter, recordingStore: RecordingStore): Promise<SessionSummary[]> {
+export async function loadSessionArchive(
+  writer: StableTurnWriter,
+  recordingStore: RecordingStore,
+): Promise<SessionSummary[]> {
   const sessions = await writer.listSessions();
-  const summaries = await Promise.all(sessions.map(async session => {
-    const [turnCount, recordingItemCount, turns] = await Promise.all([writer.countTurns(session.sessionId), recordingStore.countSessionItems(session.sessionId), writer.getTurns(session.sessionId)]);
-    const preview = turns.find(turn => turn.stableText?.trim())?.stableText ?? '';
-    // Recording is always on, so every session reports as recorded.
-    return { session, turnCount, recordingItemCount, recordingEnabled: true, preview };
-  }));
+  const summaries = await Promise.all(
+    sessions.map(async (session) => {
+      const [turnCount, recordingItemCount, turns] = await Promise.all([
+        writer.countTurns(session.sessionId),
+        recordingStore.countSessionItems(session.sessionId),
+        writer.getTurns(session.sessionId),
+      ]);
+      const preview = turns.find((turn) => turn.stableText?.trim())?.stableText ?? '';
+      // Recording is always on, so every session reports as recorded.
+      return { session, turnCount, recordingItemCount, recordingEnabled: true, preview };
+    }),
+  );
   return summaries;
 }
 
@@ -49,7 +58,11 @@ export async function loadSessionArchive(writer: StableTurnWriter, recordingStor
  * returns the finished blob so the caller decides how to deliver it. Throws
  * when nothing can be exported.
  */
-export async function exportSessionRecording(sessionId: string, writer: StableTurnWriter, onProgress?: ExportOnProgress): Promise<Blob> {
+export async function exportSessionRecording(
+  sessionId: string,
+  writer: StableTurnWriter,
+  onProgress?: ExportOnProgress,
+): Promise<Blob> {
   const store = await RecordingStore.open();
   try {
     const blob = await buildRecording(sessionId, {
@@ -72,17 +85,44 @@ export async function exportSessionRecording(sessionId: string, writer: StableTu
  * their stored playback disposition (completed, interrupted, paused) so the
  * transcript survives both read-only inspection and a later resume.
  */
-export async function sessionViewStateFromTurns(writer: StableTurnWriter, sessionId: string, mode: 'draft' | 'stopped' | 'paused' | 'active' = 'stopped'): Promise<SessionViewState> {
+export async function sessionViewStateFromTurns(
+  writer: StableTurnWriter,
+  sessionId: string,
+  mode: 'draft' | 'stopped' | 'paused' | 'active' = 'stopped',
+): Promise<SessionViewState> {
   const [turns, session] = await Promise.all([writer.getTurns(sessionId), writer.getSession(sessionId)]);
   const paused = mode === 'paused';
   const planning = session?.planning;
   return {
     ...initialSessionState,
-    planning: planning ? { status: planning.status, progress: planning.progress ?? (planning.status === 'ready' ? 100 : 0), ...(planning.topic ? { topic: planning.topic } : {}), ...(planning.depth ? { depth: planning.depth } : {}), ...(planning.detail ? { detail: planning.detail } : {}), ...(planning.notes ? { notes: planning.notes } : {}) } : initialSessionState.planning,
+    planning: planning
+      ? {
+          status: planning.status,
+          progress: planning.progress ?? (planning.status === 'ready' ? 100 : 0),
+          ...(planning.topic ? { topic: planning.topic } : {}),
+          ...(planning.depth ? { depth: planning.depth } : {}),
+          ...(planning.detail ? { detail: planning.detail } : {}),
+          ...(planning.notes ? { notes: planning.notes } : {}),
+        }
+      : initialSessionState.planning,
     dominant: mode === 'active' ? 'listening' : paused ? 'paused' : 'idle',
-    announcement: mode === 'active' ? 'Listening' : paused ? 'Session paused' : mode === 'draft' ? 'Not started' : 'Session stopped',
+    announcement:
+      mode === 'active'
+        ? 'Listening'
+        : paused
+          ? 'Session paused'
+          : mode === 'draft'
+            ? 'Not started'
+            : 'Session stopped',
     playbackNotice: paused ? 'Any assistant response in progress was stopped and will not resume automatically.' : '',
-    stableTurns: turns.filter(turn => turn.stableText !== null).map(turn => ({ turnId: turn.turnId, text: turn.stableText!, ...(turn.posture ? { posture: turn.posture } : {}), ...(turn.policyReason ? { policyReason: turn.policyReason } : {}) })),
+    stableTurns: turns
+      .filter((turn) => turn.stableText !== null)
+      .map((turn) => ({
+        turnId: turn.turnId,
+        text: turn.stableText!,
+        ...(turn.posture ? { posture: turn.posture } : {}),
+        ...(turn.policyReason ? { policyReason: turn.policyReason } : {}),
+      })),
     conversationItems: conversationFromStoredTurns(turns),
   };
 }

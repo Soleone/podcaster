@@ -49,8 +49,18 @@ export async function synthesizeVoicePreview(
   const client = new AudioClient(
     sidecar,
     {},
-    encoded => { chunks.push(decodeBinaryAudioFrame(encoded, MAX_FRAME_PAYLOAD).pcm16); },
-    { catalogId: input.catalogId, voiceId: input.voiceId, ...(input.speedModifier !== undefined ? { speedModifier: input.speedModifier } : {}), ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}), ...(input.language ? { language: input.language } : {}), ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}) },
+    (encoded) => {
+      chunks.push(decodeBinaryAudioFrame(encoded, MAX_FRAME_PAYLOAD).pcm16);
+    },
+    {
+      catalogId: input.catalogId,
+      voiceId: input.voiceId,
+      ...(input.speedModifier !== undefined ? { speedModifier: input.speedModifier } : {}),
+      ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}),
+      ...(input.language ? { language: input.language } : {}),
+      ...(input.backendId !== undefined ? { backendId: input.backendId } : {}),
+      ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
+    },
   );
   try {
     await client.connect();
@@ -82,7 +92,10 @@ export async function synthesizeVoicePreview(
     if (totalSamples !== finished.generatedSamples) throw new Error('voice preview sample count mismatch');
     const pcm16 = new Int16Array(totalSamples);
     let offset = 0;
-    for (const chunk of chunks) { pcm16.set(chunk, offset); offset += chunk.length; }
+    for (const chunk of chunks) {
+      pcm16.set(chunk, offset);
+      offset += chunk.length;
+    }
     return { pcm16, sampleRate, generatedSamples: finished.generatedSamples };
   } finally {
     clearTimeout(timeout);

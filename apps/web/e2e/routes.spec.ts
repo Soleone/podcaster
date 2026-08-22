@@ -31,7 +31,12 @@ test('the shared app header returns home from a session and stays anchored acros
   const indexHeaderBox = await header.boundingBox();
   expect(indexHeaderBox).not.toBeNull();
   expect(sessionHeaderBox).not.toBeNull();
-  expect(indexHeaderBox).toMatchObject({ x: sessionHeaderBox?.x, y: sessionHeaderBox?.y, width: sessionHeaderBox?.width, height: sessionHeaderBox?.height });
+  expect(indexHeaderBox).toMatchObject({
+    x: sessionHeaderBox?.x,
+    y: sessionHeaderBox?.y,
+    width: sessionHeaderBox?.width,
+    height: sessionHeaderBox?.height,
+  });
 
   await page.getByRole('link', { name: 'Open session' }).click();
   await expect(page.getByRole('heading', { name: 'Listening' })).toBeVisible();
@@ -65,7 +70,12 @@ test('a paused session opens read-only with its conversation and can be resumed'
   await enterFakeSession(page, origin);
   const sessionUrl = page.url();
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
-  await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
+  await emit(page, 'reasoning.final', {
+    turnId: 'turn-1',
+    responseId: 'response-1',
+    posture: 'question',
+    text: 'What matters most?',
+  });
   await page.getByRole('button', { name: 'Pause session' }).click();
   await expect(page.getByRole('heading', { name: 'Session paused' })).toBeVisible();
 
@@ -90,7 +100,12 @@ test('resuming an active session from the index restores its conversation', asyn
   await enterFakeSession(page, origin);
   const sessionUrl = page.url();
   await emit(page, 'transcript.final', { turnId: 'turn-1', text: 'A stable thought', endpointComplete: true });
-  await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'What matters most?' });
+  await emit(page, 'reasoning.final', {
+    turnId: 'turn-1',
+    responseId: 'response-1',
+    posture: 'question',
+    text: 'What matters most?',
+  });
 
   await page.goto(origin);
   const row = page.getByRole('listitem').filter({ hasText: 'A stable thought' }).first();

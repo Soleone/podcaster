@@ -8,36 +8,65 @@ async function recordUserTurn(page: import('@playwright/test').Page): Promise<vo
   await emit(page, 'vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 });
   // Tap one more capture frame after the VAD relay opened the slice.
   await page.evaluate(() => window.__podcasterTest!.capture());
-  await emit(page, 'vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 1 });
+  await emit(page, 'vad.speech_end', {
+    streamId: STREAM,
+    utteranceId: UTTERANCE,
+    captureStartSequence: 0,
+    captureEndSequence: 1,
+  });
   await emit(page, 'transcript.final', { turnId: UTTERANCE, text: 'Recorded words', endpointComplete: true });
 }
 
 async function waitForStoredRecording(page: import('@playwright/test').Page): Promise<void> {
-  await page.waitForFunction(() => new Promise<boolean>(resolve => {
-    const request = indexedDB.open('podcaster-local-v1');
-    request.onerror = () => resolve(false);
-    request.onsuccess = () => {
-      const db = request.result;
-      const count = db.transaction('recordingItems', 'readonly').objectStore('recordingItems').count();
-      count.onsuccess = () => { db.close(); resolve(count.result > 0); };
-      count.onerror = () => { db.close(); resolve(false); };
-    };
-  }));
+  await page.waitForFunction(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const request = indexedDB.open('podcaster-local-v1');
+        request.onerror = () => resolve(false);
+        request.onsuccess = () => {
+          const db = request.result;
+          const count = db.transaction('recordingItems', 'readonly').objectStore('recordingItems').count();
+          count.onsuccess = () => {
+            db.close();
+            resolve(count.result > 0);
+          };
+          count.onerror = () => {
+            db.close();
+            resolve(false);
+          };
+        };
+      }),
+  );
 }
 
 test('trims completed agent output with a compact in-bubble action', async ({ page, origin }) => {
   await enterFakeSession(page, origin);
 
   await emit(page, 'reasoning.started', { turnId: 'turn-1', responseId: 'response-1', posture: 'question' });
-  await emit(page, 'reasoning.final', { turnId: 'turn-1', responseId: 'response-1', posture: 'question', text: 'A recorded answer' });
+  await emit(page, 'reasoning.final', {
+    turnId: 'turn-1',
+    responseId: 'response-1',
+    posture: 'question',
+    text: 'A recorded answer',
+  });
   await emit(page, 'tts.started', { responseId: 'response-1', playbackId: 'playback-1', sampleRate: 24000 });
   await page.evaluate(() => window.__podcasterTest!.audio('playback-1', 0, 480));
-  await emit(page, 'playback.stopped', { playbackId: 'playback-1', cancelledEpoch: 0, finalPlayedSampleOffset: 480, reason: 'completed' });
+  await emit(page, 'playback.stopped', {
+    playbackId: 'playback-1',
+    cancelledEpoch: 0,
+    finalPlayedSampleOffset: 480,
+    reason: 'completed',
+  });
 
   await expect(page.getByText('A recorded answer')).toBeVisible();
   const remove = page.getByRole('button', { name: "Remove Assistant's response from recording" });
   await expect(remove).toBeVisible();
-  await emit(page, 'tts.started', { responseId: 'response-1', playbackId: 'playback-2', sampleRate: 24000, partIndex: 1 });
+  await emit(page, 'tts.started', {
+    responseId: 'response-1',
+    playbackId: 'playback-2',
+    sampleRate: 24000,
+    partIndex: 1,
+  });
   await expect(remove).toBeEnabled();
   await expect(remove.locator('xpath=ancestor::*[@data-slot="bubble-content"]')).toHaveCount(1);
   await expect(remove).toHaveCSS('height', '24px');
@@ -49,18 +78,60 @@ test('trims completed agent output with a compact in-bubble action', async ({ pa
 test('trims one assistant part without removing the rest of its bubble', async ({ page, origin }) => {
   await enterFakeSession(page, origin);
 
-  await emit(page, 'reasoning.started', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', partIndex: 0 });
-  await emit(page, 'reasoning.final', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', text: 'The quick acknowledgement.', partIndex: 0 });
-  await emit(page, 'tts.started', { responseId: 'response-parts', playbackId: 'playback-part-0', sampleRate: 24000, partIndex: 0 });
+  await emit(page, 'reasoning.started', {
+    turnId: 'turn-parts',
+    responseId: 'response-parts',
+    posture: 'riff',
+    partIndex: 0,
+  });
+  await emit(page, 'reasoning.final', {
+    turnId: 'turn-parts',
+    responseId: 'response-parts',
+    posture: 'riff',
+    text: 'The quick acknowledgement.',
+    partIndex: 0,
+  });
+  await emit(page, 'tts.started', {
+    responseId: 'response-parts',
+    playbackId: 'playback-part-0',
+    sampleRate: 24000,
+    partIndex: 0,
+  });
   await page.evaluate(() => window.__podcasterTest!.audio('playback-part-0', 0, 480));
-  await emit(page, 'tts.ended', { responseId: 'response-parts', playbackId: 'playback-part-0', generatedSamples: 480, partIndex: 0 });
+  await emit(page, 'tts.ended', {
+    responseId: 'response-parts',
+    playbackId: 'playback-part-0',
+    generatedSamples: 480,
+    partIndex: 0,
+  });
   await page.waitForTimeout(25);
 
-  await emit(page, 'reasoning.started', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', partIndex: 1 });
-  await emit(page, 'reasoning.final', { turnId: 'turn-parts', responseId: 'response-parts', posture: 'riff', text: 'The longer body response.', partIndex: 1 });
-  await emit(page, 'tts.started', { responseId: 'response-parts', playbackId: 'playback-part-1', sampleRate: 24000, partIndex: 1 });
+  await emit(page, 'reasoning.started', {
+    turnId: 'turn-parts',
+    responseId: 'response-parts',
+    posture: 'riff',
+    partIndex: 1,
+  });
+  await emit(page, 'reasoning.final', {
+    turnId: 'turn-parts',
+    responseId: 'response-parts',
+    posture: 'riff',
+    text: 'The longer body response.',
+    partIndex: 1,
+  });
+  await emit(page, 'tts.started', {
+    responseId: 'response-parts',
+    playbackId: 'playback-part-1',
+    sampleRate: 24000,
+    partIndex: 1,
+  });
   await page.evaluate(() => window.__podcasterTest!.audio('playback-part-1', 0, 480));
-  await emit(page, 'tts.ended', { responseId: 'response-parts', playbackId: 'playback-part-1', generatedSamples: 480, partIndex: 1 });
+  await emit(page, 'tts.ended', {
+    responseId: 'response-parts',
+    playbackId: 'playback-part-1',
+    generatedSamples: 480,
+    partIndex: 1,
+  });
 
   await expect(page.getByText('The quick acknowledgement.')).toBeVisible();
   await expect(page.getByText('The longer body response.')).toBeVisible();
@@ -85,13 +156,20 @@ test('refreshes the remove control when a persisted user clip gets its turn id l
   // without a trim target after the late repair.
   await emit(page, 'vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 });
   await page.evaluate(() => window.__podcasterTest!.capture());
-  await emit(page, 'vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 1 });
+  await emit(page, 'vad.speech_end', {
+    streamId: STREAM,
+    utteranceId: UTTERANCE,
+    captureStartSequence: 0,
+    captureEndSequence: 1,
+  });
   await waitForStoredRecording(page);
   await page.waitForTimeout(1_500);
   await emit(page, 'transcript.final', { turnId: UTTERANCE, text: 'Late transcript', endpointComplete: true });
 
   await expect(page.getByText('Late transcript')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible({ timeout: 3_000 });
+  await expect(page.getByRole('button', { name: 'Remove your message from recording' })).toBeVisible({
+    timeout: 3_000,
+  });
 });
 
 test('records a turn, trims the bubble, restores it after reload, exports, and deletes', async ({ page, origin }) => {

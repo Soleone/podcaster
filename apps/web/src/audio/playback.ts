@@ -1,4 +1,9 @@
-import { PlaybackLedger, type PlaybackProgress, type PlaybackStopReason, type PlaybackTerminal } from './playback-ledger';
+import {
+  PlaybackLedger,
+  type PlaybackProgress,
+  type PlaybackStopReason,
+  type PlaybackTerminal,
+} from './playback-ledger';
 
 export interface PlaybackSink {
   progress(progress: PlaybackProgress): void | Promise<void>;
@@ -88,7 +93,12 @@ export class BrowserPlayback {
       source.connect(this.gain);
       const startTime = Math.max(this.context.currentTime, this.nextStartTime);
       this.nextStartTime = startTime + pcm16.length / this.declaredSampleRate;
-      const scheduled: ScheduledSource = { source, startTime, startOffset: sampleOffset, endOffset: sampleOffset + pcm16.length };
+      const scheduled: ScheduledSource = {
+        source,
+        startTime,
+        startOffset: sampleOffset,
+        endOffset: sampleOffset + pcm16.length,
+      };
       this.scheduledUntil = scheduled.endOffset;
       this.scheduled.push(scheduled);
       source.onended = () => {
@@ -138,7 +148,7 @@ export class BrowserPlayback {
 
   async resume(rewindMs = 0): Promise<void> {
     if (!this.stopped) {
-      this.rewind(Math.floor(this.declaredSampleRate * Math.max(0, rewindMs) / 1_000));
+      this.rewind(Math.floor((this.declaredSampleRate * Math.max(0, rewindMs)) / 1_000));
       this.gain.gain.value = 1;
       await this.context.resume();
     }
@@ -146,12 +156,17 @@ export class BrowserPlayback {
 
   private rememberAudio(sampleOffset: number, pcm16: Int16Array): void {
     const endOffset = sampleOffset + pcm16.length;
-    if (this.recentAudio.some(chunk => chunk.sampleOffset <= sampleOffset && chunk.sampleOffset + chunk.pcm16.length >= endOffset)) return;
+    if (
+      this.recentAudio.some(
+        (chunk) => chunk.sampleOffset <= sampleOffset && chunk.sampleOffset + chunk.pcm16.length >= endOffset,
+      )
+    )
+      return;
     this.recentAudio.push({ sampleOffset, pcm16: pcm16.slice() });
   }
 
   private trimRecentAudio(playedSampleOffset: number): void {
-    const earliest = Math.max(0, playedSampleOffset - Math.ceil(this.declaredSampleRate * REWIND_HISTORY_MS / 1_000));
+    const earliest = Math.max(0, playedSampleOffset - Math.ceil((this.declaredSampleRate * REWIND_HISTORY_MS) / 1_000));
     while (this.recentAudio.length > 0) {
       const chunk = this.recentAudio[0]!;
       const endOffset = chunk.sampleOffset + chunk.pcm16.length;
@@ -181,7 +196,11 @@ export class BrowserPlayback {
     const pending = [...this.pending.entries()];
     for (const { source } of this.scheduled.splice(0)) {
       source.onended = null;
-      try { source.stop(); } catch { /* already stopped */ }
+      try {
+        source.stop();
+      } catch {
+        /* already stopped */
+      }
     }
     this.pending.clear();
     this.scheduledUntil = replayStart;
@@ -218,7 +237,11 @@ export class BrowserPlayback {
     this.gain.gain.value = 0;
     for (const { source } of this.scheduled.splice(0)) {
       source.onended = null;
-      try { source.stop(); } catch { /* already stopped */ }
+      try {
+        source.stop();
+      } catch {
+        /* already stopped */
+      }
     }
     await this.sink.terminal(receipt);
     await this.context.close().catch(() => undefined);

@@ -33,15 +33,26 @@ export interface ExportPopoverProps {
  * Reused wherever an export already exists, e.g. the live recording controls
  * and the per-session export buttons on the index and stopped views.
  */
-export function ExportPopover({ sessionId, buildExport, disabled, label = 'Export', variant = 'secondary', size = 'default', className, iconOnly = false, onExportingChange }: ExportPopoverProps) {
+export function ExportPopover({
+  sessionId,
+  buildExport,
+  disabled,
+  label = 'Export',
+  variant = 'secondary',
+  size = 'default',
+  className,
+  iconOnly = false,
+  onExportingChange,
+}: ExportPopoverProps) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [notice, setNotice] = useState('');
 
-  const waitForPaint = () => new Promise<void>(resolve => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-  });
+  const waitForPaint = () =>
+    new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
 
   const run = useCallback(async () => {
     if (disabled || status === 'exporting') return;
@@ -50,7 +61,7 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
     setProgress({ phase: 'reading', message: 'Reading recording…', value: 0 });
     setNotice('');
     try {
-      const blob = await buildExport(next => setProgress(next));
+      const blob = await buildExport((next) => setProgress(next));
       if (blob) {
         await waitForPaint();
         downloadRecording(blob, sessionId);
@@ -72,37 +83,56 @@ export function ExportPopover({ sessionId, buildExport, disabled, label = 'Expor
     if (next) void run();
   };
 
-  const statusText = status === 'exporting'
-    ? progress?.message ?? 'Exporting…'
-    : status === 'saved'
-      ? 'Download started.'
-      : status === 'error'
-        ? notice || 'The recording could not be exported.'
-        : 'Run the export to build and download this recording.';
+  const statusText =
+    status === 'exporting'
+      ? (progress?.message ?? 'Exporting…')
+      : status === 'saved'
+        ? 'Download started.'
+        : status === 'error'
+          ? notice || 'The recording could not be exported.'
+          : 'Run the export to build and download this recording.';
 
   const triggerLabel = status === 'exporting' ? 'Exporting recording' : label === 'Export' ? 'Export recording' : label;
 
-  return <Popover open={open} onOpenChange={handleOpenChange}>
-    <PopoverTrigger render={
-      <Button
-        variant={variant}
-        size={size}
-        disabled={disabled || status === 'exporting'}
-        className={className}
-        aria-label={iconOnly ? triggerLabel : undefined}
-        title={iconOnly ? triggerLabel : undefined}
-      >
-        {status === 'exporting' ? <Spinner aria-hidden="true" /> : <Download data-icon="inline-start" aria-hidden="true" />}
-        {iconOnly ? null : status === 'exporting' ? 'Exporting…' : label}
-      </Button>
-    } />
-    <PopoverContent className="w-64">
-      <PopoverTitle className="mb-1">Export recording</PopoverTitle>
-      <p className="text-sm text-muted-foreground" role="status" aria-live="polite">{statusText}</p>
-      {status === 'exporting' && progress
-        ? <Progress value={Math.round(progress.value * 100)} aria-label="Export progress" aria-valuetext={progress.message} />
-        : null}
-      {status === 'error' ? <Alert variant="destructive"><AlertDescription>{notice || 'The recording could not be exported.'}</AlertDescription></Alert> : null}
-    </PopoverContent>
-  </Popover>;
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger
+        render={
+          <Button
+            variant={variant}
+            size={size}
+            disabled={disabled || status === 'exporting'}
+            className={className}
+            aria-label={iconOnly ? triggerLabel : undefined}
+            title={iconOnly ? triggerLabel : undefined}
+          >
+            {status === 'exporting' ? (
+              <Spinner aria-hidden="true" />
+            ) : (
+              <Download data-icon="inline-start" aria-hidden="true" />
+            )}
+            {iconOnly ? null : status === 'exporting' ? 'Exporting…' : label}
+          </Button>
+        }
+      />
+      <PopoverContent className="w-64">
+        <PopoverTitle className="mb-1">Export recording</PopoverTitle>
+        <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
+          {statusText}
+        </p>
+        {status === 'exporting' && progress ? (
+          <Progress
+            value={Math.round(progress.value * 100)}
+            aria-label="Export progress"
+            aria-valuetext={progress.message}
+          />
+        ) : null}
+        {status === 'error' ? (
+          <Alert variant="destructive">
+            <AlertDescription>{notice || 'The recording could not be exported.'}</AlertDescription>
+          </Alert>
+        ) : null}
+      </PopoverContent>
+    </Popover>
+  );
 }

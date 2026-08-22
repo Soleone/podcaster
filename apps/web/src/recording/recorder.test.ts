@@ -7,7 +7,10 @@ import { RecordingRecorder, type EncodeMp3 } from './recorder';
 let dbName = '';
 afterEach(async () => {
   if (dbName) {
-    await new Promise<void>(resolve => { const request = indexedDB.deleteDatabase(dbName); request.onsuccess = request.onerror = request.onblocked = () => resolve(); });
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(dbName);
+      request.onsuccess = request.onerror = request.onblocked = () => resolve();
+    });
     dbName = '';
   }
 });
@@ -20,7 +23,15 @@ const RESPONSE = '018f1f32-7ac1-7def-8abc-0123456789ab';
 const PLAYBACK = '018f1f32-7ac2-7def-8abc-0123456789ab';
 
 function event<T extends StableEvent['type']>(type: T, payload: Record<string, unknown>): StableEvent {
-  return { protocolVersion: 1, eventId: '018f1f32-7abd-7def-8abc-0123456789ab', sessionId: SESSION, epoch: 0, monotonicMs: 1, type, payload } as StableEvent;
+  return {
+    protocolVersion: 1,
+    eventId: '018f1f32-7abd-7def-8abc-0123456789ab',
+    sessionId: SESSION,
+    epoch: 0,
+    monotonicMs: 1,
+    type,
+    payload,
+  } as StableEvent;
 }
 function captureFrame(sequence: number) {
   return { streamId: 7, sequence, sampleOffset: sequence * 320, pcm16: new Int16Array(320).fill(1000) };
@@ -29,7 +40,9 @@ function captureFrame(sequence: number) {
 async function setup() {
   dbName = `recorder-${Date.now()}-${Math.random()}`;
   const store = await RecordingStore.open(indexedDB, dbName);
-  const encode = vi.fn<EncodeMp3>(async (pcm, _sampleRate, _bitrateKbps) => new Uint8Array(Math.max(1, Math.ceil(pcm.length / 8))));
+  const encode = vi.fn<EncodeMp3>(
+    async (pcm, _sampleRate, _bitrateKbps) => new Uint8Array(Math.max(1, Math.ceil(pcm.length / 8))),
+  );
   let clock = 1000;
   const recorder = new RecordingRecorder({ sessionId: SESSION, store, encode, now: () => clock++ });
   return { store, encode, recorder };
@@ -41,15 +54,34 @@ describe('RecordingRecorder', () => {
     await store.setRecordingEnabled(true);
     await recorder.start();
     for (let sequence = 0; sequence <= 10; sequence++) recorder.onCaptureAudio(captureFrame(sequence));
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }),
+    );
     for (let sequence = 11; sequence <= 20; sequence++) recorder.onCaptureAudio(captureFrame(sequence));
-    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 12 }));
+    recorder.onSessionEvent(
+      event('vad.speech_end', {
+        streamId: STREAM,
+        utteranceId: UTTERANCE,
+        captureStartSequence: 0,
+        captureEndSequence: 12,
+      }),
+    );
     recorder.onSessionEvent(event('transcript.final', { turnId: UTTERANCE, text: 'hello', endpointComplete: true }));
     await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
     const item = (await store.getSessionItems(SESSION))[0]!;
     expect(item).toMatchObject({
-      role: 'user', sampleRate: 16000, sampleCount: 13 * 320, captureStartSequence: 0, captureEndSequence: 12,
-      turnId: UTTERANCE, truncated: false, interrupted: false, recordSeq: 0, responseId: null, playbackId: null, deliveredSamples: null,
+      role: 'user',
+      sampleRate: 16000,
+      sampleCount: 13 * 320,
+      captureStartSequence: 0,
+      captureEndSequence: 12,
+      turnId: UTTERANCE,
+      truncated: false,
+      interrupted: false,
+      recordSeq: 0,
+      responseId: null,
+      playbackId: null,
+      deliveredSamples: null,
     });
     expect(encode).toHaveBeenCalledTimes(1);
     expect(encode.mock.calls[0]![0]).toBeInstanceOf(Int16Array);
@@ -63,10 +95,19 @@ describe('RecordingRecorder', () => {
   it('keeps a transcript identity when it arrives before speech_end', async () => {
     const { store, recorder } = await setup();
     await recorder.start();
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }),
+    );
     recorder.onCaptureAudio(captureFrame(0));
     recorder.onSessionEvent(event('transcript.final', { turnId: UTTERANCE, text: 'hello', endpointComplete: true }));
-    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_end', {
+        streamId: STREAM,
+        utteranceId: UTTERANCE,
+        captureStartSequence: 0,
+        captureEndSequence: 0,
+      }),
+    );
     await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
     expect((await store.getSessionItems(SESSION))[0]!.turnId).toBe(UTTERANCE);
     store.close();
@@ -75,13 +116,24 @@ describe('RecordingRecorder', () => {
   it('waits for a late turn-id repair before stopping', async () => {
     const { store, recorder } = await setup();
     await recorder.start();
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }),
+    );
     recorder.onCaptureAudio(captureFrame(0));
-    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_end', {
+        streamId: STREAM,
+        utteranceId: UTTERANCE,
+        captureStartSequence: 0,
+        captureEndSequence: 0,
+      }),
+    );
     await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
 
     let release!: () => void;
-    const updateReady = new Promise<void>(resolve => { release = resolve; });
+    const updateReady = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let updateFinished = false;
     vi.spyOn(store, 'updateTurnId').mockImplementation(async () => {
       await updateReady;
@@ -105,13 +157,30 @@ describe('RecordingRecorder', () => {
     recorder.onSessionEvent(event('tts.started', { responseId: RESPONSE, playbackId: PLAYBACK, sampleRate: 24000 }));
     recorder.onPlaybackAudio({ playbackId: PLAYBACK, sampleOffset: 0, pcm16: new Int16Array(480).fill(500) });
     recorder.onPlaybackAudio({ playbackId: PLAYBACK, sampleOffset: 480, pcm16: new Int16Array(480).fill(500) });
-    recorder.onSessionEvent(event('playback.stopped', { playbackId: PLAYBACK, cancelledEpoch: 3, finalPlayedSampleOffset: 720, reason: 'cancelled' }));
+    recorder.onSessionEvent(
+      event('playback.stopped', {
+        playbackId: PLAYBACK,
+        cancelledEpoch: 3,
+        finalPlayedSampleOffset: 720,
+        reason: 'cancelled',
+      }),
+    );
     await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
     const item = (await store.getSessionItems(SESSION))[0]!;
     expect(item).toMatchObject({
-      role: 'agent', sampleRate: 24000, sampleCount: 960, deliveredSamples: 720, interrupted: true,
-      terminalReason: 'cancelled', outputEpoch: 3, turnId: TURN, responseId: RESPONSE, playbackId: PLAYBACK,
-      truncated: false, captureStartSequence: null, captureEndSequence: null,
+      role: 'agent',
+      sampleRate: 24000,
+      sampleCount: 960,
+      deliveredSamples: 720,
+      interrupted: true,
+      terminalReason: 'cancelled',
+      outputEpoch: 3,
+      turnId: TURN,
+      responseId: RESPONSE,
+      playbackId: PLAYBACK,
+      truncated: false,
+      captureStartSequence: null,
+      captureEndSequence: null,
     });
     store.close();
   });
@@ -123,7 +192,14 @@ describe('RecordingRecorder', () => {
     recorder.onSessionEvent(event('reasoning.started', { turnId: TURN, responseId: RESPONSE, posture: 'riff' }));
     recorder.onSessionEvent(event('tts.started', { responseId: RESPONSE, playbackId: PLAYBACK, sampleRate: 24000 }));
     recorder.onPlaybackAudio({ playbackId: PLAYBACK, sampleOffset: 0, pcm16: new Int16Array(960).fill(500) });
-    recorder.onSessionEvent(event('playback.stopped', { playbackId: PLAYBACK, cancelledEpoch: 0, finalPlayedSampleOffset: 960, reason: 'completed' }));
+    recorder.onSessionEvent(
+      event('playback.stopped', {
+        playbackId: PLAYBACK,
+        cancelledEpoch: 0,
+        finalPlayedSampleOffset: 960,
+        reason: 'completed',
+      }),
+    );
     await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
     const item = (await store.getSessionItems(SESSION))[0]!;
     expect(item).toMatchObject({ interrupted: false, terminalReason: 'completed', deliveredSamples: 960 });
@@ -138,8 +214,15 @@ describe('RecordingRecorder', () => {
     recorder.onSessionEvent(event('tts.started', { responseId: RESPONSE, playbackId: PLAYBACK, sampleRate: 24000 }));
     recorder.onPlaybackAudio({ playbackId: PLAYBACK, sampleOffset: 0, pcm16: new Int16Array(480).fill(500) });
     recorder.onSessionEvent(event('response.failed', { turnId: TURN, responseId: RESPONSE, reasonCode: 'tts_failed' }));
-    recorder.onSessionEvent(event('playback.stopped', { playbackId: PLAYBACK, cancelledEpoch: 0, finalPlayedSampleOffset: 240, reason: 'cancelled' }));
-    await new Promise(resolve => setTimeout(resolve, 10));
+    recorder.onSessionEvent(
+      event('playback.stopped', {
+        playbackId: PLAYBACK,
+        cancelledEpoch: 0,
+        finalPlayedSampleOffset: 240,
+        reason: 'cancelled',
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(await store.getSessionItems(SESSION)).toHaveLength(0);
     store.close();
   });
@@ -148,7 +231,9 @@ describe('RecordingRecorder', () => {
     const { store, recorder } = await setup();
     await store.setRecordingEnabled(true);
     await recorder.start();
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }),
+    );
     for (let sequence = 0; sequence <= 5; sequence++) recorder.onCaptureAudio(captureFrame(sequence));
     recorder.onSessionEvent(event('reasoning.started', { turnId: TURN, responseId: RESPONSE, posture: 'riff' }));
     recorder.onSessionEvent(event('tts.started', { responseId: RESPONSE, playbackId: PLAYBACK, sampleRate: 24000 }));
@@ -156,30 +241,57 @@ describe('RecordingRecorder', () => {
     await recorder.stop(true);
     const items = await store.getSessionItems(SESSION);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ role: 'user', truncated: true, captureStartSequence: 0, captureEndSequence: 5, turnId: null });
+    expect(items[0]).toMatchObject({
+      role: 'user',
+      truncated: true,
+      captureStartSequence: 0,
+      captureEndSequence: 5,
+      turnId: null,
+    });
     store.close();
   });
-
 
   it('resumes the record sequence after the highest persisted item', async () => {
     const { store, recorder } = await setup();
     await store.setRecordingEnabled(true);
     await recorder.start();
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }),
+    );
     recorder.onCaptureAudio(captureFrame(0));
-    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_end', {
+        streamId: STREAM,
+        utteranceId: UTTERANCE,
+        captureStartSequence: 0,
+        captureEndSequence: 0,
+      }),
+    );
     await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
     store.close();
 
     const reopened = await RecordingStore.open(indexedDB, dbName);
-    const resumed = new RecordingRecorder({ sessionId: SESSION, store: reopened, encode: vi.fn(async () => new Uint8Array(8)) });
+    const resumed = new RecordingRecorder({
+      sessionId: SESSION,
+      store: reopened,
+      encode: vi.fn(async () => new Uint8Array(8)),
+    });
     await resumed.start();
-    resumed.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    resumed.onSessionEvent(
+      event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }),
+    );
     resumed.onCaptureAudio(captureFrame(0));
-    resumed.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    resumed.onSessionEvent(
+      event('vad.speech_end', {
+        streamId: STREAM,
+        utteranceId: UTTERANCE,
+        captureStartSequence: 0,
+        captureEndSequence: 0,
+      }),
+    );
     await expect.poll(async () => (await reopened.getSessionItems(SESSION)).length).toBe(2);
     const items = await reopened.getSessionItems(SESSION);
-    expect(items.map(item => item.recordSeq).sort((a, b) => a - b)).toEqual([0, 1]);
+    expect(items.map((item) => item.recordSeq).sort((a, b) => a - b)).toEqual([0, 1]);
     reopened.close();
   });
 
@@ -187,9 +299,18 @@ describe('RecordingRecorder', () => {
     const { store, recorder } = await setup();
     await store.setRecordingEnabled(true);
     await recorder.start();
-    recorder.onSessionEvent(event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_start', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0 }),
+    );
     recorder.onCaptureAudio(captureFrame(0));
-    recorder.onSessionEvent(event('vad.speech_end', { streamId: STREAM, utteranceId: UTTERANCE, captureStartSequence: 0, captureEndSequence: 0 }));
+    recorder.onSessionEvent(
+      event('vad.speech_end', {
+        streamId: STREAM,
+        utteranceId: UTTERANCE,
+        captureStartSequence: 0,
+        captureEndSequence: 0,
+      }),
+    );
     await expect.poll(async () => (await store.getSessionItems(SESSION)).length).toBe(1);
     expect((await store.getSessionItems(SESSION))[0]!.trimmed).toBe(false);
     store.close();

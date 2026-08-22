@@ -101,7 +101,10 @@ describe('custom voice catalog merge', () => {
     runtimeConfigId: 'cfg',
     revision: 'rev',
     defaultVoiceId: 'Ryan',
-    voices: [{ id: 'Ryan', label: 'Ryan' }, { id: 'Serena', label: 'Serena' }],
+    voices: [
+      { id: 'Ryan', label: 'Ryan' },
+      { id: 'Serena', label: 'Serena' },
+    ],
   };
   const custom: CustomVoiceMetadata = {
     voiceId: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa',
@@ -118,7 +121,7 @@ describe('custom voice catalog merge', () => {
     const merged = withCustomVoices(catalog, [custom])!;
     expect(merged.catalogId).toBe(catalog.catalogId);
     expect(merged.defaultVoiceId).toBe('Ryan');
-    expect(merged.voices.map(voice => voice.id)).toEqual(['Ryan', 'Serena', 'custom:aaaaaaaaaaaaaaaaaaaaaaaa']);
+    expect(merged.voices.map((voice) => voice.id)).toEqual(['Ryan', 'Serena', 'custom:aaaaaaaaaaaaaaaaaaaaaaaa']);
     expect(merged.voices[2]!.label).toBe('Me');
   });
 
@@ -141,13 +144,26 @@ describe('custom voice missing detection (sidecar restore)', () => {
     runtimeConfigId: 'cfg',
     revision: 'rev',
     defaultVoiceId: 'Ryan',
-    voices: [{ id: 'Ryan', label: 'Ryan' }, { id: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa', label: 'Sidecar Me' }],
+    voices: [
+      { id: 'Ryan', label: 'Ryan' },
+      { id: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa', label: 'Sidecar Me' },
+    ],
   };
-  const present = { voiceId: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa', name: 'Me', refSha256: FULL_SHA, sampleRate: 16_000, durationMs: 5_000, byteLength: 160_044, createdAt: '2026-08-17T00:00:00.000Z', updatedAt: '2026-08-17T00:00:00.000Z' }; const dropped = { ...present, voiceId: 'custom:bbbbbbbbbbbbbbbbbbbbbbbb', name: 'Dropped' };
+  const present = {
+    voiceId: 'custom:aaaaaaaaaaaaaaaaaaaaaaaa',
+    name: 'Me',
+    refSha256: FULL_SHA,
+    sampleRate: 16_000,
+    durationMs: 5_000,
+    byteLength: 160_044,
+    createdAt: '2026-08-17T00:00:00.000Z',
+    updatedAt: '2026-08-17T00:00:00.000Z',
+  };
+  const dropped = { ...present, voiceId: 'custom:bbbbbbbbbbbbbbbbbbbbbbbb', name: 'Dropped' };
 
   it('flags only the stored voices absent from the sidecar catalog', () => {
     const missing = customVoicesMissingFromCatalog(catalog, [present, dropped]);
-    expect(missing.map(voice => voice.voiceId)).toEqual(['custom:bbbbbbbbbbbbbbbbbbbbbbbb']);
+    expect(missing.map((voice) => voice.voiceId)).toEqual(['custom:bbbbbbbbbbbbbbbbbbbbbbbb']);
   });
 
   it('flags every stored voice when there is no catalog yet', () => {
@@ -158,7 +174,7 @@ describe('custom voice missing detection (sidecar restore)', () => {
     // A merged catalog re-adds the browser-stored voice, which must NOT count
     // as the sidecar having it; only the authoritative sidecar catalog decides.
     const merged = withCustomVoices(catalog, [dropped])!;
-    expect(merged.voices.some(voice => voice.id === dropped.voiceId)).toBe(true);
-    expect(customVoicesMissingFromCatalog(catalog, [dropped]).map(voice => voice.voiceId)).toEqual([dropped.voiceId]);
+    expect(merged.voices.some((voice) => voice.id === dropped.voiceId)).toBe(true);
+    expect(customVoicesMissingFromCatalog(catalog, [dropped]).map((voice) => voice.voiceId)).toEqual([dropped.voiceId]);
   });
 });

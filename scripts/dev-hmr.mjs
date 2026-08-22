@@ -21,14 +21,14 @@ process.once('SIGINT', () => void handleSignal('SIGINT'));
 process.once('SIGTERM', () => void handleSignal('SIGTERM'));
 
 function observeExit(child) {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     let settled = false;
-    const finish = result => {
+    const finish = (result) => {
       if (settled) return;
       settled = true;
       resolve(result);
     };
-    child.once('error', error => finish({ code: 1, signal: undefined, error }));
+    child.once('error', (error) => finish({ code: 1, signal: undefined, error }));
     child.once('exit', (code, signal) => finish({ code: code ?? 1, signal }));
   });
 }
@@ -45,7 +45,10 @@ function startHost(hostEntry) {
   let ready = false;
   let resolveReady;
   let rejectReady;
-  const readyPromise = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const readyPromise = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
   const host = spawnGroup(process.execPath, [hostEntry], {
     env: { ...process.env, PODCASTER_PORT: process.env.PODCASTER_PORT ?? '43127' },
     pipeStdout: true,
@@ -69,7 +72,7 @@ function startHost(hostEntry) {
     },
   });
   const exit = observeExit(host);
-  exit.then(result => {
+  exit.then((result) => {
     if (!ready) rejectReady(result.error ?? new Error(`host exited with status ${result.code}`));
   });
   return { child: host, ready: readyPromise, exit };
@@ -106,7 +109,7 @@ function startVite(env) {
     },
   });
   const exit = observeExit(vite);
-  exit.then(result => {
+  exit.then((result) => {
     clearTimeout(timer);
     if (!ready) rejectReady(result.error ?? new Error(`Vite exited with status ${result.code}`));
   });
@@ -131,8 +134,8 @@ try {
   process.stdout.write(`Open this URL for HMR: ${webOrigin}\n`);
 
   const result = await Promise.race([
-    host.exit.then(value => ({ name: 'host', ...value })),
-    vite.exit.then(value => ({ name: 'vite', ...value })),
+    host.exit.then((value) => ({ name: 'host', ...value })),
+    vite.exit.then((value) => ({ name: 'vite', ...value })),
   ]);
   await terminateActive();
   if (!shuttingDown) {

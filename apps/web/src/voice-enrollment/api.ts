@@ -3,9 +3,15 @@ import { uint8ToBase64 } from './wav';
 import type { ReferenceTake } from './recorder';
 import type { CustomVoiceRecord } from '../storage/custom-voice-store';
 
-export async function enrollCustomVoice(input: { capability: string; voiceId: string; name: string; take: ReferenceTake }): Promise<void> {
+export async function enrollCustomVoice(input: {
+  capability: string;
+  voiceId: string;
+  name: string;
+  take: ReferenceTake;
+}): Promise<void> {
   const wavBase64 = uint8ToBase64(input.take.wavBytes);
-  if (wavBase64.length > MAX_CUSTOM_VOICE_ENROLLMENT_BODY) throw new Error('The reference is too large to send to the local audio engine.');
+  if (wavBase64.length > MAX_CUSTOM_VOICE_ENROLLMENT_BODY)
+    throw new Error('The reference is too large to send to the local audio engine.');
   const body: CustomVoiceEnrollment = {
     voiceId: input.voiceId,
     name: input.name,
@@ -22,7 +28,7 @@ export async function enrollCustomVoice(input: { capability: string; voiceId: st
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const detail = await response.json().catch(() => undefined) as { detail?: string; error?: string } | undefined;
+    const detail = (await response.json().catch(() => undefined)) as { detail?: string; error?: string } | undefined;
     throw new Error(detail?.detail ?? detail?.error ?? 'The voice could not be enrolled by the local audio engine.');
   }
 }
@@ -48,8 +54,10 @@ export async function enrollStoredCustomVoice(input: { capability: string; voice
   if (!response.ok) {
     // Surface the host/sidecar detail (e.g. CUDA/model or sidecar-failure
     // reasons) so a failed restore is actionable instead of a dead-end copy.
-    const detail = await response.json().catch(() => undefined) as { detail?: string; error?: string } | undefined;
-    throw new Error(detail?.detail ?? detail?.error ?? 'The stored voice could not be restored in the local audio engine.');
+    const detail = (await response.json().catch(() => undefined)) as { detail?: string; error?: string } | undefined;
+    throw new Error(
+      detail?.detail ?? detail?.error ?? 'The stored voice could not be restored in the local audio engine.',
+    );
   }
 }
 

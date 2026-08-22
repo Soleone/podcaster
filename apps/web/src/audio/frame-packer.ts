@@ -4,7 +4,12 @@ export const CAPTURE_SAMPLE_RATE = 16_000;
 export const CAPTURE_FRAME_SAMPLES = 320;
 export const MAX_BINARY_PAYLOAD_BYTES = 64 * 1024 - 20;
 
-export interface PackedFrame { sequence: number; sampleOffset: number; pcm16: Int16Array; bytes: Uint8Array }
+export interface PackedFrame {
+  sequence: number;
+  sampleOffset: number;
+  pcm16: Int16Array;
+  bytes: Uint8Array;
+}
 
 export class AudioFramePacker {
   private carry: number[] = [];
@@ -16,7 +21,8 @@ export class AudioFramePacker {
     readonly streamId: number,
     private readonly monotonicUs: () => bigint = () => BigInt(Math.max(0, Math.floor(performance.now() * 1000))),
   ) {
-    if (!Number.isSafeInteger(streamId) || streamId < 0 || streamId > 0xffffffff) throw new RangeError('streamId must be uint32');
+    if (!Number.isSafeInteger(streamId) || streamId < 0 || streamId > 0xffffffff)
+      throw new RangeError('streamId must be uint32');
   }
 
   push(samples: Int16Array): PackedFrame[] {
@@ -34,11 +40,16 @@ export class AudioFramePacker {
         sequence,
         sampleOffset,
         pcm16,
-        bytes: encodeBinaryAudioFrame({ channel: 1, streamId: this.streamId, sequence, monotonicUs: this.lastMonotonicUs, pcm16 }, MAX_BINARY_PAYLOAD_BYTES),
+        bytes: encodeBinaryAudioFrame(
+          { channel: 1, streamId: this.streamId, sequence, monotonicUs: this.lastMonotonicUs, pcm16 },
+          MAX_BINARY_PAYLOAD_BYTES,
+        ),
       });
     }
     return frames;
   }
 
-  stop(): void { this.carry = []; }
+  stop(): void {
+    this.carry = [];
+  }
 }

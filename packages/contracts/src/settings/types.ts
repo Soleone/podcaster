@@ -2,7 +2,7 @@
 // imported from the browser as well as Node, so it must stay free of Node
 // built-ins (Buffer, node:crypto, etc.). Use TextEncoder for byte lengths.
 
-import type { PiSettings } from "./pi.js";
+import type { PiSettings } from './pi.js';
 
 export const SETTINGS_VERSION = 1 as const;
 
@@ -25,9 +25,9 @@ export const MAX_PLANNING_TOPIC_BYTES = 2 * 1024;
 /** Prepared notes are durable context, not an unbounded research transcript. */
 export const MAX_PLANNING_NOTES_BYTES = 12 * 1024;
 /** The planning effort is a user-visible, validated contract. */
-export const PLANNING_DEPTHS = ["light", "standard", "deep"] as const;
+export const PLANNING_DEPTHS = ['light', 'standard', 'deep'] as const;
 export type PlanningDepth = (typeof PLANNING_DEPTHS)[number];
-export type PlanningStatus = "skipped" | "planning" | "ready" | "failed" | "cancelled" | "continued";
+export type PlanningStatus = 'skipped' | 'planning' | 'ready' | 'failed' | 'cancelled' | 'continued';
 
 /** Frozen input/result carried by a session start and reused on reconnect. */
 export interface SessionPlanningRequest {
@@ -52,19 +52,19 @@ export interface SessionPlanningSnapshot {
 
 /** Languages supported by Qwen3-TTS CustomVoice and Base voice cloning. */
 export const QWEN_VOICE_LANGUAGES = [
-  "Chinese",
-  "English",
-  "Japanese",
-  "Korean",
-  "German",
-  "French",
-  "Russian",
-  "Portuguese",
-  "Spanish",
-  "Italian",
+  'Chinese',
+  'English',
+  'Japanese',
+  'Korean',
+  'German',
+  'French',
+  'Russian',
+  'Portuguese',
+  'Spanish',
+  'Italian',
 ] as const;
 export type QwenVoiceLanguage = (typeof QWEN_VOICE_LANGUAGES)[number];
-export const DEFAULT_QWEN_VOICE_LANGUAGE: QwenVoiceLanguage = "English";
+export const DEFAULT_QWEN_VOICE_LANGUAGE: QwenVoiceLanguage = 'English';
 
 /** The stable identity of one selectable local TTS backend/model. */
 export interface TtsModelSelection {
@@ -81,8 +81,8 @@ export interface VoiceSpeedCapability {
 }
 
 export const DEFAULT_TTS_MODEL: TtsModelSelection = Object.freeze({
-  backendId: "kokoro",
-  modelId: "kokoro-82m-onnx",
+  backendId: 'kokoro',
+  modelId: 'kokoro-82m-onnx',
 });
 
 export const DEFAULT_VOICE_SPEED_CAPABILITY: VoiceSpeedCapability = Object.freeze({
@@ -93,7 +93,7 @@ export const DEFAULT_VOICE_SPEED_CAPABILITY: VoiceSpeedCapability = Object.freez
 });
 
 /** The first-run editable default agent name shown above the assistant's bubbles. */
-export const DEFAULT_AGENT_NAME = "Oliver";
+export const DEFAULT_AGENT_NAME = 'Oliver';
 
 /** A single advertised voice from a verified TTS backend/model catalog. */
 export interface VoiceInfo {
@@ -125,7 +125,7 @@ export interface VoiceCatalog {
 /** A selectable backend/model and its current verified catalog state. */
 export interface TtsModelDescriptor extends TtsModelSelection {
   label: string;
-  status: "ready" | "unavailable";
+  status: 'ready' | 'unavailable';
   speed?: VoiceSpeedCapability;
   voiceCatalog?: VoiceCatalog;
   reason?: string;

@@ -19,7 +19,11 @@ export class PlaybackLedger {
   private terminal?: PlaybackTerminal;
   private readonly ranges = new Map<number, number>();
 
-  constructor(readonly playbackId: string, readonly outputEpoch: number, readonly sampleRate: number) {
+  constructor(
+    readonly playbackId: string,
+    readonly outputEpoch: number,
+    readonly sampleRate: number,
+  ) {
     if (!Number.isSafeInteger(sampleRate) || sampleRate <= 0) throw new RangeError('sample rate must be positive');
   }
 
@@ -30,7 +34,8 @@ export class PlaybackLedger {
   }
 
   addChunk(offset: number, samples: Int16Array): number {
-    if (this.terminal || !Number.isSafeInteger(offset) || offset < 0 || samples.length === 0) return this.contiguousQueued;
+    if (this.terminal || !Number.isSafeInteger(offset) || offset < 0 || samples.length === 0)
+      return this.contiguousQueued;
     const end = offset + samples.length;
     const previous = this.ranges.get(offset) ?? 0;
     if (end > previous) this.ranges.set(offset, end);
@@ -58,16 +63,30 @@ export class PlaybackLedger {
   }
 
   progress(): PlaybackProgress {
-    return { playbackId: this.playbackId, outputEpoch: this.outputEpoch, playedSampleOffset: this.played, generatedSamples: this.generatedSamples };
+    return {
+      playbackId: this.playbackId,
+      outputEpoch: this.outputEpoch,
+      playedSampleOffset: this.played,
+      generatedSamples: this.generatedSamples,
+    };
   }
 
   stop(reason: PlaybackStopReason): PlaybackTerminal {
     if (!this.terminal) {
-      this.terminal = Object.freeze({ playbackId: this.playbackId, cancelledEpoch: this.outputEpoch, finalPlayedSampleOffset: this.played, reason });
+      this.terminal = Object.freeze({
+        playbackId: this.playbackId,
+        cancelledEpoch: this.outputEpoch,
+        finalPlayedSampleOffset: this.played,
+        reason,
+      });
     }
     return this.terminal;
   }
 
-  isTerminal(): boolean { return this.terminal !== undefined; }
-  deliveredSamples(): number { return this.played; }
+  isTerminal(): boolean {
+    return this.terminal !== undefined;
+  }
+  deliveredSamples(): number {
+    return this.played;
+  }
 }

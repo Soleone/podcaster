@@ -1,7 +1,11 @@
 import { type EncodeMp3, type EncodeSampleRate } from './encode';
 import EncodeWorker from './encoder.worker?worker';
 
-interface PendingEncode { resolve(value: Uint8Array): void; reject(error: Error): void; onProgress?: (fraction: number) => void }
+interface PendingEncode {
+  resolve(value: Uint8Array): void;
+  reject(error: Error): void;
+  onProgress?: (fraction: number) => void;
+}
 
 /**
  * Promise wrapper around the Vite module worker that runs encodeMp3 off the
@@ -28,7 +32,7 @@ export function createEncoderClient(factory: () => Worker = () => new EncodeWork
     else if (message.mp3 !== undefined) entry.resolve(message.mp3);
     else entry.reject(new Error('Encoder worker returned an empty response.'));
   };
-  worker.onerror = event => {
+  worker.onerror = (event) => {
     for (const entry of pending.values()) entry.reject(new Error(event.message || 'Encoder worker failed.'));
     pending.clear();
   };
@@ -40,7 +44,13 @@ export function createEncoderClient(factory: () => Worker = () => new EncodeWork
       if (onProgress) entry.onProgress = onProgress;
       pending.set(requestId, entry);
     });
-    const request: { requestId: number; pcm16: Int16Array; sampleRate: EncodeSampleRate; bitrateKbps: number; reportProgress?: boolean } = { requestId, pcm16, sampleRate, bitrateKbps };
+    const request: {
+      requestId: number;
+      pcm16: Int16Array;
+      sampleRate: EncodeSampleRate;
+      bitrateKbps: number;
+      reportProgress?: boolean;
+    } = { requestId, pcm16, sampleRate, bitrateKbps };
     if (onProgress) request.reportProgress = true;
     worker.postMessage(request);
     return result;

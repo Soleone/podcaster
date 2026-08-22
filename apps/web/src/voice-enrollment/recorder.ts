@@ -32,7 +32,8 @@ export class ReferenceRecordingError extends Error {
 function mapMicrophoneError(error: unknown): ReferenceRecordingError {
   const name = error instanceof DOMException ? error.name : '';
   if (name === 'NotAllowedError' || name === 'SecurityError') return new ReferenceRecordingError('mic_denied');
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return new ReferenceRecordingError('mic_unavailable');
+  if (name === 'NotFoundError' || name === 'OverconstrainedError')
+    return new ReferenceRecordingError('mic_unavailable');
   if (name === 'NotReadableError' || name === 'AbortError') return new ReferenceRecordingError('mic_busy');
   return new ReferenceRecordingError('mic_unavailable');
 }
@@ -52,17 +53,27 @@ export class ReferenceRecorder {
     }
     this.state = 'requesting';
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false } });
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+      });
     } catch (error) {
-      this.state = error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError') ? 'denied' : 'unavailable';
+      this.state =
+        error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError')
+          ? 'denied'
+          : 'unavailable';
       throw mapMicrophoneError(error);
     }
     this.state = 'granted';
     this.chunks = [];
     try {
-      const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find(type => MediaRecorder.isTypeSupported(type)) ?? '';
+      const mimeType =
+        ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((type) =>
+          MediaRecorder.isTypeSupported(type),
+        ) ?? '';
       this.recorder = mimeType ? new MediaRecorder(this.stream, { mimeType }) : new MediaRecorder(this.stream);
-      this.recorder.ondataavailable = event => { if (event.data.size > 0) this.chunks.push(event.data); };
+      this.recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) this.chunks.push(event.data);
+      };
       this.recorder.start(250);
     } catch (error) {
       this.release();
@@ -88,13 +99,24 @@ export class ReferenceRecorder {
         this.release();
         reject(new ReferenceRecordingError('decode_failed'));
       };
-      try { recorder.stop(); } catch (error) { this.release(); reject(mapMicrophoneError(error)); }
-    }).finally(() => { this.stopPromise = undefined; });
+      try {
+        recorder.stop();
+      } catch (error) {
+        this.release();
+        reject(mapMicrophoneError(error));
+      }
+    }).finally(() => {
+      this.stopPromise = undefined;
+    });
     return this.stopPromise;
   }
 
   cancel(): void {
-    try { if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop(); } catch { /* cleanup is best effort */ }
+    try {
+      if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
+    } catch {
+      /* cleanup is best effort */
+    }
     this.release();
   }
 
@@ -114,7 +136,8 @@ export async function finalizeReferenceRecording(recording: Blob): Promise<Refer
     const mixed = new Float32Array(decoded.length);
     for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
       const values = decoded.getChannelData(channel);
-      for (let index = 0; index < values.length; index++) mixed[index] = (mixed[index] ?? 0) + (values[index] ?? 0) / decoded.numberOfChannels;
+      for (let index = 0; index < values.length; index++)
+        mixed[index] = (mixed[index] ?? 0) + (values[index] ?? 0) / decoded.numberOfChannels;
     }
     const resampled = offlineResample(mixed, decoded.sampleRate, CUSTOM_VOICE_SAMPLE_RATE);
     const signal = analyzeReferenceSignal(resampled, CUSTOM_VOICE_SAMPLE_RATE);
@@ -123,7 +146,14 @@ export async function finalizeReferenceRecording(recording: Blob): Promise<Refer
     const pcm16 = floatToPcm16(resampled);
     const wavBytes = encodeWavPcm16(pcm16);
     const refSha256 = await sha256Hex(wavBytes);
-    return { wav: new Blob([wavBytes], { type: 'audio/wav' }), wavBytes, pcm16, signal, refSha256, durationMs: signal.durationMs };
+    return {
+      wav: new Blob([wavBytes], { type: 'audio/wav' }),
+      wavBytes,
+      pcm16,
+      signal,
+      refSha256,
+      durationMs: signal.durationMs,
+    };
   } catch (error) {
     if (error instanceof ReferenceRecordingError) throw error;
     throw new ReferenceRecordingError('decode_failed');

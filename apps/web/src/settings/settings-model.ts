@@ -38,10 +38,18 @@ export interface ReconcileSettingsInput {
 }
 
 export function defaultVoice(catalog: VoiceCatalog | undefined): VoicePreference {
-  return { catalogId: catalog?.catalogId ?? '', voiceId: catalog?.defaultVoiceId ?? '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER };
+  return {
+    catalogId: catalog?.catalogId ?? '',
+    voiceId: catalog?.defaultVoiceId ?? '',
+    speedModifier: DEFAULT_VOICE_SPEED_MODIFIER,
+  };
 }
 
-export function defaultSettingsModel(catalog: VoiceCatalog | undefined, selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL, pi: PiSettings = DEFAULT_PI_SETTINGS): SettingsModel {
+export function defaultSettingsModel(
+  catalog: VoiceCatalog | undefined,
+  selectedModel: TtsModelSelection = DEFAULT_TTS_MODEL,
+  pi: PiSettings = DEFAULT_PI_SETTINGS,
+): SettingsModel {
   const voice = defaultVoice(catalog);
   const key = ttsModelKey(selectedModel);
   return {
@@ -55,7 +63,13 @@ export function defaultSettingsModel(catalog: VoiceCatalog | undefined, selected
 }
 
 /** Stable audit digest over the frozen agent settings snapshot. */
-export function settingsDigest(settings: { agentName: string; persona: string; voice: VoicePreference; selectedModel?: TtsModelSelection; pi?: PiSettings }): string {
+export function settingsDigest(settings: {
+  agentName: string;
+  persona: string;
+  voice: VoicePreference;
+  selectedModel?: TtsModelSelection;
+  pi?: PiSettings;
+}): string {
   const model = settings.selectedModel ?? {
     backendId: settings.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
     modelId: settings.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
@@ -65,18 +79,17 @@ export function settingsDigest(settings: { agentName: string; persona: string; v
   let hash1 = 0x811c9dc5;
   let hash2 = 0x01000193 ^ 0x3f08;
   for (const byte of new TextEncoder().encode(source)) {
-    hash1 ^= byte; hash1 = Math.imul(hash1, 0x01000193);
-    hash2 ^= byte; hash2 = Math.imul(hash2, 0x85ebca6b);
+    hash1 ^= byte;
+    hash1 = Math.imul(hash1, 0x01000193);
+    hash2 ^= byte;
+    hash2 = Math.imul(hash2, 0x85ebca6b);
   }
   return `${(hash1 >>> 0).toString(16).padStart(8, '0')}${(hash2 >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 function validSpeed(speed: number, catalog: VoiceCatalog | undefined): boolean {
   const capability = voiceSpeedCapability(catalog);
-  return capability.supported
-    && Number.isFinite(speed)
-    && speed >= capability.min
-    && speed <= capability.max;
+  return capability.supported && Number.isFinite(speed) && speed >= capability.min && speed <= capability.max;
 }
 
 /**
@@ -84,25 +97,54 @@ function validSpeed(speed: number, catalog: VoiceCatalog | undefined): boolean {
  * stale voice IDs use the backend default, changed catalog IDs rebase, and an
  * unsupported speed uses that backend's declared default.
  */
-export function reconcileVoice(preference: VoicePreference | undefined, catalog: VoiceCatalog | undefined): { voice: VoicePreference; notice?: VoiceNoticeReason } {
+export function reconcileVoice(
+  preference: VoicePreference | undefined,
+  catalog: VoiceCatalog | undefined,
+): { voice: VoicePreference; notice?: VoiceNoticeReason } {
   if (!catalog) {
-    if (preference && Number.isFinite(preference.speedModifier)) return { voice: preference, notice: 'missing_catalog' };
-    return { voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER }, notice: 'missing_catalog' };
+    if (preference && Number.isFinite(preference.speedModifier))
+      return { voice: preference, notice: 'missing_catalog' };
+    return {
+      voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER },
+      notice: 'missing_catalog',
+    };
   }
   const capability = voiceSpeedCapability(catalog);
-  const speed = preference && validSpeed(preference.speedModifier, catalog)
-    ? preference.speedModifier
-    : capability.default;
+  const speed =
+    preference && validSpeed(preference.speedModifier, catalog) ? preference.speedModifier : capability.default;
   const speedNotice = preference && speed !== preference.speedModifier ? 'speed_defaulted' : undefined;
-  if (preference && isValidVoicePreference(preference) && preference.catalogId === catalog.catalogId && isVoiceInCatalog(catalog, preference.voiceId)) {
+  if (
+    preference &&
+    isValidVoicePreference(preference) &&
+    preference.catalogId === catalog.catalogId &&
+    isVoiceInCatalog(catalog, preference.voiceId)
+  ) {
     return speedNotice
       ? { voice: { ...preference, speedModifier: speed }, notice: speedNotice }
       : { voice: preference };
   }
   if (preference && isValidVoicePreference(preference) && isVoiceInCatalog(catalog, preference.voiceId)) {
-    return { voice: { catalogId: catalog.catalogId, voiceId: preference.voiceId, speedModifier: speed, ...(preference.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}), ...(preference.language ? { language: preference.language } : {}) }, notice: speedNotice ?? 'rebase' };
+    return {
+      voice: {
+        catalogId: catalog.catalogId,
+        voiceId: preference.voiceId,
+        speedModifier: speed,
+        ...(preference.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}),
+        ...(preference.language ? { language: preference.language } : {}),
+      },
+      notice: speedNotice ?? 'rebase',
+    };
   }
-  return { voice: { catalogId: catalog.catalogId, voiceId: catalog.defaultVoiceId, speedModifier: speed, ...(preference?.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}), ...(preference?.language ? { language: preference.language } : {}) }, notice: speedNotice ?? 'defaulted' };
+  return {
+    voice: {
+      catalogId: catalog.catalogId,
+      voiceId: catalog.defaultVoiceId,
+      speedModifier: speed,
+      ...(preference?.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}),
+      ...(preference?.language ? { language: preference.language } : {}),
+    },
+    notice: speedNotice ?? 'defaulted',
+  };
 }
 
 function descriptorCatalog(descriptor: TtsModelDescriptor | undefined): VoiceCatalog | undefined {
@@ -112,29 +154,45 @@ function descriptorCatalog(descriptor: TtsModelDescriptor | undefined): VoiceCat
   return descriptor.speed ? { ...descriptor.voiceCatalog, speed: descriptor.speed } : descriptor.voiceCatalog;
 }
 
-function modelDescriptor(models: readonly TtsModelDescriptor[], selection: TtsModelSelection): TtsModelDescriptor | undefined {
-  return models.find(model => model.backendId === selection.backendId && model.modelId === selection.modelId);
+function modelDescriptor(
+  models: readonly TtsModelDescriptor[],
+  selection: TtsModelSelection,
+): TtsModelDescriptor | undefined {
+  return models.find((model) => model.backendId === selection.backendId && model.modelId === selection.modelId);
 }
 
 function sameModel(preference: VoicePreference | undefined, model: TtsModelSelection): boolean {
-  if (!preference?.backendId && !preference?.modelId) return model.backendId === DEFAULT_TTS_MODEL.backendId && model.modelId === DEFAULT_TTS_MODEL.modelId;
+  if (!preference?.backendId && !preference?.modelId)
+    return model.backendId === DEFAULT_TTS_MODEL.backendId && model.modelId === DEFAULT_TTS_MODEL.modelId;
   if (!preference?.backendId || !preference.modelId) return false;
   return preference.backendId === model.backendId && preference.modelId === model.modelId;
 }
 
 function scopedProfiles(value: Record<string, VoicePreference> | undefined): Record<string, VoicePreference> {
   if (!value) return {};
-  return Object.fromEntries(Object.entries(value).filter(([key, preference]) =>
-    Boolean(preference.backendId && preference.modelId)
-    && key === ttsModelKey({ backendId: preference.backendId!, modelId: preference.modelId! }),
-  ));
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, preference]) =>
+        Boolean(preference.backendId && preference.modelId) &&
+        key === ttsModelKey({ backendId: preference.backendId!, modelId: preference.modelId! }),
+    ),
+  );
 }
 
 /**
  * Reconcile the full model/profile set used by the settings dialog. The active
  * model is selected first, then only that model's profile is reconciled.
  */
-export function reconcileSettings(input: ReconcileSettingsInput, models: readonly TtsModelDescriptor[], fallbackCatalog?: VoiceCatalog): { selectedModel: TtsModelSelection; voice: VoicePreference; voiceProfiles: Record<string, VoicePreference>; notice?: VoiceNoticeReason } {
+export function reconcileSettings(
+  input: ReconcileSettingsInput,
+  models: readonly TtsModelDescriptor[],
+  fallbackCatalog?: VoiceCatalog,
+): {
+  selectedModel: TtsModelSelection;
+  voice: VoicePreference;
+  voiceProfiles: Record<string, VoicePreference>;
+  notice?: VoiceNoticeReason;
+} {
   const requested = input.selectedModel ?? {
     backendId: input.voice?.backendId ?? DEFAULT_TTS_MODEL.backendId,
     modelId: input.voice?.modelId ?? DEFAULT_TTS_MODEL.modelId,
@@ -144,17 +202,30 @@ export function reconcileSettings(input: ReconcileSettingsInput, models: readonl
   let catalog = descriptorCatalog(requestedDescriptor);
   let notice: VoiceNoticeReason | undefined;
   if (!catalog && (requestedDescriptor?.status === 'unavailable' || (models.length > 0 && !requestedDescriptor))) {
-    const fallback = requestedDescriptor?.fallback
-      ?? (modelDescriptor(models, DEFAULT_TTS_MODEL)?.status === 'ready' ? DEFAULT_TTS_MODEL : models.find(item => item.status === 'ready' && item.voiceCatalog) ?? DEFAULT_TTS_MODEL);
-    const fallbackSelection: TtsModelSelection = 'backendId' in fallback && 'modelId' in fallback
-      ? { backendId: fallback.backendId, modelId: fallback.modelId }
-      : { ...DEFAULT_TTS_MODEL };
+    const fallback =
+      requestedDescriptor?.fallback ??
+      (modelDescriptor(models, DEFAULT_TTS_MODEL)?.status === 'ready'
+        ? DEFAULT_TTS_MODEL
+        : (models.find((item) => item.status === 'ready' && item.voiceCatalog) ?? DEFAULT_TTS_MODEL));
+    const fallbackSelection: TtsModelSelection =
+      'backendId' in fallback && 'modelId' in fallback
+        ? { backendId: fallback.backendId, modelId: fallback.modelId }
+        : { ...DEFAULT_TTS_MODEL };
     const fallbackDescriptor = modelDescriptor(models, fallbackSelection);
     selectedModel = fallbackSelection;
-    catalog = descriptorCatalog(fallbackDescriptor) ?? (selectedModel.backendId === DEFAULT_TTS_MODEL.backendId && selectedModel.modelId === DEFAULT_TTS_MODEL.modelId ? fallbackCatalog : undefined);
+    catalog =
+      descriptorCatalog(fallbackDescriptor) ??
+      (selectedModel.backendId === DEFAULT_TTS_MODEL.backendId && selectedModel.modelId === DEFAULT_TTS_MODEL.modelId
+        ? fallbackCatalog
+        : undefined);
     notice = 'model_unavailable';
   }
-  if (!catalog && selectedModel.backendId === DEFAULT_TTS_MODEL.backendId && selectedModel.modelId === DEFAULT_TTS_MODEL.modelId) catalog = fallbackCatalog;
+  if (
+    !catalog &&
+    selectedModel.backendId === DEFAULT_TTS_MODEL.backendId &&
+    selectedModel.modelId === DEFAULT_TTS_MODEL.modelId
+  )
+    catalog = fallbackCatalog;
 
   const profiles: Record<string, VoicePreference> = scopedProfiles(input.voiceProfiles);
   const key = ttsModelKey(selectedModel);
@@ -174,16 +245,35 @@ export function reconcileSettings(input: ReconcileSettingsInput, models: readonl
 
 /** Build a SettingsModel honoring exactOptionalPropertyTypes. */
 export function applyReconciled(
-  base: { agentName: string; persona: string; pi?: PiSettings; selectedModel?: TtsModelSelection; voiceProfiles?: Record<string, VoicePreference> },
-  reconciled: { voice: VoicePreference; notice?: VoiceNoticeReason; selectedModel?: TtsModelSelection; voiceProfiles?: Record<string, VoicePreference> },
+  base: {
+    agentName: string;
+    persona: string;
+    pi?: PiSettings;
+    selectedModel?: TtsModelSelection;
+    voiceProfiles?: Record<string, VoicePreference>;
+  },
+  reconciled: {
+    voice: VoicePreference;
+    notice?: VoiceNoticeReason;
+    selectedModel?: TtsModelSelection;
+    voiceProfiles?: Record<string, VoicePreference>;
+  },
 ): SettingsModel {
-  const selectedModel = reconciled.selectedModel ?? base.selectedModel ?? {
-    backendId: reconciled.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
-    modelId: reconciled.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
-  };
+  const selectedModel = reconciled.selectedModel ??
+    base.selectedModel ?? {
+      backendId: reconciled.voice.backendId ?? DEFAULT_TTS_MODEL.backendId,
+      modelId: reconciled.voice.modelId ?? DEFAULT_TTS_MODEL.modelId,
+    };
   const voice = { ...reconciled.voice, backendId: selectedModel.backendId, modelId: selectedModel.modelId };
   const voiceProfiles = reconciled.voiceProfiles ?? base.voiceProfiles ?? { [ttsModelKey(selectedModel)]: voice };
-  const model: SettingsModel = { agentName: base.agentName, persona: base.persona, pi: { ...(base.pi ?? DEFAULT_PI_SETTINGS) }, selectedModel: { ...selectedModel }, voice, voiceProfiles };
+  const model: SettingsModel = {
+    agentName: base.agentName,
+    persona: base.persona,
+    pi: { ...(base.pi ?? DEFAULT_PI_SETTINGS) },
+    selectedModel: { ...selectedModel },
+    voice,
+    voiceProfiles,
+  };
   if (reconciled.notice) model.notice = reconciled.notice;
   return model;
 }

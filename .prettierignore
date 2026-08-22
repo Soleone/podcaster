@@ -1,0 +1,4 @@
+**/dist/**
+**/node_modules/**
+packages/contracts/src/generated/**
+packages/contracts/test/types-required.generated.compile.ts

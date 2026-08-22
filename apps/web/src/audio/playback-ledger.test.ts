@@ -13,7 +13,8 @@ describe('PlaybackLedger', () => {
 
   it('returns one immutable retry-safe terminal and ignores later progress', () => {
     const ledger = new PlaybackLedger('p', 4, 24_000);
-    ledger.setGeneratedSamples(320); ledger.addChunk(0, new Int16Array(320));
+    ledger.setGeneratedSamples(320);
+    ledger.addChunk(0, new Int16Array(320));
     expect(ledger.markPlayed(100)?.playedSampleOffset).toBe(100);
     const first = ledger.stop('cancelled');
     const retry = ledger.stop('failed');
@@ -23,7 +24,8 @@ describe('PlaybackLedger', () => {
   });
 
   it('keeps unspoken output at zero', () => {
-    const ledger = new PlaybackLedger('p', 0, 24_000); ledger.setGeneratedSamples(1000);
+    const ledger = new PlaybackLedger('p', 0, 24_000);
+    ledger.setGeneratedSamples(1000);
     expect(ledger.stop('cancelled').finalPlayedSampleOffset).toBe(0);
   });
 });

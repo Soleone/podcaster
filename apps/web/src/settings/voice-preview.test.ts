@@ -21,15 +21,28 @@ function installAudioMock() {
   const context: FakeContext = {
     state: 'running',
     destination: Symbol('destination'),
-    resume: vi.fn(async () => { context.state = 'running'; }),
-    decodeAudioData: vi.fn(async () => ({} as AudioBuffer)),
+    resume: vi.fn(async () => {
+      context.state = 'running';
+    }),
+    decodeAudioData: vi.fn(async () => ({}) as AudioBuffer),
     createBufferSource: vi.fn(() => {
-      const source: FakeSource = { start: vi.fn(), stop: vi.fn(() => { source.onended?.(); }), connect: vi.fn(), buffer: undefined, onended: null };
+      const source: FakeSource = {
+        start: vi.fn(),
+        stop: vi.fn(() => {
+          source.onended?.();
+        }),
+        connect: vi.fn(),
+        buffer: undefined,
+        onended: null,
+      };
       sources.push(source);
       return source;
     }),
   };
-  vi.stubGlobal('AudioContext', vi.fn(() => context));
+  vi.stubGlobal(
+    'AudioContext',
+    vi.fn(() => context),
+  );
   return { context, sources };
 }
 
@@ -54,7 +67,9 @@ async function loadPlayer() {
   return import('./voice-preview');
 }
 
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('startVoicePreview', () => {
   it('posts the voice to the preview endpoint and plays the returned audio', async () => {
@@ -76,7 +91,9 @@ describe('startVoicePreview', () => {
     expect(sources[0]!.start).toHaveBeenCalledTimes(1);
 
     let settled = false;
-    void handle.finished.then(() => { settled = true; });
+    void handle.finished.then(() => {
+      settled = true;
+    });
     sources[0]!.onended?.();
     await Promise.resolve();
     expect(settled).toBe(true);
@@ -100,7 +117,9 @@ describe('startVoicePreview', () => {
     const player = await loadPlayer();
     const handle = await player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' });
     let settled = false;
-    void handle.finished.then(() => { settled = true; });
+    void handle.finished.then(() => {
+      settled = true;
+    });
     handle.stop();
     expect(sources[0]!.stop).toHaveBeenCalledTimes(1);
     await Promise.resolve();
@@ -113,28 +132,36 @@ describe('startVoicePreview', () => {
     const player = await loadPlayer();
     const request = new AbortController();
     request.abort(new Error('model changed'));
-    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1', signal: request.signal })).rejects.toThrow('model changed');
+    await expect(
+      player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1', signal: request.signal }),
+    ).rejects.toThrow('model changed');
   });
 
   it('surfaces a friendly message when the preview is rejected', async () => {
     installAudioMock();
     installFetchMock({ ok: false, status: 503, error: 'preview_unavailable' });
     const player = await loadPlayer();
-    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow(/couldn\u2019t synthesize this preview/);
+    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow(
+      /couldn\u2019t synthesize this preview/,
+    );
   });
 
   it('names the specific failing voice when it is missing from the engine', async () => {
     installAudioMock();
     installFetchMock({ ok: false, status: 422, error: 'unknown_voice' });
     const player = await loadPlayer();
-    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow(/isn\u2019t loaded in the audio engine yet/);
+    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow(
+      /isn\u2019t loaded in the audio engine yet/,
+    );
   });
 
   it('falls back to the status code for an unmapped server error', async () => {
     installAudioMock();
     installFetchMock({ ok: false, status: 500, error: 'some_other_error' });
     const player = await loadPlayer();
-    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow('voice preview failed with status 500');
+    await expect(player.startVoicePreview({ voiceId: 'af_heart', capability: 'cap-1' })).rejects.toThrow(
+      'voice preview failed with status 500',
+    );
   });
 
   it('resumes a suspended AudioContext before playback', async () => {

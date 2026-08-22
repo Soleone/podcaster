@@ -23,11 +23,13 @@ const VOICE_PREVIEW_SERVER_ERROR_COPY: Readonly<Record<string, string>> = Object
   unauthorized: 'Your session timed out. Refresh the page, then try the preview again.',
   voice_catalog_unavailable: 'The audio engine isn\u2019t ready yet. Check readiness, then try the preview again.',
   tts_model_unavailable: 'That speech model isn\u2019t available on this device. Pick another model, then try again.',
-  catalog_mismatch: 'The saved voice no longer matches the audio engine\u2019s catalog. Re-select the voice, then try again.',
+  catalog_mismatch:
+    'The saved voice no longer matches the audio engine\u2019s catalog. Re-select the voice, then try again.',
   unknown_voice: 'That voice isn\u2019t loaded in the audio engine yet. Try again in a moment, or re-select it.',
   unsupported_speed: 'The selected speed isn\u2019t supported by this voice. Use its normal speed, then try again.',
   preview_in_flight: 'Another voice preview is still playing. Wait a moment, then try again.',
-  preview_unavailable: 'The audio engine couldn\u2019t synthesize this preview. Try again, or check that the model and voice are available.',
+  preview_unavailable:
+    'The audio engine couldn\u2019t synthesize this preview. Try again, or check that the model and voice are available.',
 });
 
 function previewServerMessage(detail: { error?: string } | undefined, status: number): string {
@@ -40,7 +42,11 @@ export function stopVoicePreview(): void {
   const source = activeSource;
   activeSource = undefined;
   if (!source) return;
-  try { source.stop(); } catch { /* already stopped or never started */ }
+  try {
+    source.stop();
+  } catch {
+    /* already stopped or never started */
+  }
 }
 
 /**
@@ -48,7 +54,17 @@ export function stopVoicePreview(): void {
  * preview still playing. An in-flight request can be cancelled when the user
  * changes backend, voice, or closes the settings dialog.
  */
-export async function startVoicePreview(input: { voiceId: string; speedModifier?: number; backendId?: string; modelId?: string; catalogId?: string; tonePrompt?: string; language?: string; capability: string; signal?: AbortSignal }): Promise<VoicePreviewHandle> {
+export async function startVoicePreview(input: {
+  voiceId: string;
+  speedModifier?: number;
+  backendId?: string;
+  modelId?: string;
+  catalogId?: string;
+  tonePrompt?: string;
+  language?: string;
+  capability: string;
+  signal?: AbortSignal;
+}): Promise<VoicePreviewHandle> {
   stopVoicePreview();
   context ??= new AudioContext();
   if (context.state === 'suspended') await context.resume();
@@ -64,7 +80,15 @@ export async function startVoicePreview(input: { voiceId: string; speedModifier?
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json', 'x-podcaster-capability': input.capability },
-        body: JSON.stringify({ voiceId: input.voiceId, speedModifier: input.speedModifier ?? 1.0, ...(input.backendId !== undefined ? { backendId: input.backendId } : {}), ...(input.modelId !== undefined ? { modelId: input.modelId } : {}), ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : {}), ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}), ...(input.language ? { language: input.language } : {}) }),
+        body: JSON.stringify({
+          voiceId: input.voiceId,
+          speedModifier: input.speedModifier ?? 1.0,
+          ...(input.backendId !== undefined ? { backendId: input.backendId } : {}),
+          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
+          ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : {}),
+          ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}),
+          ...(input.language ? { language: input.language } : {}),
+        }),
         signal: controller.signal,
       });
     } catch (error) {
@@ -72,10 +96,14 @@ export async function startVoicePreview(input: { voiceId: string; speedModifier?
       // translate anything else to a clear engine-unreachable message. Propagate
       // the caller's own abort reason so cancellation is never masked.
       if (input.signal?.aborted) throw input.signal.reason ?? error;
-      throw new Error(controller.signal.aborted ? 'Voice preview took too long to start. Try again.' : 'The audio engine couldn\u2019t start the preview. Try again.');
+      throw new Error(
+        controller.signal.aborted
+          ? 'Voice preview took too long to start. Try again.'
+          : 'The audio engine couldn\u2019t start the preview. Try again.',
+      );
     }
     if (!response.ok) {
-      const detail = await response.json().catch(() => undefined) as { error?: string } | undefined;
+      const detail = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
       throw new Error(previewServerMessage(detail, response.status));
     }
     if (input.signal?.aborted) throw input.signal.reason ?? new Error('voice preview cancelled');
@@ -91,8 +119,11 @@ export async function startVoicePreview(input: { voiceId: string; speedModifier?
     const source = context.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(context.destination);
-    const finished = new Promise<void>(resolve => {
-      source.onended = () => { if (activeSource === source) activeSource = undefined; resolve(); };
+    const finished = new Promise<void>((resolve) => {
+      source.onended = () => {
+        if (activeSource === source) activeSource = undefined;
+        resolve();
+      };
     });
     source.start();
     activeSource = source;
@@ -100,7 +131,11 @@ export async function startVoicePreview(input: { voiceId: string; speedModifier?
       finished,
       stop() {
         if (activeSource === source) activeSource = undefined;
-        try { source.stop(); } catch { /* already stopped */ }
+        try {
+          source.stop();
+        } catch {
+          /* already stopped */
+        }
       },
     };
   } finally {

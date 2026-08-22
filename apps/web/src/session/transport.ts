@@ -1,7 +1,21 @@
-import type { HostEvent, PiSettings, PlaybackPausedEvent, PlaybackStoppedEvent, PlanningStatus, SessionPlanningRequest, TranscriptFinalEvent, VoicePreference } from '@app/contracts';
+import type {
+  HostEvent,
+  PiSettings,
+  PlaybackPausedEvent,
+  PlaybackStoppedEvent,
+  PlanningStatus,
+  SessionPlanningRequest,
+  TranscriptFinalEvent,
+  VoicePreference,
+} from '@app/contracts';
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
 
-export interface OutputAudioChunk { playbackId: string; sequence: number; sampleOffset: number; pcm16: Int16Array }
+export interface OutputAudioChunk {
+  playbackId: string;
+  sequence: number;
+  sampleOffset: number;
+  pcm16: Int16Array;
+}
 export interface SessionStartRequest {
   sessionSeed: string;
   reasoningMode: 'full' | 'transcript_only';
@@ -18,7 +32,10 @@ export interface SessionTransport {
   startAudio(streamId: number): void | Promise<void>;
   stopAudio(streamId: number): void | Promise<void>;
   acknowledgePersisted(event: TranscriptFinalEvent): void | Promise<void>;
-  acknowledgePersistenceFailed(event: TranscriptFinalEvent, reasonCode: 'quota' | 'unavailable' | 'aborted'): void | Promise<void>;
+  acknowledgePersistenceFailed(
+    event: TranscriptFinalEvent,
+    reasonCode: 'quota' | 'unavailable' | 'aborted',
+  ): void | Promise<void>;
   stopSession(reason: 'user' | 'expired' | 'disconnect'): void | Promise<void>;
   sendCapture(frame: Uint8Array): void | Promise<void>;
   sendProgress(progress: PlaybackProgress): void | Promise<void>;

@@ -31,7 +31,19 @@ export interface RecordingSessionViewState {
 }
 
 export function emptyRecordingSessionView(): RecordingSessionViewState {
-  return { hydrated: false, enabled: false, totalCount: 0, includedCount: 0, bubbleCount: 0, includedBubbleCount: 0, targets: new Map(), partTargets: new Map(), pendingTargetId: null, notice: '', error: '' };
+  return {
+    hydrated: false,
+    enabled: false,
+    totalCount: 0,
+    includedCount: 0,
+    bubbleCount: 0,
+    includedBubbleCount: 0,
+    targets: new Map(),
+    partTargets: new Map(),
+    pendingTargetId: null,
+    notice: '',
+    error: '',
+  };
 }
 
 /**
@@ -60,7 +72,12 @@ function mergeState(accumulated: RecordingTrimState, member: 'included' | 'trimm
   return accumulated === member ? accumulated : 'mixed';
 }
 
-function addTarget(targets: Map<string, RecordingTrimTarget>, targetId: RecordingTrimTargetId, itemId: string, trimmed: boolean): void {
+function addTarget(
+  targets: Map<string, RecordingTrimTarget>,
+  targetId: RecordingTrimTargetId,
+  itemId: string,
+  trimmed: boolean,
+): void {
   const memberState = trimmed ? 'trimmed' : 'included';
   const existing = targets.get(targetId);
   if (existing) {
@@ -94,5 +111,17 @@ export function projectRecordingTrim(
   for (const target of targets.values()) {
     if (target.state !== 'trimmed') includedBubbleCount++;
   }
-  return { hydrated, enabled, totalCount, includedCount, bubbleCount: targets.size, includedBubbleCount, targets, partTargets, pendingTargetId: null, notice: '', error: '' };
+  return {
+    hydrated,
+    enabled,
+    totalCount,
+    includedCount,
+    bubbleCount: targets.size,
+    includedBubbleCount,
+    targets,
+    partTargets,
+    pendingTargetId: null,
+    notice: '',
+    error: '',
+  };
 }

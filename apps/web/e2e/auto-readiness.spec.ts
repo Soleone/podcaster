@@ -10,14 +10,21 @@ const readySnapshot = {
   sidecar: 'ready',
   reasoning: 'ready',
   voiceCatalog: {
-    catalogId: 'test-catalog', backendId: 'test', modelId: 'test-model', runtimeConfigId: 'test-config', revision: 'test-revision', defaultVoiceId: 'af_heart',
+    catalogId: 'test-catalog',
+    backendId: 'test',
+    modelId: 'test-model',
+    runtimeConfigId: 'test-config',
+    revision: 'test-revision',
+    defaultVoiceId: 'af_heart',
     voices: [{ id: 'af_heart', label: 'Heart' }],
   },
 };
 
 test('creates a not-started draft while Services owns readiness', async ({ page, origin }) => {
   await installFakeMicrophone(page);
-  await page.route('**/api/readiness', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(readySnapshot) }));
+  await page.route('**/api/readiness', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(readySnapshot) }),
+  );
   await page.goto(origin);
   await expect(page.getByRole('heading', { name: 'Your sessions' })).toBeVisible();
   await page.getByRole('button', { name: /Service status/ }).click();
@@ -35,7 +42,9 @@ test('creates a not-started draft while Services owns readiness', async ({ page,
 
 test('saves preparation on a draft and starts it only after services are ready', async ({ page, origin }) => {
   await installFakeMicrophone(page);
-  await page.route('**/api/readiness', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(readySnapshot) }));
+  await page.route('**/api/readiness', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(readySnapshot) }),
+  );
   await page.goto(origin);
   await page.getByRole('button', { name: 'New session' }).click();
   await page.getByRole('button', { name: 'Enable microphone' }).click();
