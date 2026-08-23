@@ -22,7 +22,7 @@ export interface SessionStartRequest {
   planning?: SessionPlanningRequest;
   settings: { version: 1; persona: string; voice: VoicePreference; pi?: PiSettings };
 }
-export type PlanningStartResult = Extract<PlanningStatus, 'ready' | 'failed' | 'cancelled' | 'continued'>;
+export type PlanningStartResult = Extract<PlanningStatus, 'ready' | 'failed' | 'cancelled' | 'continued'> | 'planning';
 export interface SessionTransport {
   connect(capability: string): Promise<void>;
   disconnect(): void;

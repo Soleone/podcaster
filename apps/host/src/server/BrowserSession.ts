@@ -148,7 +148,6 @@ export class BrowserSession {
   private personaDigest = '0'.repeat(64);
   private planningAbort: AbortController | undefined;
   private planningPromise: Promise<'ready' | 'failed' | 'cancelled'> | undefined;
-  private planningClosed = false;
 
   constructor(socket: WebSocket, sidecar: SidecarProcess, options: BrowserSessionOptions) {
     this.socket = socket;
@@ -336,7 +335,6 @@ export class BrowserSession {
     const parsedPersona = parsePersona(settings.persona);
     if (parsedPersona.ok) this.personaDigest = parsedPersona.digest;
     this.planningRequest = planning;
-    this.planningClosed = false;
     const reasoningMode = command.payload.reasoningMode;
     const personaAppend = composePersonaAppend(settings.persona);
     const piSettings = normalizePiSettings(settings.pi);
@@ -364,16 +362,15 @@ export class BrowserSession {
           this.planningNotes,
         );
       } else {
-        this.planningPromise = this.runPlanning(planning);
-        try {
-          await this.planningPromise;
-        } finally {
+        // Preparation runs behind the live start: the microphone and
+        // conversation come up immediately and the notes land in the
+        // reasoning context when the research pass finishes. The web resolves
+        // its start handshake on the first ready phase below, not on a
+        // terminal planning status.
+        this.planningPromise = this.runPlanning(planning).finally(() => {
           this.planningPromise = undefined;
-        }
+        });
       }
-      // The start transaction owns the fallback into live capture. Once the
-      // planning outcome is terminal, a late retry cannot race audio setup.
-      this.planningClosed = true;
     }
     if (this.stopped) return;
     this.audio = new AudioClient(
@@ -405,6 +402,16 @@ export class BrowserSession {
       emit: (value) => this.send(value),
     });
     await this.audio.connect();
+    if (this.planningRequest && this.planningPromise) {
+      this.emitPlanningState(
+        'planning',
+        this.planningRequest,
+        5,
+        'Preparation is running behind the live conversation.',
+        undefined,
+        'ready',
+      );
+    }
     // Do not mark the session listening yet. audio.start must complete the
     // capture/VAD/TTS warmup contract first, otherwise the first utterance can
     // race a sidecar that only announced `starting`.
@@ -416,12 +423,13 @@ export class BrowserSession {
     progress: number,
     detail: string,
     notes?: string,
+    phaseOverride?: 'ready',
   ): void {
     if (!this.sessionId || this.stopped) return;
     const snapshot = this.orchestrator?.snapshot();
     this.send(
       event(this.sessionId, snapshot?.epoch ?? 0, 'session.state', {
-        phase: status === 'planning' ? 'planning' : 'ready',
+        phase: phaseOverride ?? (status === 'planning' ? 'planning' : 'ready'),
         personaDigest: snapshot?.personaDigest ?? this.personaDigest,
         planning: {
           status,
@@ -465,7 +473,8 @@ export class BrowserSession {
       }
       if (!notes) throw new Error('planning returned no notes');
       this.planningNotes = notes;
-      this.emitPlanningState('ready', request, 100, 'Preparation is ready. Starting the live session.', notes);
+      this.orchestrator?.setPlanningContext(notes);
+      this.emitPlanningState('ready', request, 100, 'Preparation is ready. Notes joined the live conversation.', notes);
       return 'ready';
     } catch (error) {
       this.planningNotes = undefined;
@@ -493,17 +502,13 @@ export class BrowserSession {
 
   private async retryPlanning(): Promise<void> {
     const request = this.planningRequest;
-    if (!request || this.planningClosed || this.audio || this.stopped || this.planningPromise) return;
-    this.planningPromise = this.runPlanning(request);
-    try {
-      await this.planningPromise;
-    } finally {
+    if (!request || this.stopped || this.planningPromise) return;
+    this.planningPromise = this.runPlanning(request).finally(() => {
       this.planningPromise = undefined;
-    }
+    });
   }
 
   private async startAudio(payload: BrowserCommandPayload<'audio.start'>): Promise<void> {
-    this.planningClosed = true;
     const streamId = Number(payload.streamId);
     if (this.captureStreamId === streamId) return;
     // A reconnect can race with the last audio.stop command from the old

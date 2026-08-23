@@ -1,3 +1,5 @@
+import { createWriteStream } from 'node:fs';
+
 import { createProcessGroupManager } from './process-group.mjs';
 
 const root = new URL('..', import.meta.url);
@@ -40,6 +42,12 @@ async function run(command, args, options = { stdio: ['ignore', 'inherit', 'inhe
   if (result.code !== 0) throw new Error(`${command} exited with status ${result.code}`);
 }
 
+// Optional host log tee so agents and humans can inspect [host] lines after
+// the fact: PODCASTER_DEV_LOG=/path/to.log pnpm dev
+const devLogStream = process.env.PODCASTER_DEV_LOG
+  ? createWriteStream(process.env.PODCASTER_DEV_LOG, { flags: 'a' })
+  : undefined;
+
 function startHost(hostEntry) {
   let output = '';
   let ready = false;
@@ -68,6 +76,7 @@ function startHost(hostEntry) {
           continue;
         }
         process.stdout.write(`[host] ${line}\n`);
+        devLogStream?.write(`${line}\n`);
       }
     },
   });

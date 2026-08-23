@@ -209,20 +209,21 @@ export class WebSocketSessionTransport implements SessionTransport {
         this.protocolFailure('the event sessionId did not match this session.');
         return;
       }
-      if (
-        hostEvent.type === 'session.state' &&
-        hostEvent.payload.planning &&
-        typeof hostEvent.payload.planning === 'object' &&
-        !Array.isArray(hostEvent.payload.planning)
-      ) {
-        const status = (hostEvent.payload.planning as { status?: unknown }).status;
-        if (
-          this.pendingPlanningStart &&
-          (status === 'ready' || status === 'failed' || status === 'cancelled' || status === 'continued')
-        ) {
+      if (hostEvent.type === 'session.state' && this.pendingPlanningStart) {
+        const planningPayload =
+          hostEvent.payload.planning && typeof hostEvent.payload.planning === 'object' && !Array.isArray(hostEvent.payload.planning)
+            ? (hostEvent.payload.planning as { status?: unknown })
+            : undefined;
+        const status = planningPayload?.status;
+        const terminal =
+          status === 'ready' || status === 'failed' || status === 'cancelled' || status === 'continued';
+        // Terminal planning statuses settle the start handshake; any non-planning
+        // phase means the host went live while preparation keeps running behind
+        // the session, so the live screen can show the preparation banner.
+        if (terminal || hostEvent.payload.phase !== 'planning') {
           const pending = this.pendingPlanningStart;
           this.pendingPlanningStart = undefined;
-          pending.resolve(status as PlanningStartResult);
+          pending.resolve(terminal ? (status as PlanningStartResult) : 'planning');
         }
       }
       if (hostEvent.type === 'reasoning.started') {

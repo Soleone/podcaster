@@ -35,7 +35,7 @@ export interface PiRequestInput {
 }
 /** Part 0 of a multi-part response holds the floor with a reaction/hook, never a full answer. */
 export const PI_STALL_INSTRUCTION =
-  'This is part 0 of one spoken answer: a quick hook that holds the floor while the rest is prepared. It is NOT an attempt at a complete answer. React to what the user just said, take a quick position, or say what you will dig into next. At most 45 words, spoken text only.';
+  'This is part 0 of one spoken answer: a quick hook that holds the floor while the rest is prepared. It is NOT an attempt at a complete answer. React to what the user just said, take a quick position, or say what you will dig into next. Never say you cannot browse, search, or look things up, and never ask the user for facts you could look up yourself; a lookup may already be running behind this hook. At most 45 words, spoken text only.';
 export type PiEvent =
   | { type: 'delta'; text: string }
   | { type: 'final'; text: string }

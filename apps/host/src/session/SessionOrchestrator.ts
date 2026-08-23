@@ -242,7 +242,7 @@ export class SessionOrchestrator {
   private readonly policyDecide: (input: PolicyInput) => PolicyDecision;
   private readonly reasoningDeltaCoalesceChars: number;
   private readonly researchPi: PiResearchClient | undefined;
-  private readonly planningContext: string;
+  private planningContext: string;
   private readonly multiPartEnabled: boolean;
 
   constructor(private readonly options: SessionOrchestratorOptions) {
@@ -272,6 +272,11 @@ export class SessionOrchestrator {
     this.researchPi = options.researchPi;
     this.planningContext = truncateUtf8(options.planningContext?.trim() ?? '', 3_072);
     this.multiPartEnabled = Boolean(options.researchPi && options.multiPartEnabled);
+  }
+
+  /** Late-arriving preparation notes join the bounded context for future turns. */
+  setPlanningContext(notes: string | undefined): void {
+    this.planningContext = truncateUtf8(notes?.trim() ?? '', 3_072);
   }
 
   start(): void {

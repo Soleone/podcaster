@@ -383,6 +383,28 @@ describe('WebSocketSessionTransport recovery', () => {
     expectNoProtocolFailure(socket);
   });
 
+  it('resolves the start handshake when the host goes live while preparation is still running', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const pending = transport.startSession({
+      sessionSeed: SESSION,
+      reasoningMode: 'full',
+      planning: { topic: 'radio', depth: 'standard' },
+      settings: { version: 1, persona: '', voice: { catalogId: 'catalog', voiceId: 'voice', speedModifier: 1 } },
+    });
+    expect(pending).toBeInstanceOf(Promise);
+    emitText(
+      socket,
+      hostEvent('session.state', {
+        phase: 'ready',
+        personaDigest: '0'.repeat(64),
+        planning: { status: 'planning', topic: 'radio', depth: 'standard', progress: 5 },
+      }),
+    );
+    await expect(pending).resolves.toBe('planning');
+    expectNoProtocolFailure(socket);
+  });
+
   it('reconnects within the grace window, queues commands, and avoids a failure notification', async () => {
     vi.useFakeTimers();
     try {
