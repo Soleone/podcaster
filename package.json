@@ -2,7 +2,7 @@
   "name": "podcaster",
   "private": true,
   "version": "0.0.0",
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": "22.22.3",
     "pnpm": "9.15.9"
