@@ -178,17 +178,31 @@ describe('SessionController', () => {
     expect(players[1]!.append.mock.calls.map((call) => call[0])).toEqual([0, 480]);
     expect(players[1]!.resume).toHaveBeenCalledOnce();
     expect(controller.snapshot().dominant).toBe('speaking');
-    await controller.reportPlaybackTerminal({ playbackId: 'part-1', cancelledEpoch: 0, finalPlayedSampleOffset: 960, reason: 'completed' });
+    await controller.reportPlaybackTerminal({
+      playbackId: 'part-1',
+      cancelledEpoch: 0,
+      finalPlayedSampleOffset: 960,
+      reason: 'completed',
+    });
     expect(controller.snapshot().dominant).toBe('listening');
     writer.close();
   });
 
   it('clears speaking immediately on the local playback terminal, without waiting for host state', async () => {
     const { controller, transport, writer } = await setup();
-    await transport.emit(event('session', 0, 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'riff' }));
-    await transport.emit(event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }));
+    await transport.emit(
+      event('session', 0, 'reasoning.started', { turnId: 'turn', responseId: 'response', posture: 'riff' }),
+    );
+    await transport.emit(
+      event('session', 0, 'tts.started', { responseId: 'response', playbackId: 'playback', sampleRate: 24000 }),
+    );
     expect(controller.snapshot().dominant).toBe('speaking');
-    const report = controller.reportPlaybackTerminal({ playbackId: 'playback', cancelledEpoch: 0, finalPlayedSampleOffset: 480, reason: 'completed' });
+    const report = controller.reportPlaybackTerminal({
+      playbackId: 'playback',
+      cancelledEpoch: 0,
+      finalPlayedSampleOffset: 480,
+      reason: 'completed',
+    });
     expect(controller.snapshot()).toMatchObject({ dominant: 'listening', announcement: 'Listening' });
     await report;
     writer.close();

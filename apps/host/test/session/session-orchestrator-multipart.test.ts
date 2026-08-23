@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decide, type PolicyDecision, type PolicyInput } from '@app/policy';
-import type { PiClient, PiEvent, PiRequestInput } from '../../src/pi/PiClient.js';
+import { PI_STALL_INSTRUCTION, type PiClient, type PiEvent, type PiRequestInput } from '../../src/pi/PiClient.js';
 import type { PiResearchClient, PiResearchRequestInput } from '../../src/pi/PiResearchClient.js';
 import {
   SessionOrchestrator,
@@ -208,6 +208,14 @@ describe('safe session orchestrator multi-part', () => {
     expect(partStarted[0]).toBe(0);
     expect(partStarted.slice(1).every((index, i) => index === i + 1)).toBe(true);
     expect(researchPi.inputs[0]!.stallText).toContain('look that up');
+  });
+
+  it('sends the stall-hook instruction with the part 0 request', async () => {
+    const { session, pi } = setup();
+    await session.handleStableFinal(turn(0));
+    expect(pi.inputs).toHaveLength(1);
+    expect(pi.inputs[0]!.instruction).toBe(PI_STALL_INSTRUCTION);
+    expect(pi.inputs[0]!.instruction).toMatch(/NOT an attempt at a complete answer/i);
   });
 
   it('starts TTS for stall then each body part with partIndex', async () => {

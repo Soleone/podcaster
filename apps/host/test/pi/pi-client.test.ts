@@ -1,7 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PODCASTER_SYSTEM_PROMPT } from '@app/contracts';
-import { PI_MODEL, StdioPiClient, type PiEvent, type PiRequestInput } from '../../src/pi/PiClient.js';
+import {
+  PI_MODEL,
+  PI_STALL_INSTRUCTION,
+  StdioPiClient,
+  type PiEvent,
+  type PiRequestInput,
+} from '../../src/pi/PiClient.js';
 import { makeFakePi, type FakePiScenario } from '../fixtures/fake-pi.js';
 
 const input: PiRequestInput = {
@@ -31,6 +37,39 @@ async function events(value: StdioPiClient, signal = new AbortController().signa
 }
 
 describe('production Pi RPC boundary', () => {
+  it('prepends a per-request instruction ahead of the data blocks when given one', async () => {
+    const { value, fake } = await client();
+    for await (const _event of value.request(
+      { ...input, instruction: PI_STALL_INSTRUCTION },
+      new AbortController().signal,
+    )) {
+      /* consume */
+    }
+    await value.shutdown();
+    const calls = (await readFile(fake.log, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    const prompt = String(calls.find((call) => call.command === 'prompt')?.message);
+    // Stall framing leads the message and frames part 0 as a hook, not a full answer.
+    expect(prompt.startsWith(PI_STALL_INSTRUCTION)).toBe(true);
+    expect(prompt).toMatch(/NOT an attempt at a complete answer/i);
+    expect(prompt).toMatch(/React to what the user just said/);
+    expect(prompt).toContain('At most 45 words');
+    expect(prompt).toContain('Posture: riff');
+  });
+
+  it('keeps requests without an instruction byte-identical to the plain data-block prompt', async () => {
+    const { value, fake } = await client();
+    await events(value);
+    await value.shutdown();
+    const calls = (await readFile(fake.log, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    const prompt = String(calls.find((call) => call.command === 'prompt')?.message);
+    expect(prompt).toBe('Posture: riff\nBounded context:\nPrior local context\nTranscript:\nA stable transcript');
+  });
   it('passes a configured model and thinking level to Pi', async () => {
     const { value, fake } = await client();
     const configured = new StdioPiClient({

@@ -2,14 +2,24 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { SettingsModel } from '../settings/settings-model';
 import { bootstrapCapability } from '../sessions/session-archive';
 import { DISCLOSURE_KEY, DISCLOSURE_VERSION } from '../components/PrivacyDialog';
-import { fakeServiceStatuses, initialServiceStatuses, serviceStatusFromAudioEngine, serviceStatusesFromSnapshot, type ReadinessSnapshot, type ServiceStatuses } from '../services/service-status';
+import {
+  fakeServiceStatuses,
+  initialServiceStatuses,
+  serviceStatusFromAudioEngine,
+  serviceStatusesFromSnapshot,
+  type ReadinessSnapshot,
+  type ServiceStatuses,
+} from '../services/service-status';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 
 function disclosureWasAcknowledged(): boolean {
   if (fakeServices) return true;
-  try { return localStorage.getItem(DISCLOSURE_KEY) === DISCLOSURE_VERSION; }
-  catch { return false; }
+  try {
+    return localStorage.getItem(DISCLOSURE_KEY) === DISCLOSURE_VERSION;
+  } catch {
+    return false;
+  }
 }
 
 export interface UseServiceStatusesOptions {
@@ -43,14 +53,16 @@ export interface UseServiceStatusesResult {
  * per-service statuses shown in the header.
  */
 export function useServiceStatuses({ settingsModelRef }: UseServiceStatusesOptions): UseServiceStatusesResult {
-  const [capability, setCapability] = useState<string | undefined>(() => fakeServices ? 'fake' : undefined);
+  const [capability, setCapability] = useState<string | undefined>(() => (fakeServices ? 'fake' : undefined));
   const capabilityRef = useRef<string | undefined>(capability);
   capabilityRef.current = capability;
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(disclosureWasAcknowledged);
   const [privacyDialogOpen, setPrivacyDialogOpen] = useState(false);
   const [microphoneGranted, setMicrophoneGranted] = useState(false);
   const [servicesConnecting, setServicesConnecting] = useState(false);
-  const [serviceStatuses, setServiceStatuses] = useState<ServiceStatuses>(() => fakeServices ? fakeServiceStatuses : initialServiceStatuses);
+  const [serviceStatuses, setServiceStatuses] = useState<ServiceStatuses>(() =>
+    fakeServices ? fakeServiceStatuses : initialServiceStatuses,
+  );
   const [latestReadinessSnapshot, setLatestReadinessSnapshot] = useState<ReadinessSnapshot>();
   const [refreshingServiceStatus, setRefreshingServiceStatus] = useState(false);
 
@@ -60,31 +72,44 @@ export function useServiceStatuses({ settingsModelRef }: UseServiceStatusesOptio
   }, []);
 
   const applyAudioEngine = useCallback((engine: Parameters<typeof serviceStatusFromAudioEngine>[0]) => {
-    setServiceStatuses(previous => ({ ...previous, audio: serviceStatusFromAudioEngine(engine) }));
+    setServiceStatuses((previous) => ({ ...previous, audio: serviceStatusFromAudioEngine(engine) }));
   }, []);
 
-  const refreshServiceStatus = useCallback(async (requestedCapability?: string, microphoneOverride?: boolean) => {
-    const activeCapability = requestedCapability ?? capabilityRef.current;
-    if (!activeCapability) return;
-    setRefreshingServiceStatus(true);
-    try {
-      const granted = microphoneOverride ?? await navigator.permissions?.query({ name: 'microphone' as PermissionName }).then(permission => permission.state === 'granted').catch(() => false) ?? false;
-      setMicrophoneGranted(granted);
-      const response = await fetch('/api/readiness', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json', 'x-podcaster-capability': activeCapability },
-        body: JSON.stringify({ microphoneGranted: granted, ttsModel: settingsModelRef.current.selectedModel, pi: settingsModelRef.current.pi }),
-      });
-      if (!response.ok) throw new Error('service status request failed');
-      applyReadinessSnapshot(await response.json() as ReadinessSnapshot);
-    } catch {
-      // Keep the last known state visible. A single dropped poll should not
-      // make healthy services flash unavailable.
-    } finally {
-      setRefreshingServiceStatus(false);
-    }
-  }, [applyReadinessSnapshot, settingsModelRef]);
+  const refreshServiceStatus = useCallback(
+    async (requestedCapability?: string, microphoneOverride?: boolean) => {
+      const activeCapability = requestedCapability ?? capabilityRef.current;
+      if (!activeCapability) return;
+      setRefreshingServiceStatus(true);
+      try {
+        const granted =
+          microphoneOverride ??
+          (await navigator.permissions
+            ?.query({ name: 'microphone' as PermissionName })
+            .then((permission) => permission.state === 'granted')
+            .catch(() => false)) ??
+          false;
+        setMicrophoneGranted(granted);
+        const response = await fetch('/api/readiness', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json', 'x-podcaster-capability': activeCapability },
+          body: JSON.stringify({
+            microphoneGranted: granted,
+            ttsModel: settingsModelRef.current.selectedModel,
+            pi: settingsModelRef.current.pi,
+          }),
+        });
+        if (!response.ok) throw new Error('service status request failed');
+        applyReadinessSnapshot((await response.json()) as ReadinessSnapshot);
+      } catch {
+        // Keep the last known state visible. A single dropped poll should not
+        // make healthy services flash unavailable.
+      } finally {
+        setRefreshingServiceStatus(false);
+      }
+    },
+    [applyReadinessSnapshot, settingsModelRef],
+  );
 
   const serviceConnectionRef = useRef<Promise<void> | undefined>(undefined);
   const connectServices = useCallback(async () => {
@@ -98,7 +123,11 @@ export function useServiceStatuses({ settingsModelRef }: UseServiceStatusesOptio
         capabilityRef.current = nextCapability;
         setCapability(nextCapability);
         setPrivacyAcknowledged(true);
-        try { localStorage.setItem(DISCLOSURE_KEY, DISCLOSURE_VERSION); } catch { /* service connection still works for this session */ }
+        try {
+          localStorage.setItem(DISCLOSURE_KEY, DISCLOSURE_VERSION);
+        } catch {
+          /* service connection still works for this session */
+        }
         await refreshServiceStatus(nextCapability);
       } catch (cause) {
         capabilityRef.current = undefined;
@@ -130,12 +159,20 @@ export function useServiceStatuses({ settingsModelRef }: UseServiceStatusesOptio
     if (!capability) return;
     let cancelled = false;
     void refreshServiceStatus();
-    const timer = setInterval(() => { if (!cancelled) void refreshServiceStatus(); }, 4_000);
-    return () => { cancelled = true; clearInterval(timer); };
+    const timer = setInterval(() => {
+      if (!cancelled) void refreshServiceStatus();
+    }, 4_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [capability, refreshServiceStatus]);
 
   const openServicesConnection = useCallback(() => {
-    if (privacyAcknowledged) { void connectServices().catch(() => undefined); return; }
+    if (privacyAcknowledged) {
+      void connectServices().catch(() => undefined);
+      return;
+    }
     setPrivacyDialogOpen(true);
   }, [connectServices, privacyAcknowledged]);
 

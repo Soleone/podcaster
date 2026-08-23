@@ -1,13 +1,20 @@
-import type { PiClient, PiPosture } from "../pi/PiClient.js";
-import type { PiResearchClient } from "../pi/PiResearchClient.js";
-import { log } from "../logger.js";
-import { ReasoningSpeechAssembler } from "./ReasoningSpeechAssembler.js";
-import { ResearchPartAssembler, researchPartLimits } from "./ResearchPartAssembler.js";
-import type { ActiveResponse, HostEventPayload, HostEventType, SpeechOutputPort, SpeechOutputStream, SpeechSynthesisStart } from "./SessionOrchestrator.js";
+import { PI_STALL_INSTRUCTION, type PiClient, type PiPosture } from '../pi/PiClient.js';
+import type { PiResearchClient } from '../pi/PiResearchClient.js';
+import { log } from '../logger.js';
+import { ReasoningSpeechAssembler } from './ReasoningSpeechAssembler.js';
+import { ResearchPartAssembler, researchPartLimits } from './ResearchPartAssembler.js';
+import type {
+  ActiveResponse,
+  HostEventPayload,
+  HostEventType,
+  SpeechOutputPort,
+  SpeechOutputStream,
+  SpeechSynthesisStart,
+} from './SessionOrchestrator.js';
 
 export interface MultiPartPart {
   partIndex: number;
-  kind: "stall" | "body";
+  kind: 'stall' | 'body';
   speechStream?: SpeechOutputStream;
   playbackId?: string;
   assistantText?: string;
@@ -25,7 +32,7 @@ export interface MultiPartPart {
 export interface MultiPartResponseHost {
   readonly sessionId: string;
   readonly pi: PiClient;
-  readonly speech: Pick<SpeechOutputPort, "begin" | "pause" | "release" | "cancel">;
+  readonly speech: Pick<SpeechOutputPort, 'begin' | 'pause' | 'release' | 'cancel'>;
   readonly idFactory: () => string;
   emit<T extends HostEventType>(type: T, payload: HostEventPayload<T>): void;
   /** True while this response is still the registered multi-part machine of a live session. */
@@ -41,20 +48,22 @@ export interface MultiPartResponseHost {
   markLedgerTerminal(playbackId: string): void;
   addAssistantContext(text: string): void;
   /** Orchestrator's recoverable failure broadcast for a failed response. */
-  failResponse(reasonCode: "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"): void;
+  failResponse(reasonCode: 'reasoning_unavailable' | 'reasoning_invalid' | 'tts_failed'): void;
   /** Unregister this response from the orchestrator's active/multi-part slots. */
   detach(response: MultiPartResponse): void;
   /** Transition the session back to listening and broadcast the state. */
   settleListening(): void;
 }
 
-function validOffset(value: number): boolean { return Number.isSafeInteger(value) && value >= 0; }
+function validOffset(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
 function truncateUtf8(value: string, maxBytes: number): string {
-  const bytes = Buffer.from(value, "utf8");
+  const bytes = Buffer.from(value, 'utf8');
   if (bytes.length <= maxBytes) return value;
   let end = maxBytes;
   while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
-  return bytes.subarray(0, end).toString("utf8");
+  return bytes.subarray(0, end).toString('utf8');
 }
 
 /**
@@ -90,54 +99,102 @@ export class MultiPartResponse {
     this.posture = turn.posture;
     // The parent active response shares this machine's controller so an epoch
     // bump on the orchestrator side cancels every outstanding part stream.
-    this.parentActive = { responseId: this.responseId, turnId: turn.turnId, epoch: turn.epoch, posture: turn.posture, controller: this.controller, cancelled: false, reasoningPrefix: "", generatedSamples: 0 };
+    this.parentActive = {
+      responseId: this.responseId,
+      turnId: turn.turnId,
+      epoch: turn.epoch,
+      posture: turn.posture,
+      controller: this.controller,
+      cancelled: false,
+      reasoningPrefix: '',
+      generatedSamples: 0,
+    };
   }
 
   async run(): Promise<void> {
     try {
       // ---- Part 0: stall (existing 45-word no-tool path) ----
-      const stall: MultiPartPart = { partIndex: 0, kind: "stall", generatedSamples: 0, terminal: false, started: false };
+      const stall: MultiPartPart = {
+        partIndex: 0,
+        kind: 'stall',
+        generatedSamples: 0,
+        terminal: false,
+        started: false,
+      };
       this.parts.push(stall);
       const stallStartedAt = Date.now();
-      log("session", `part started stall 0 ${this.responseId}`);
-      this.host.emit("response.part_started", { turnId: this.turnId, responseId: this.responseId, partIndex: 0, kind: "stall" });
-      this.host.emit("reasoning.started", { turnId: this.turnId, responseId: this.responseId, posture: this.posture, partIndex: 0 });
-      const stallStream = this.host.speech.begin({ sessionId: this.host.sessionId, epoch: this.epoch, responseId: this.responseId, partIndex: 0, signal: this.controller.signal, onGeneratedSamples: total => this.recordPartSamples(stall, total) });
+      log('session', `part started stall 0 ${this.responseId}`);
+      this.host.emit('response.part_started', {
+        turnId: this.turnId,
+        responseId: this.responseId,
+        partIndex: 0,
+        kind: 'stall',
+      });
+      this.host.emit('reasoning.started', {
+        turnId: this.turnId,
+        responseId: this.responseId,
+        posture: this.posture,
+        partIndex: 0,
+      });
+      const stallStream = this.host.speech.begin({
+        sessionId: this.host.sessionId,
+        epoch: this.epoch,
+        responseId: this.responseId,
+        partIndex: 0,
+        signal: this.controller.signal,
+        onGeneratedSamples: (total) => this.recordPartSamples(stall, total),
+      });
       stall.speechStream = stallStream;
       void stallStream.started.catch(() => undefined);
       stallStream.started.then(
-        meta => { if (this.host.isCurrent(this)) this.attachPartTts(stall, meta); },
-        () => { if (this.host.isCurrent(this)) this.failMultiPart(0, "tts_failed"); },
+        (meta) => {
+          if (this.host.isCurrent(this)) this.attachPartTts(stall, meta);
+        },
+        () => {
+          if (this.host.isCurrent(this)) this.failMultiPart(0, 'tts_failed');
+        },
       );
       const stallAssembler = new ReasoningSpeechAssembler(this.posture);
       let stallFinalText: string | undefined;
       let stallRequestFailed = false;
-      let emittedStallPreview = "";
+      let emittedStallPreview = '';
       const emitStallPreview = (text: string): void => {
         if (!text || text === emittedStallPreview || !this.host.isCurrent(this)) return;
         emittedStallPreview = text;
-        this.host.emit("reasoning.delta", { turnId: this.turnId, responseId: this.responseId, partIndex: 0, text });
+        this.host.emit('reasoning.delta', { turnId: this.turnId, responseId: this.responseId, partIndex: 0, text });
       };
-      for await (const event of this.host.pi.request({ posture: this.posture, transcript: this.transcript, boundedContext: this.boundedContext, maxWords: 45 }, this.controller.signal)) {
+      for await (const event of this.host.pi.request(
+        {
+          posture: this.posture,
+          transcript: this.transcript,
+          boundedContext: this.boundedContext,
+          maxWords: 45,
+          instruction: PI_STALL_INSTRUCTION,
+        },
+        this.controller.signal,
+      )) {
         if (!this.isCurrent()) return;
-        if (event.type === "final") stallFinalText = event.text;
-        else if (event.type === "delta") {
+        if (event.type === 'final') stallFinalText = event.text;
+        else if (event.type === 'delta') {
           for (const chunk of stallAssembler.append(event.text)) stallStream.append(chunk.text);
           const preview = stallAssembler.canonicalPrefix;
           if (preview) emitStallPreview(preview);
+        } else if (event.type === 'error') {
+          stallRequestFailed = true;
+          break;
         }
-        else if (event.type === "error") { stallRequestFailed = true; break; }
       }
       if (!this.isCurrent()) return;
       let stallText: string | undefined;
       if (!stallRequestFailed) {
         try {
-          const finalized = stallAssembler.final(stallFinalText ?? "");
+          const finalized = stallAssembler.final(stallFinalText ?? '');
           stallText = finalized.result.canonical;
           if (finalized.tail) stallStream.append(finalized.tail.text);
           if (!stallText || stallText.split(/\s+/u).filter(Boolean).length > 45) stallText = undefined;
-          if (this.posture === "question" && (stallText?.match(/\?/gu) ?? []).length > 1) stallText = undefined;
-          if (stallText && /^(?:```|\{|\[|assistant\s*:|system\s*:|<\/?(?:script|iframe)\b)/iu.test(stallText)) stallText = undefined;
+          if (this.posture === 'question' && (stallText?.match(/\?/gu) ?? []).length > 1) stallText = undefined;
+          if (stallText && /^(?:```|\{|\[|assistant\s*:|system\s*:|<\/?(?:script|iframe)\b)/iu.test(stallText))
+            stallText = undefined;
         } catch {
           stallText = undefined;
         }
@@ -149,39 +206,61 @@ export class MultiPartResponse {
         const streamedText = stallAssembler.emittedText();
         if (streamedText) stallText = streamedText;
       }
-      if (!stallText) { this.failMultiPart(0, stallRequestFailed ? "reasoning_unavailable" : "reasoning_invalid"); return; }
+      if (!stallText) {
+        this.failMultiPart(0, stallRequestFailed ? 'reasoning_unavailable' : 'reasoning_invalid');
+        return;
+      }
       stall.assistantText = stallText;
       this.parentActive.reasoningPrefix = stallText;
-      this.host.emit("reasoning.final", { turnId: this.turnId, responseId: this.responseId, posture: this.posture, partIndex: 0, text: stallText });
+      this.host.emit('reasoning.final', {
+        turnId: this.turnId,
+        responseId: this.responseId,
+        posture: this.posture,
+        partIndex: 0,
+        text: stallText,
+      });
       stallStream.finish();
-      log("session", `part final stall 0 ${this.responseId} ${stallText.length}chars ${Date.now() - stallStartedAt}ms`);
-      this.host.emit("response.part_final", { turnId: this.turnId, responseId: this.responseId, partIndex: 0, kind: "stall" });
+      log('session', `part final stall 0 ${this.responseId} ${stallText.length}chars ${Date.now() - stallStartedAt}ms`);
+      this.host.emit('response.part_final', {
+        turnId: this.turnId,
+        responseId: this.responseId,
+        partIndex: 0,
+        kind: 'stall',
+      });
       if (!this.isCurrent()) return;
 
       // ---- Body parts from the research Pi child ----
       const bodyLimits = researchPartLimits(this.posture);
-      const bodyAssembler = new ResearchPartAssembler(bodyLimits.maxPartWords, bodyLimits.maxPartChars, bodyLimits.maxPartSentences, bodyLimits.maxParts);
-      for await (const event of this.researchPi.requestBody({ posture: this.posture, transcript: this.transcript, boundedContext: this.boundedContext, stallText }, this.controller.signal)) {
+      const bodyAssembler = new ResearchPartAssembler(
+        bodyLimits.maxPartWords,
+        bodyLimits.maxPartChars,
+        bodyLimits.maxPartSentences,
+        bodyLimits.maxParts,
+      );
+      for await (const event of this.researchPi.requestBody(
+        { posture: this.posture, transcript: this.transcript, boundedContext: this.boundedContext, stallText },
+        this.controller.signal,
+      )) {
         if (!this.isCurrent()) return;
-        if (event.type === "final") {
+        if (event.type === 'final') {
           try {
             const finalized = bodyAssembler.final(event.text);
             for (const part of finalized.parts) this.startBodyPart(part);
             this.researchDone = true;
           } catch {
-            this.failMultiPart(Math.max(1, this.parts.length), "reasoning_invalid");
+            this.failMultiPart(Math.max(1, this.parts.length), 'reasoning_invalid');
             return;
           }
           this.completeMultiPartIfReady();
-        } else if (event.type === "delta") {
+        } else if (event.type === 'delta') {
           try {
             for (const part of bodyAssembler.append(event.text)) this.startBodyPart(part);
           } catch {
-            this.failMultiPart(Math.max(1, this.parts.length), "reasoning_invalid");
+            this.failMultiPart(Math.max(1, this.parts.length), 'reasoning_invalid');
             return;
           }
-        } else if (event.type === "error") {
-          this.failMultiPart(Math.max(1, this.parts.length), "reasoning_unavailable");
+        } else if (event.type === 'error') {
+          this.failMultiPart(Math.max(1, this.parts.length), 'reasoning_unavailable');
           return;
         }
       }
@@ -189,7 +268,7 @@ export class MultiPartResponse {
       this.researchDone = true;
       this.completeMultiPartIfReady();
     } catch {
-      if (this.isCurrent()) this.failMultiPart(0, "reasoning_unavailable");
+      if (this.isCurrent()) this.failMultiPart(0, 'reasoning_unavailable');
     }
   }
 
@@ -218,76 +297,157 @@ export class MultiPartResponse {
   }
 
   private attachPartTts(part: MultiPartPart, meta: SpeechSynthesisStart): void {
-    if (!Number.isSafeInteger(meta.sampleRate) || meta.sampleRate <= 0) { this.failMultiPart(part.partIndex, "tts_failed"); return; }
-    if (meta.generatedSamples !== undefined && (!Number.isSafeInteger(meta.generatedSamples) || meta.generatedSamples <= 0)) { this.failMultiPart(part.partIndex, "tts_failed"); return; }
+    if (!Number.isSafeInteger(meta.sampleRate) || meta.sampleRate <= 0) {
+      this.failMultiPart(part.partIndex, 'tts_failed');
+      return;
+    }
+    if (
+      meta.generatedSamples !== undefined &&
+      (!Number.isSafeInteger(meta.generatedSamples) || meta.generatedSamples <= 0)
+    ) {
+      this.failMultiPart(part.partIndex, 'tts_failed');
+      return;
+    }
     part.playbackId = meta.playbackId;
     part.started = true;
     this.partByPlayback.set(meta.playbackId, part);
     this.host.openLedger(meta.playbackId, this.epoch, Math.max(part.generatedSamples, meta.generatedSamples ?? 0));
-    this.host.emit("tts.started", { responseId: this.responseId, playbackId: meta.playbackId, sampleRate: meta.sampleRate, ...(meta.backendId ? { backendId: meta.backendId } : {}), ...(meta.modelId ? { modelId: meta.modelId } : {}), partIndex: part.partIndex, ...(meta.outputStreamId !== undefined ? { outputStreamId: meta.outputStreamId } : {}) });
+    this.host.emit('tts.started', {
+      responseId: this.responseId,
+      playbackId: meta.playbackId,
+      sampleRate: meta.sampleRate,
+      ...(meta.backendId ? { backendId: meta.backendId } : {}),
+      ...(meta.modelId ? { modelId: meta.modelId } : {}),
+      partIndex: part.partIndex,
+      ...(meta.outputStreamId !== undefined ? { outputStreamId: meta.outputStreamId } : {}),
+    });
     // Callers guard with isCurrent(), so the parent active response is this
     // machine's parent; mirror the first audible part onto it for response-level lifecycle.
     if (!this.parentActive.playbackId) this.parentActive.playbackId = meta.playbackId;
     this.host.enterPlaying();
     // Apply the same speech-before-TTS guard to prefetched multipart parts.
     // The first part may become audible after VAD has already seized the mic.
-    if (this.host.isUserSpeaking() && !this.host.hasProvisional(this.responseId)) this.host.beginProvisionalBargeIn(this.responseId);
+    if (this.host.isUserSpeaking() && !this.host.hasProvisional(this.responseId))
+      this.host.beginProvisionalBargeIn(this.responseId);
     else if (this.host.hasProvisional(this.responseId)) this.host.speech.pause(this.responseId);
     this.host.speech.release?.(this.responseId, part.partIndex);
     if (meta.completion) {
       void meta.completion.then(
-        completed => {
+        (completed) => {
           if (!this.isCurrent()) return;
-          if (!Number.isSafeInteger(completed.generatedSamples) || completed.generatedSamples <= 0) { this.failMultiPart(part.partIndex, "tts_failed"); return; }
+          if (!Number.isSafeInteger(completed.generatedSamples) || completed.generatedSamples <= 0) {
+            this.failMultiPart(part.partIndex, 'tts_failed');
+            return;
+          }
           if (!this.host.setLedgerSamples(meta.playbackId, this.epoch, completed.generatedSamples)) return;
-          this.host.emit("tts.ended", { responseId: this.responseId, playbackId: meta.playbackId, generatedSamples: completed.generatedSamples, partIndex: part.partIndex });
+          this.host.emit('tts.ended', {
+            responseId: this.responseId,
+            playbackId: meta.playbackId,
+            generatedSamples: completed.generatedSamples,
+            partIndex: part.partIndex,
+          });
         },
-        () => { if (this.isCurrent()) this.failMultiPart(part.partIndex, "tts_failed"); },
+        () => {
+          if (this.isCurrent()) this.failMultiPart(part.partIndex, 'tts_failed');
+        },
       );
     }
   }
 
   private startBodyPart(chunk: { text: string; partIndex: number }): void {
-    if (chunk.partIndex > 7) { this.failMultiPart(chunk.partIndex, "reasoning_invalid"); return; }
-    const part: MultiPartPart = { partIndex: chunk.partIndex, kind: "body", generatedSamples: 0, terminal: false, started: false };
+    if (chunk.partIndex > 7) {
+      this.failMultiPart(chunk.partIndex, 'reasoning_invalid');
+      return;
+    }
+    const part: MultiPartPart = {
+      partIndex: chunk.partIndex,
+      kind: 'body',
+      generatedSamples: 0,
+      terminal: false,
+      started: false,
+    };
     this.parts.push(part);
     const partStartedAt = Date.now();
-    log("session", `part started body ${chunk.partIndex} ${this.responseId}`);
-    this.host.emit("response.part_started", { turnId: this.turnId, responseId: this.responseId, partIndex: chunk.partIndex, kind: "body" });
-    this.host.emit("reasoning.started", { turnId: this.turnId, responseId: this.responseId, posture: this.posture, partIndex: chunk.partIndex });
-    const stream = this.host.speech.begin({ sessionId: this.host.sessionId, epoch: this.epoch, responseId: this.responseId, partIndex: chunk.partIndex, signal: this.controller.signal, onGeneratedSamples: total => this.recordPartSamples(part, total) });
+    log('session', `part started body ${chunk.partIndex} ${this.responseId}`);
+    this.host.emit('response.part_started', {
+      turnId: this.turnId,
+      responseId: this.responseId,
+      partIndex: chunk.partIndex,
+      kind: 'body',
+    });
+    this.host.emit('reasoning.started', {
+      turnId: this.turnId,
+      responseId: this.responseId,
+      posture: this.posture,
+      partIndex: chunk.partIndex,
+    });
+    const stream = this.host.speech.begin({
+      sessionId: this.host.sessionId,
+      epoch: this.epoch,
+      responseId: this.responseId,
+      partIndex: chunk.partIndex,
+      signal: this.controller.signal,
+      onGeneratedSamples: (total) => this.recordPartSamples(part, total),
+    });
     part.speechStream = stream;
     void stream.started.catch(() => undefined);
     stream.started.then(
-      meta => { if (this.isCurrent()) this.attachPartTts(part, meta); },
-      () => { if (this.isCurrent()) this.failMultiPart(part.partIndex, "tts_failed"); },
+      (meta) => {
+        if (this.isCurrent()) this.attachPartTts(part, meta);
+      },
+      () => {
+        if (this.isCurrent()) this.failMultiPart(part.partIndex, 'tts_failed');
+      },
     );
     stream.append(chunk.text);
     part.assistantText = chunk.text;
-    this.host.emit("reasoning.delta", { turnId: this.turnId, responseId: this.responseId, partIndex: chunk.partIndex, text: chunk.text });
-    this.host.emit("reasoning.final", { turnId: this.turnId, responseId: this.responseId, posture: this.posture, partIndex: chunk.partIndex, text: chunk.text });
+    this.host.emit('reasoning.delta', {
+      turnId: this.turnId,
+      responseId: this.responseId,
+      partIndex: chunk.partIndex,
+      text: chunk.text,
+    });
+    this.host.emit('reasoning.final', {
+      turnId: this.turnId,
+      responseId: this.responseId,
+      posture: this.posture,
+      partIndex: chunk.partIndex,
+      text: chunk.text,
+    });
     stream.finish();
-    log("session", `part final body ${chunk.partIndex} ${this.responseId} ${chunk.text.length}chars ${Date.now() - partStartedAt}ms`);
-    this.host.emit("response.part_final", { turnId: this.turnId, responseId: this.responseId, partIndex: chunk.partIndex, kind: "body" });
+    log(
+      'session',
+      `part final body ${chunk.partIndex} ${this.responseId} ${chunk.text.length}chars ${Date.now() - partStartedAt}ms`,
+    );
+    this.host.emit('response.part_final', {
+      turnId: this.turnId,
+      responseId: this.responseId,
+      partIndex: chunk.partIndex,
+      kind: 'body',
+    });
   }
 
   private completeMultiPartIfReady(): void {
-    if (!this.researchDone || this.parts.some(part => !part.terminal)) return;
+    if (!this.researchDone || this.parts.some((part) => !part.terminal)) return;
     this.finishMultiPart(true);
   }
 
   private finishMultiPart(addContext: boolean): void {
     if (this.cancelled) return;
     this.cancelled = true;
-    const parentText = this.parts.map(part => part.assistantText).filter(Boolean).join(" ").trim();
+    const parentText = this.parts
+      .map((part) => part.assistantText)
+      .filter(Boolean)
+      .join(' ')
+      .trim();
     if (addContext && parentText) this.host.addAssistantContext(parentText);
     this.host.detach(this);
     this.host.settleListening();
   }
 
-  failMultiPart(partIndex: number, reasonCode: "reasoning_unavailable" | "reasoning_invalid" | "tts_failed"): void {
-    log("session", `multipart fail reason=${reasonCode} partIndex=${partIndex} responseId=${this.responseId}`);
-    this.host.emit("response.failed", { turnId: this.turnId, responseId: this.responseId, reasonCode, partIndex });
+  failMultiPart(partIndex: number, reasonCode: 'reasoning_unavailable' | 'reasoning_invalid' | 'tts_failed'): void {
+    log('session', `multipart fail reason=${reasonCode} partIndex=${partIndex} responseId=${this.responseId}`);
+    this.host.emit('response.failed', { turnId: this.turnId, responseId: this.responseId, reasonCode, partIndex });
     this.host.failResponse(reasonCode);
     this.cancelMultiPart();
   }

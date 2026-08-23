@@ -30,7 +30,12 @@ export interface PiRequestInput {
   transcript: string;
   boundedContext: string;
   maxWords: 45;
+  /** Optional per-request framing prepended ahead of the data blocks (for example, the stall-hook job). */
+  instruction?: string;
 }
+/** Part 0 of a multi-part response holds the floor with a reaction/hook, never a full answer. */
+export const PI_STALL_INSTRUCTION =
+  'This is part 0 of one spoken answer: a quick hook that holds the floor while the rest is prepared. It is NOT an attempt at a complete answer. React to what the user just said, take a quick position, or say what you will dig into next. At most 45 words, spoken text only.';
 export type PiEvent =
   | { type: 'delta'; text: string }
   | { type: 'final'; text: string }
@@ -98,7 +103,13 @@ function promptFor(input: PiRequestInput): string {
   ] as const)
     if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > max)
       throw new Error(`${name} exceeds its bound`);
-  return `Posture: ${input.posture}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
+  let instruction = '';
+  if (input.instruction !== undefined) {
+    if (typeof input.instruction !== 'string' || Buffer.byteLength(input.instruction, 'utf8') > 4096)
+      throw new Error('instruction exceeds its bound');
+    instruction = `${input.instruction}\n`;
+  }
+  return `${instruction}Posture: ${input.posture}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
 }
 
 export class StdioPiClient implements PiClient {

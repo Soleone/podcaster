@@ -19,8 +19,11 @@ async function openAppStorageResources(): Promise<AppStorageResources> {
 }
 
 function closeAppStorageResources(resources: AppStorageResources): void {
-  try { resources.settings.close(); }
-  finally { resources.customVoices.close(); }
+  try {
+    resources.settings.close();
+  } finally {
+    resources.customVoices.close();
+  }
 }
 
 export interface AppStorage {
@@ -60,7 +63,9 @@ export function useAppStorage(): AppStorage {
   const readyRef = useRef<{ promise: Promise<void>; resolve: () => void } | undefined>(undefined);
   if (!readyRef.current) {
     let resolve!: () => void;
-    const promise = new Promise<void>(settle => { resolve = settle; });
+    const promise = new Promise<void>((settle) => {
+      resolve = settle;
+    });
     readyRef.current = { promise, resolve };
   }
 
