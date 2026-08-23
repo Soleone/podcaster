@@ -41,10 +41,27 @@ export interface PiResearchRequestInput {
   boundedContext: string;
   stallText: string;
   maxWords?: number;
+  /** Optional sanitized tool-call visibility for this request only. */
+  onToolActivity?: (activity: ResearchToolActivity) => void;
 }
 export interface PiPlanningRequestInput {
   topic: string;
   depth: PlanningDepth;
+  /** Optional sanitized tool-call visibility for this request only. */
+  onToolActivity?: (activity: ResearchToolActivity) => void;
+}
+/**
+ * One concise, sanitized tool-call lifecycle observation. Display metadata
+ * only: never carries tool output or results, and the optional summary is a
+ * short, truncated hint derived from the request (for example a search query
+ * or fetch URL), not raw tool arguments.
+ */
+export interface ResearchToolActivity {
+  toolCallId: string;
+  toolName: string;
+  status: 'started' | 'ended' | 'failed';
+  summary?: string;
+  durationMs?: number;
 }
 export interface PiResearchClient {
   requestBody(input: PiResearchRequestInput, signal: AbortSignal): AsyncIterable<PiEvent>;
@@ -70,7 +87,51 @@ type ResearchActiveRequest = ActiveRequest<PiEvent> & {
   maxWords: number;
   maxResponseBytes: number;
   deadlineMs: number;
+  onToolActivity?: (activity: ResearchToolActivity) => void;
 };
+
+const TOOL_ACTIVITY_TOOL_NAME_MAX_BYTES = 64;
+const TOOL_ACTIVITY_CALL_ID_MAX_BYTES = 128;
+const TOOL_ACTIVITY_SUMMARY_MAX_CHARS = 120;
+// Display hints only. Search and fetch tools keep their query/URL here; other
+// tools surface without a summary rather than exposing arbitrary arguments.
+const TOOL_SUMMARY_KEYS = ['query', 'url', 'prompt', 'pattern', 'path', 'command'] as const;
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, 'utf8');
+  if (bytes.length <= maxBytes) return value;
+  let end = maxBytes;
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
+  return bytes.subarray(0, end).toString('utf8');
+}
+function truncateToolSummary(value: string): string {
+  const single = value.replace(/\s+/gu, ' ').trim();
+  if (single.length <= TOOL_ACTIVITY_SUMMARY_MAX_CHARS) return single;
+  let cut = single.slice(0, TOOL_ACTIVITY_SUMMARY_MAX_CHARS);
+  // Never split a surrogate pair while truncating display text.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+function summarizeToolArgs(args: ObjectValue | undefined): string | undefined {
+  if (!args) return undefined;
+  for (const key of TOOL_SUMMARY_KEYS) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return truncateToolSummary(value);
+    if (Array.isArray(value)) {
+      const first = value.find((item): item is string => typeof item === 'string' && item.trim() !== '');
+      if (first !== undefined) return truncateToolSummary(first);
+    }
+  }
+  return undefined;
+}
+function toolActivityObservation(value: ObjectValue): { toolCallId: string; toolName: string } | undefined {
+  const toolCallId = truncateUtf8(String(value.toolCallId ?? '').trim(), TOOL_ACTIVITY_CALL_ID_MAX_BYTES);
+  if (!toolCallId) return undefined;
+  const rawName = String(value.toolName ?? '').trim() || 'unknown';
+  const toolName = truncateUtf8(rawName, TOOL_ACTIVITY_TOOL_NAME_MAX_BYTES);
+  return { toolCallId, toolName };
+}
 
 function errorEvent(error: Error): PiEvent {
   return {
@@ -278,6 +339,7 @@ export class StdioPiResearchClient implements PiResearchClient {
         abortListener: () => {},
         signal,
         release,
+        ...(input.onToolActivity ? { onToolActivity: input.onToolActivity } : {}),
       };
       active.abortListener = () => this.cancelActive(active);
       this.active = active;
@@ -351,9 +413,19 @@ export class StdioPiResearchClient implements PiResearchClient {
       const toolCallId = String(value.toolCallId ?? '');
       const toolName = String(value.toolName ?? '?');
       // Sanitized host diagnostics only: never log arguments, tool output, or
-      // results. Tool events stay out of the PiEvent stream sent downstream.
+      // results. Tool events stay out of the PiEvent stream sent downstream;
+      // the optional observer below is the only bounded visibility path.
       if (toolCallId) this.activeToolStarts.set(toolCallId, Date.now());
       log('research', `tool start ${toolName} ${toolCallId}`);
+      const observation = toolActivityObservation(value);
+      if (observation) {
+        const summary = summarizeToolArgs(value.args as ObjectValue | undefined);
+        active.onToolActivity?.({
+          ...observation,
+          status: 'started',
+          ...(summary !== undefined ? { summary } : {}),
+        });
+      }
       return;
     }
     if (value.type === 'tool_execution_end') {
@@ -366,6 +438,13 @@ export class StdioPiResearchClient implements PiResearchClient {
         'research',
         `tool end ${toolName} ${toolCallId}${started !== undefined ? ` ${Date.now() - started}ms` : ''} ${ok}`,
       );
+      const observation = toolActivityObservation(value);
+      if (observation)
+        active.onToolActivity?.({
+          ...observation,
+          status: ok === 'ok' ? 'ended' : 'failed',
+          ...(started !== undefined ? { durationMs: Date.now() - started } : {}),
+        });
       return;
     }
     if (value.type === 'message_update') {

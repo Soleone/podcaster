@@ -17,6 +17,9 @@ conversation intelligence comes from the `pi` command-line agent you configure.
   and thinking level, and custom voice enrollment (consent-gated; reference
   recordings stay in browser local storage and are used only by the local
   audio sidecar).
+- An optional "Agent activity" panel that shows, grouped by preparation and
+  turn, which read-only research tools (for example web search) the agent
+  used while forming a response, with a short summary and duration per call.
 - Optional CUDA evaluation runtimes: Qwen CustomVoice (1.7B) voice cloning and
   the 0.6B Base clone spike, isolated in their own Python environments.
 

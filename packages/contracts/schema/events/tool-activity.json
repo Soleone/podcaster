@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/tool-activity.json",
+  "title": "ToolActivityEvent",
+  "description": "Concise, sanitized visibility into one read-only tool call made by a preparation pass or a live turn. Carries no tool arguments, output, or results beyond an optional short display summary.",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "tool.activity" },
+        "payload": {
+          "type": "object",
+          "required": ["scope", "toolCallId", "toolName", "status"],
+          "properties": {
+            "scope": { "enum": ["planning", "turn"] },
+            "turnId": { "type": "string", "format": "uuid" },
+            "responseId": { "type": "string", "format": "uuid" },
+            "toolCallId": { "type": "string", "minLength": 1, "maxUtf8Bytes": 128 },
+            "toolName": { "type": "string", "minLength": 1, "maxUtf8Bytes": 64 },
+            "status": { "enum": ["started", "ended", "failed"] },
+            "summary": { "type": "string", "maxUtf8Bytes": 160 },
+            "durationMs": { "type": "integer", "minimum": 0 }
+          },
+          "if": { "properties": { "scope": { "const": "turn" } }, "required": ["scope"] },
+          "then": { "required": ["turnId", "responseId"] },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

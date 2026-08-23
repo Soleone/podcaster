@@ -677,7 +677,14 @@ describe('browser conversation routing', () => {
     const researchPi: PiResearchClient = {
       async *requestBody(input) {
         researchCalls.push(input);
+        input.onToolActivity?.({
+          toolCallId: 'tool-1',
+          toolName: 'web_search',
+          status: 'started',
+          summary: 'research-backed topics',
+        });
         yield { type: 'delta' as const, text: 'Research-backed response.' };
+        input.onToolActivity?.({ toolCallId: 'tool-1', toolName: 'web_search', status: 'ended', durationMs: 21 });
         yield { type: 'final' as const, text: 'Research-backed response.' };
       },
       async shutdown() {},
@@ -751,6 +758,26 @@ describe('browser conversation routing', () => {
     );
 
     expect(researchCalls).toHaveLength(1);
+    const toolActivity = messages.filter((message) => message.type === 'tool.activity');
+    expect(toolActivity).toHaveLength(2);
+    const partResponseId = (stallStarted.payload as Record<string, unknown>).responseId;
+    const partTurnId = (stallStarted.payload as Record<string, unknown>).turnId;
+    expect(toolActivity[0]?.payload).toEqual({
+      scope: 'turn',
+      turnId: partTurnId,
+      responseId: partResponseId,
+      toolCallId: 'tool-1',
+      toolName: 'web_search',
+      status: 'started',
+      summary: 'research-backed topics',
+    });
+    expect(toolActivity[1]?.payload).toMatchObject({
+      scope: 'turn',
+      responseId: partResponseId,
+      toolCallId: 'tool-1',
+      status: 'ended',
+      durationMs: 21,
+    });
     expect(messages.filter((message) => message.type === 'response.part_started')).toHaveLength(2);
     expect(messages.filter((message) => message.type === 'response.part_final')).toHaveLength(2);
     expect(messages.filter((message) => message.type === 'reasoning.final')).toHaveLength(2);
@@ -797,8 +824,15 @@ describe('browser conversation routing', () => {
     const researchPi: PiResearchClient = {
       async *requestBody() {},
       async *requestPlan(input) {
-        researchCalls.push(input);
+        researchCalls.push({ topic: input.topic, depth: input.depth });
+        input.onToolActivity?.({
+          toolCallId: 'tool-9',
+          toolName: 'web_search',
+          status: 'started',
+          summary: 'future of local radio',
+        });
         yield { type: 'delta' as const, text: 'PRIVATE_TOOL_TRACE' };
+        input.onToolActivity?.({ toolCallId: 'tool-9', toolName: 'web_search', status: 'ended', durationMs: 17 });
         yield { type: 'final' as const, text: 'Useful facts\nTalking points: ask about local radio.' };
       },
       async shutdown() {},
@@ -847,6 +881,21 @@ describe('browser conversation routing', () => {
         message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'ready',
     );
     expect(researchCalls).toEqual([{ topic: 'The future of local radio', depth: 'standard' }]);
+    const planningActivity = messages.filter((message) => message.type === 'tool.activity');
+    expect(planningActivity).toHaveLength(2);
+    expect(planningActivity[0]?.payload).toEqual({
+      scope: 'planning',
+      toolCallId: 'tool-9',
+      toolName: 'web_search',
+      status: 'started',
+      summary: 'future of local radio',
+    });
+    expect(planningActivity[1]?.payload).toMatchObject({
+      scope: 'planning',
+      toolCallId: 'tool-9',
+      status: 'ended',
+      durationMs: 17,
+    });
 
     socket.send(
       JSON.stringify(command('audio.start', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })),

@@ -61,6 +61,7 @@ const cases = [
   ['events/transcript-partial.json', 'transcript-partial', 'transcript-partial'],
   ['events/tts-ended.json', 'tts-ended', 'tts-ended'],
   ['events/tts-started.json', 'tts-started', 'tts-started'],
+  ['events/tool-activity.json', 'tool-activity', 'tool-activity'],
   ['events/vad-speech-end.json', 'vad-speech-end', 'vad-speech-end'],
   ['events/vad-speech-start.json', 'vad-speech-start', 'vad-speech-start'],
   ['persona.json', 'persona', 'persona'],
@@ -90,6 +91,7 @@ const hostEventSchemaPaths = new Set([
   'events/transcript-partial.json',
   'events/tts-ended.json',
   'events/tts-started.json',
+  'events/tool-activity.json',
   'events/vad-speech-end.json',
   'events/vad-speech-start.json',
 ]);
@@ -315,6 +317,64 @@ describe('multi-part response part constraints', () => {
         payload: { ...base, partId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f8' },
       }),
     ).toBe(false);
+  });
+});
+
+describe('tool activity visibility contract', () => {
+  const env = {
+    protocolVersion: 1,
+    sessionId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f1',
+    epoch: 2,
+    eventId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f3',
+    monotonicMs: 1000,
+    type: 'tool.activity',
+  };
+  const turnIds = {
+    turnId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f5',
+    responseId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f6',
+  };
+  test('turn scope requires turn and response identity; planning scope does not', () => {
+    const validate = CONTRACT_VALIDATORS.ToolActivityEvent;
+    expect(
+      validate({
+        ...env,
+        payload: { scope: 'planning', toolCallId: 'tool-1', toolName: 'web_search', status: 'started' },
+      }),
+    ).toBe(true);
+    expect(
+      validate({ ...env, payload: { scope: 'turn', toolCallId: 'tool-1', toolName: 'web_search', status: 'started' } }),
+    ).toBe(false);
+    expect(
+      validate({
+        ...env,
+        payload: { scope: 'turn', ...turnIds, toolCallId: 'tool-1', toolName: 'web_search', status: 'started' },
+      }),
+    ).toBe(true);
+    expect(
+      validate({
+        ...env,
+        payload: {
+          scope: 'turn',
+          ...turnIds,
+          toolCallId: 'tool-1',
+          toolName: 'web_search',
+          status: 'ended',
+          summary: 'metroidvania release dates',
+          durationMs: 1420,
+        },
+      }),
+    ).toBe(true);
+  });
+  test('rejects unknown statuses, empty identifiers, and oversized summaries', () => {
+    const validate = CONTRACT_VALIDATORS.ToolActivityEvent;
+    const base = { scope: 'planning', toolCallId: 'tool-1', toolName: 'web_search', status: 'started' };
+    expect(validate({ ...env, payload: { ...base, status: 'finished' } })).toBe(false);
+    expect(validate({ ...env, payload: { ...base, toolCallId: '' } })).toBe(false);
+    expect(validate({ ...env, payload: { ...base, toolName: '' } })).toBe(false);
+    expect(validate({ ...env, payload: { ...base, summary: 'x'.repeat(160) } })).toBe(true);
+    expect(validate({ ...env, payload: { ...base, summary: 'x'.repeat(161) } })).toBe(false);
+    expect(validate({ ...env, payload: { ...base, durationMs: -1 } })).toBe(false);
+    expect(validate({ ...env, payload: { ...base, args: { query: 'raw arguments' } } })).toBe(false);
   });
 });
 

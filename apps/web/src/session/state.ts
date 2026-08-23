@@ -32,6 +32,41 @@ export interface PlanningViewState {
   detail?: string;
   notes?: string;
 }
+export type AgentToolStatus = 'running' | 'done' | 'failed' | 'interrupted';
+/** One concise tool call made while the agent worked; display metadata only. */
+export interface AgentToolActivity {
+  toolCallId: string;
+  toolName: string;
+  status: AgentToolStatus;
+  summary?: string;
+  durationMs?: number;
+}
+/** Activity grouped by its origin: the preparation pass or one spoken turn. */
+export interface AgentActivityGroup {
+  key: string;
+  scope: 'planning' | 'turn';
+  turnId?: string;
+  epoch: number;
+  entries: AgentToolActivity[];
+}
+const MAX_ACTIVITY_GROUPS = 16;
+const MAX_ACTIVITY_ENTRIES = 24;
+
+// An epoch advance abandons in-flight work; tool calls still marked running
+// never receive their end event and must not spin forever in the activity view.
+function settleInterruptedActivity(groups: AgentActivityGroup[]): AgentActivityGroup[] {
+  if (!groups.some((group) => group.entries.some((entry) => entry.status === 'running'))) return groups;
+  return groups.map((group) =>
+    group.entries.some((entry) => entry.status === 'running')
+      ? {
+          ...group,
+          entries: group.entries.map((entry) =>
+            entry.status === 'running' ? { ...entry, status: 'interrupted' as const } : entry,
+          ),
+        }
+      : group,
+  );
+}
 export interface SessionViewState {
   dominant: DominantState;
   audioEngine: AudioEngineViewState;
@@ -45,6 +80,7 @@ export interface SessionViewState {
     policyReason?: string;
   }>;
   conversationItems: ConversationItem[];
+  agentActivity: AgentActivityGroup[];
   assistantText: string;
   playbackNotice: string;
   degradedMessage: string;
@@ -59,6 +95,7 @@ export const initialSessionState: SessionViewState = {
   tentativeText: '',
   stableTurns: [],
   conversationItems: [],
+  agentActivity: [],
   assistantText: '',
   playbackNotice: '',
   degradedMessage: '',
@@ -98,7 +135,12 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   // any still-tentative assistant preview must not linger.
   let next =
     event.epoch > state.epoch
-      ? { ...state, epoch: event.epoch, conversationItems: dropTentativeAssistant(state.conversationItems) }
+      ? {
+          ...state,
+          epoch: event.epoch,
+          conversationItems: dropTentativeAssistant(state.conversationItems),
+          agentActivity: settleInterruptedActivity(state.agentActivity),
+        }
       : state;
   if (event.type === 'transcript.partial')
     return { ...next, tentativeText: typeof event.payload.text === 'string' ? event.payload.text : '' };
@@ -253,6 +295,59 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
       assistantText: text,
       conversationItems: [...next.conversationItems.filter((existing) => existing.id !== item.id), item],
     };
+  }
+  if (event.type === 'tool.activity') {
+    const payload = event.payload;
+    const scope = payload.scope === 'planning' ? 'planning' : 'turn';
+    const responseId = typeof payload.responseId === 'string' ? payload.responseId : '';
+    const turnId = typeof payload.turnId === 'string' && payload.turnId ? payload.turnId : undefined;
+    const toolCallId = typeof payload.toolCallId === 'string' ? payload.toolCallId : '';
+    const toolName = typeof payload.toolName === 'string' ? payload.toolName : '';
+    const status = payload.status;
+    if (!toolCallId || !toolName) return next;
+    if (scope === 'turn' && !responseId) return next;
+    const summary = typeof payload.summary === 'string' && payload.summary ? payload.summary : undefined;
+    const durationMs =
+      typeof payload.durationMs === 'number' && payload.durationMs >= 0 ? payload.durationMs : undefined;
+    const key = scope === 'turn' ? `turn:${responseId}` : 'planning';
+    const groups = next.agentActivity;
+    const groupIndex = groups.findIndex((group) => group.key === key);
+    const group = groupIndex >= 0 ? groups[groupIndex]! : undefined;
+    const entries = group ? [...group.entries] : [];
+    const entryIndex = entries.findIndex((entry) => entry.toolCallId === toolCallId);
+    if (status === 'started') {
+      if (entryIndex >= 0) return next;
+      entries.push({ toolCallId, toolName, status: 'running', ...(summary ? { summary } : {}) });
+    } else if (status === 'ended' || status === 'failed') {
+      const prior = entryIndex >= 0 ? entries[entryIndex]! : undefined;
+      const finalSummary = summary ?? prior?.summary;
+      const entry: AgentToolActivity = {
+        toolCallId,
+        toolName,
+        status: status === 'ended' ? 'done' : 'failed',
+        ...(finalSummary !== undefined ? { summary: finalSummary } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      };
+      if (entryIndex >= 0) entries[entryIndex] = entry;
+      else entries.push(entry);
+    } else return next;
+    const boundedEntries =
+      entries.length > MAX_ACTIVITY_ENTRIES ? entries.slice(entries.length - MAX_ACTIVITY_ENTRIES) : entries;
+    const finalTurnId = group?.turnId ?? turnId;
+    const updated: AgentActivityGroup = {
+      key,
+      scope,
+      epoch: group?.epoch ?? event.epoch,
+      entries: boundedEntries,
+      ...(finalTurnId !== undefined ? { turnId: finalTurnId } : {}),
+    };
+    let updatedGroups =
+      groupIndex >= 0
+        ? groups.map((existing, index) => (index === groupIndex ? updated : existing))
+        : [...groups, updated];
+    if (updatedGroups.length > MAX_ACTIVITY_GROUPS)
+      updatedGroups = updatedGroups.slice(updatedGroups.length - MAX_ACTIVITY_GROUPS);
+    return { ...next, agentActivity: updatedGroups };
   }
   if (event.type === 'response.failed') {
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';

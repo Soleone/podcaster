@@ -211,12 +211,13 @@ export class WebSocketSessionTransport implements SessionTransport {
       }
       if (hostEvent.type === 'session.state' && this.pendingPlanningStart) {
         const planningPayload =
-          hostEvent.payload.planning && typeof hostEvent.payload.planning === 'object' && !Array.isArray(hostEvent.payload.planning)
+          hostEvent.payload.planning &&
+          typeof hostEvent.payload.planning === 'object' &&
+          !Array.isArray(hostEvent.payload.planning)
             ? (hostEvent.payload.planning as { status?: unknown })
             : undefined;
         const status = planningPayload?.status;
-        const terminal =
-          status === 'ready' || status === 'failed' || status === 'cancelled' || status === 'continued';
+        const terminal = status === 'ready' || status === 'failed' || status === 'cancelled' || status === 'continued';
         // Terminal planning statuses settle the start handshake; any non-planning
         // phase means the host went live while preparation keeps running behind
         // the session, so the live screen can show the preparation banner.

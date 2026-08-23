@@ -238,7 +238,23 @@ export class MultiPartResponse {
         bodyLimits.maxParts,
       );
       for await (const event of this.researchPi.requestBody(
-        { posture: this.posture, transcript: this.transcript, boundedContext: this.boundedContext, stallText },
+        {
+          posture: this.posture,
+          transcript: this.transcript,
+          boundedContext: this.boundedContext,
+          stallText,
+          onToolActivity: (activity) => {
+            // Concise tool-call visibility for this turn only; dropped once the
+            // response is no longer current so cancelled turns stay quiet.
+            if (!this.isCurrent()) return;
+            this.host.emit('tool.activity', {
+              scope: 'turn',
+              turnId: this.turnId,
+              responseId: this.responseId,
+              ...activity,
+            });
+          },
+        },
         this.controller.signal,
       )) {
         if (!this.isCurrent()) return;

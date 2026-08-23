@@ -47,6 +47,7 @@
       "tts.started",
       "tts.ended",
       "response.failed",
+      "tool.activity",
       "failure",
       "stream.open",
       "stream.opened",

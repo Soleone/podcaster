@@ -6,6 +6,7 @@ import {
   RESEARCH_BODY_MAX_WORDS,
   StdioPiResearchClient,
   type PiResearchRequestInput,
+  type ResearchToolActivity,
 } from '../../src/pi/PiResearchClient.js';
 import { makeFakePi, type FakePiScenario } from '../fixtures/fake-pi.js';
 
@@ -161,6 +162,31 @@ describe('production Pi research RPC boundary', () => {
     expect(joined).not.toContain('Metroidvania');
     expect(joined).not.toContain('PRIVATE_CONTENT');
     expect(joined).not.toContain('PRIVATE');
+    await value.shutdown();
+  });
+
+  it('surfaces sanitized tool activity to the request observer without leaking tool results', async () => {
+    const { value } = await client('tools');
+    const activity: ResearchToolActivity[] = [];
+    const result: PiEvent[] = [];
+    for await (const event of value.requestBody(
+      { ...input, onToolActivity: (observation) => activity.push(observation) },
+      new AbortController().signal,
+    ))
+      result.push(event);
+    expect(result.at(-1)).toMatchObject({ type: 'final' });
+    expect(activity).toHaveLength(2);
+    expect(activity[0]).toEqual({
+      toolCallId: 'tool-1',
+      toolName: 'grep',
+      status: 'started',
+      summary: 'Metroidvania',
+    });
+    expect(activity[1]).toMatchObject({ toolCallId: 'tool-1', toolName: 'grep', status: 'ended' });
+    expect(activity[1]!.durationMs).toBeGreaterThanOrEqual(0);
+    // Visibility stays display-only: tool results never reach the observer.
+    expect(JSON.stringify(activity)).not.toContain('PRIVATE_CONTENT');
+    expect(JSON.stringify(result)).not.toContain('Metroidvania');
     await value.shutdown();
   });
 

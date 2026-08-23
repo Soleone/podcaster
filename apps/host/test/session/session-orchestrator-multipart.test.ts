@@ -210,6 +210,56 @@ describe('safe session orchestrator multi-part', () => {
     expect(researchPi.inputs[0]!.stallText).toContain('look that up');
   });
 
+  it('emits turn-scoped tool.activity events while the research pass runs tools', async () => {
+    const body = async function* (request: PiResearchRequestInput): AsyncIterable<PiEvent> {
+      request.onToolActivity?.({
+        toolCallId: 'tool-1',
+        toolName: 'web_search',
+        status: 'started',
+        summary: 'capital of France',
+      });
+      request.onToolActivity?.({
+        toolCallId: 'tool-1',
+        toolName: 'web_search',
+        status: 'ended',
+        durationMs: 42,
+      });
+      yield {
+        type: 'delta',
+        text: 'Paris is the capital of France. It sits on the Seine. The city is a cultural hub. Millions of people visit it. The metro is very extensive. The food is world famous. ',
+      };
+      yield {
+        type: 'final',
+        text: 'Paris is the capital of France. It sits on the Seine. The city is a cultural hub. Millions of people visit it. The metro is very extensive. The food is world famous. ',
+      };
+    };
+    const { session, events } = setup({ researchPi: new FakeResearchPi(body) });
+    await session.handleStableFinal(turn(0));
+    const toolEvents = byType(events, 'tool.activity');
+    expect(toolEvents).toHaveLength(2);
+    const responseId = events.find((event) => event.type === 'response.part_started')?.payload.responseId;
+    expect(toolEvents.map((event) => event.payload)).toEqual([
+      {
+        scope: 'turn',
+        turnId: turn(0).turnId,
+        responseId,
+        toolCallId: 'tool-1',
+        toolName: 'web_search',
+        status: 'started',
+        summary: 'capital of France',
+      },
+      {
+        scope: 'turn',
+        turnId: turn(0).turnId,
+        responseId,
+        toolCallId: 'tool-1',
+        toolName: 'web_search',
+        status: 'ended',
+        durationMs: 42,
+      },
+    ]);
+  });
+
   it('sends the stall-hook instruction with the part 0 request', async () => {
     const { session, pi } = setup();
     await session.handleStableFinal(turn(0));

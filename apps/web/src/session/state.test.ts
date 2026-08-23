@@ -384,4 +384,109 @@ describe('session presentation state', () => {
     expect(state.playbackNotice).toBe('');
     expect(state.announcement).toBe('Continuing the response');
   });
+
+  describe('agent tool activity visibility', () => {
+    const started = (over: Record<string, unknown> = {}, epoch = 0) =>
+      event(
+        'tool.activity',
+        {
+          scope: 'turn',
+          turnId: 't',
+          responseId: 'r',
+          toolCallId: 'c1',
+          toolName: 'web_search',
+          status: 'started',
+          ...over,
+        },
+        epoch,
+      );
+
+    it('merges started and ended observations into one concise planning entry', () => {
+      let state = reduceSessionState(
+        initialSessionState,
+        event('tool.activity', {
+          scope: 'planning',
+          toolCallId: 'c9',
+          toolName: 'web_search',
+          status: 'started',
+          summary: 'future of local radio',
+        }),
+      );
+      expect(state.agentActivity).toEqual([
+        {
+          key: 'planning',
+          scope: 'planning',
+          epoch: 0,
+          entries: [{ toolCallId: 'c9', toolName: 'web_search', status: 'running', summary: 'future of local radio' }],
+        },
+      ]);
+      state = reduceSessionState(
+        state,
+        event('tool.activity', {
+          scope: 'planning',
+          toolCallId: 'c9',
+          toolName: 'web_search',
+          status: 'ended',
+          durationMs: 1420,
+        }),
+      );
+      expect(state.agentActivity).toHaveLength(1);
+      expect(state.agentActivity[0]!.entries).toEqual([
+        {
+          toolCallId: 'c9',
+          toolName: 'web_search',
+          status: 'done',
+          summary: 'future of local radio',
+          durationMs: 1420,
+        },
+      ]);
+    });
+
+    it('groups turn activity by response and keeps failed calls distinct', () => {
+      let state = reduceSessionState(initialSessionState, started());
+      state = reduceSessionState(
+        state,
+        started({ toolCallId: 'c2', toolName: 'webfetch', status: 'failed', durationMs: 7 }),
+      );
+      state = reduceSessionState(state, started({ responseId: 'other', turnId: 't2', toolCallId: 'c3' }));
+      expect(state.agentActivity.map((group) => group.key)).toEqual(['turn:r', 'turn:other']);
+      expect(state.agentActivity[0]!.entries.map((entry) => entry.status)).toEqual(['running', 'failed']);
+      expect(state.agentActivity[1]!.turnId).toBe('t2');
+    });
+
+    it('marks still-running calls interrupted when the epoch advances', () => {
+      let state = reduceSessionState(initialSessionState, started({}, 3));
+      state = reduceSessionState(state, event('transcript.final', { turnId: 'next', text: 'stop' }, 4));
+      expect(state.agentActivity[0]!.entries).toEqual([
+        { toolCallId: 'c1', toolName: 'web_search', status: 'interrupted' },
+      ]);
+      // Late end events from the abandoned epoch are dropped, not resurrected.
+      state = reduceSessionState(state, started({ status: 'ended', durationMs: 99 }, 3));
+      expect(state.agentActivity[0]!.entries[0]!.status).toBe('interrupted');
+    });
+
+    it('keeps terminal observations without a matching start and bounds group size', () => {
+      let state = reduceSessionState(initialSessionState, started({ status: 'ended', durationMs: 12 }));
+      expect(state.agentActivity[0]!.entries).toEqual([
+        { toolCallId: 'c1', toolName: 'web_search', status: 'done', durationMs: 12 },
+      ]);
+      for (let index = 0; index < 40; index += 1)
+        state = reduceSessionState(state, started({ toolCallId: `bulk-${index}` }));
+      expect(state.agentActivity[0]!.entries).toHaveLength(24);
+      expect(state.agentActivity[0]!.entries.at(-1)!.toolCallId).toBe('bulk-39');
+    });
+
+    it('ignores malformed activity payloads', () => {
+      const missingResponse = reduceSessionState(
+        initialSessionState,
+        event('tool.activity', { scope: 'turn', toolCallId: 'c1', toolName: 'web_search', status: 'started' }),
+      );
+      expect(missingResponse.agentActivity).toEqual([]);
+      const emptyCallId = reduceSessionState(
+        initialSessionState,
+        event('tool.activity', { scope: 'planning', toolCallId: '', toolName: 'web_search', status: 'started' }),
+      );
+      expect(emptyCallId.agentActivity).toEqual([]);
+    });
+  });
 });

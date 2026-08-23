@@ -51,6 +51,7 @@ CASES = [
     ("events/transcript-partial.json", "transcript-partial", "transcript-partial"),
     ("events/tts-ended.json", "tts-ended", "tts-ended"),
     ("events/tts-started.json", "tts-started", "tts-started"),
+    ("events/tool-activity.json", "tool-activity", "tool-activity"),
     ("events/vad-speech-end.json", "vad-speech-end", "vad-speech-end"),
     ("events/vad-speech-start.json", "vad-speech-start", "vad-speech-start"),
     ("persona.json", "persona", "persona"),
@@ -79,6 +80,7 @@ HOST_EVENT_SCHEMA_PATHS = {
     "events/transcript-partial.json",
     "events/tts-ended.json",
     "events/tts-started.json",
+    "events/tool-activity.json",
     "events/vad-speech-end.json",
     "events/vad-speech-start.json",
 }

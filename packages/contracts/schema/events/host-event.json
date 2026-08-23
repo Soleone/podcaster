@@ -19,6 +19,7 @@
     { "$ref": "./response-failed.json" },
     { "$ref": "./tts-started.json" },
     { "$ref": "./tts-ended.json" },
+    { "$ref": "./tool-activity.json" },
     { "$ref": "./failure.json" }
   ]
 }

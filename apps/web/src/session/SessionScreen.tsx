@@ -42,7 +42,7 @@ import {
 import { activityLog, type ActivityEntry } from './activity-log';
 import type { ExportOnProgress } from '../recording/splice';
 import type { RecordingSessionViewState, RecordingTrimTargetId } from '../recording/trim-state';
-import type { SessionViewState } from './state';
+import type { AgentActivityGroup, SessionViewState } from './state';
 import './session.css';
 
 const headings: Record<SessionViewState['dominant'], string> = {
@@ -256,6 +256,9 @@ export function SessionScreen(props: SessionScreenProps) {
       </Card>
       {!readOnly ? <AudioEngineStatusStrip status={props.state.audioEngine} /> : null}
       {props.state.planning.status !== 'skipped' ? <PlanningStatusCard planning={props.state.planning} /> : null}
+      {props.state.agentActivity.length > 0 ? (
+        <AgentActivityPanel groups={props.state.agentActivity} stableTurns={props.state.stableTurns} />
+      ) : null}
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {props.state.announcement}
       </p>
@@ -567,9 +570,115 @@ function ActivityLogPanel() {
     </Card>
   );
 }
+function AgentActivityPanel({
+  groups,
+  stableTurns,
+}: {
+  groups: AgentActivityGroup[];
+  stableTurns: SessionViewState['stableTurns'];
+}) {
+  const [open, setOpen] = useState(true);
+  const running = groups.some((group) => group.entries.some((entry) => entry.status === 'running'));
+  const entryCount = groups.reduce((count, group) => count + group.entries.length, 0);
+  const labelFor = (group: AgentActivityGroup): string => {
+    if (group.scope === 'planning') return 'Preparation';
+    const turn = group.turnId ? stableTurns.find((item) => item.turnId === group.turnId) : undefined;
+    const text = turn?.text.trim();
+    if (!text) return 'Turn';
+    return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+  };
+  return (
+    <Card size="sm" className="agent-activity mt-3">
+      <CardHeader className="agent-activity-header flex flex-row items-center justify-between gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="agent-activity-toggle"
+          aria-expanded={open}
+          aria-controls="agent-activity-region"
+          onClick={() => setOpen((value) => !value)}
+        >
+          <ChevronDown
+            data-icon="inline-start"
+            className={cn('transition-transform', open && 'rotate-180')}
+            aria-hidden="true"
+          />
+          Agent activity
+          {running ? <Spinner className="agent-activity-running" aria-hidden="true" /> : null}
+          <Badge variant="secondary" className="agent-activity-count font-mono tabular-nums">
+            {entryCount}
+          </Badge>
+        </Button>
+      </CardHeader>
+      {open ? (
+        <CardContent
+          id="agent-activity-region"
+          role="log"
+          aria-label="Agent tool activity"
+          className="agent-activity-region border-t p-2"
+        >
+          <ul className="agent-activity-groups m-0 flex max-h-64 list-none flex-col gap-2 overflow-y-auto p-0">
+            {groups.map((group) => (
+              <li key={group.key} className="agent-activity-group flex flex-col gap-1 rounded-md px-2 py-1">
+                <p
+                  className="agent-activity-group-label truncate text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+                  title={labelFor(group)}
+                >
+                  {labelFor(group)}
+                </p>
+                <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                  {group.entries.map((entry) => (
+                    <li
+                      key={entry.toolCallId}
+                      className="agent-activity-entry flex items-baseline gap-2 text-xs leading-snug [overflow-wrap:anywhere]"
+                    >
+                      {entry.status === 'running' ? (
+                        <LoaderCircle
+                          className="size-3.5 shrink-0 self-center animate-spin text-muted-foreground"
+                          aria-label="Running"
+                        />
+                      ) : entry.status === 'done' ? (
+                        <Check className="size-3.5 shrink-0 self-center text-emerald-600" aria-label="Done" />
+                      ) : entry.status === 'failed' ? (
+                        <CircleAlert className="size-3.5 shrink-0 self-center text-destructive" aria-label="Failed" />
+                      ) : (
+                        <CircleStop
+                          className="size-3.5 shrink-0 self-center text-muted-foreground"
+                          aria-label="Interrupted"
+                        />
+                      )}
+                      <span className="agent-activity-tool shrink-0 font-medium">{entry.toolName}</span>
+                      {entry.summary ? (
+                        <span
+                          className="agent-activity-summary min-w-0 truncate text-muted-foreground"
+                          title={entry.summary}
+                        >
+                          {entry.summary}
+                        </span>
+                      ) : null}
+                      {entry.durationMs !== undefined ? (
+                        <span className="agent-activity-duration ml-auto shrink-0 font-mono text-[0.7rem] tabular-nums text-muted-foreground">
+                          {formatDuration(entry.durationMs)}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      ) : null}
+    </Card>
+  );
+}
+
 function formatElapsed(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+}
+function formatDuration(durationMs: number): string {
+  return durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`;
 }
 function formatLogTime(ts: number): string {
   const date = new Date(ts);

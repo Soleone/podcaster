@@ -16,7 +16,7 @@ import {
 } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
-import type { PiResearchClient } from '../pi/PiResearchClient.js';
+import type { PiResearchClient, ResearchToolActivity } from '../pi/PiResearchClient.js';
 import { SessionOrchestrator } from '../session/SessionOrchestrator.js';
 import { PiInterruptionIntentClassifier } from '../session/InterruptionIntentClassifier.js';
 import {
@@ -454,7 +454,11 @@ export class BrowserSession {
       let notes = '';
       let sawDelta = false;
       for await (const item of research.requestPlan(
-        { topic: request.topic, depth: request.depth },
+        {
+          topic: request.topic,
+          depth: request.depth,
+          onToolActivity: (activity) => this.emitPlanningToolActivity(activity),
+        },
         controller.signal,
       )) {
         if (controller.signal.aborted || this.stopped) throw new PlanningCancelled();
@@ -494,6 +498,12 @@ export class BrowserSession {
     } finally {
       if (this.planningAbort === controller) this.planningAbort = undefined;
     }
+  }
+
+  private emitPlanningToolActivity(activity: ResearchToolActivity): void {
+    if (!this.sessionId || this.stopped) return;
+    const epoch = this.orchestrator?.snapshot().epoch ?? 0;
+    this.send(event(this.sessionId, epoch, 'tool.activity', { scope: 'planning', ...activity }));
   }
 
   private cancelPlanning(): void {
