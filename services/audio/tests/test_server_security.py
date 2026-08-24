@@ -129,7 +129,6 @@ class _BlockingOpenRuntime:
 async def _exercise_non_blocking_tts_open(runtime: _BlockingOpenRuntime, port: int) -> None:
     stream_id = "018f1f32-7abc-7def-8abc-0123456789ab"
     response_id = "018f1f32-7abd-7def-8abc-0123456789ab"
-    part_id = "018f1f32-7abe-7def-8abc-0123456789ab"
     async with connect(
         f"ws://127.0.0.1:{port}/stream",
         additional_headers={"Authorization": f"Bearer {SECRET}"},
@@ -152,8 +151,6 @@ async def _exercise_non_blocking_tts_open(runtime: _BlockingOpenRuntime, port: i
                 streamId=stream_id,
                 responseId=response_id,
                 epoch=4,
-                partIndex=2,
-                partId=part_id,
                 voiceId="voice",
                 speedModifier=1.25,
                 tonePrompt="calm",
@@ -169,8 +166,6 @@ async def _exercise_non_blocking_tts_open(runtime: _BlockingOpenRuntime, port: i
                 epoch=4,
                 sequence=0,
                 text="hello",
-                partIndex=2,
-                partId=part_id,
             )
         )
         await websocket.send(
@@ -181,8 +176,6 @@ async def _exercise_non_blocking_tts_open(runtime: _BlockingOpenRuntime, port: i
                 epoch=4,
                 nextSequence=1,
                 textSha256="a" * 64,
-                partIndex=2,
-                partId=part_id,
             )
         )
         assert runtime.calls == ["stream.open", "tts.open.begin"]
@@ -204,7 +197,7 @@ async def _exercise_non_blocking_tts_open(runtime: _BlockingOpenRuntime, port: i
             "tts.commit",
         ]
         assert runtime.open_call == (
-            (stream_id, response_id, 4, 2, part_id),
+            (stream_id, response_id, 4, None, None),
             {
                 "voice_id": "voice",
                 "speed_modifier": 1.25,

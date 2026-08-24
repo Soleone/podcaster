@@ -10,7 +10,6 @@ const originalWebSocket = globalThis.WebSocket;
 const contractsRoot = resolve(import.meta.dirname, '../../../../packages/contracts');
 const hostFixtureCases = [
   ['barge-in', 'barge-in'],
-  ['budget-mitigation', 'budget-mitigation'],
   ['failure', 'failure'],
   ['interruption-decision', 'interruption-decision'],
   ['policy-decision', 'policy-decision'],
@@ -18,8 +17,7 @@ const hostFixtureCases = [
   ['reasoning-final', 'reasoning-final'],
   ['reasoning-started', 'reasoning-started'],
   ['response-failed', 'response-failed'],
-  ['response.part_final', 'response.part_final'],
-  ['response.part_started', 'response.part_started'],
+  ['response-cancelled', 'response.cancelled'],
   ['session-state', 'session-state'],
   ['transcript-final', 'transcript-final'],
   ['transcript-partial', 'transcript-partial'],
@@ -392,54 +390,70 @@ function emitBinary(socket: EventSocket, streamId: number, sequence: number, sam
 }
 
 describe('WebSocketSessionTransport recovery', () => {
-  it('waits for a planning terminal state and keeps cancellation out of the ordered start wait', async () => {
+  it('sends session.open fire-and-forget and forwards planning control commands', async () => {
     const socket = new EventSocket();
     const transport = await wiredTransport(socket);
-    const pending = transport.startSession({
+    transport.openSession({
       sessionSeed: SESSION,
       reasoningMode: 'full',
       planning: { topic: 'radio', depth: 'standard' },
       settings: { version: 1, persona: '', voice: { catalogId: 'catalog', voiceId: 'voice', speedModifier: 1 } },
     });
-    expect(pending).toBeInstanceOf(Promise);
     const start = JSON.parse(String(socket.sent.at(-1))) as { type: string; payload: { planning: unknown } };
     expect(start).toMatchObject({
-      type: 'session.start',
+      type: 'session.open',
       payload: { planning: { topic: 'radio', depth: 'standard' } },
     });
     transport.cancelPlanning();
     expect(JSON.parse(String(socket.sent.at(-1))).type).toBe('planning.cancel');
-    emitText(
-      socket,
-      hostEvent('session.state', {
-        phase: 'ready',
-        personaDigest: '0'.repeat(64),
-        planning: { status: 'cancelled', topic: 'radio', depth: 'standard', progress: 100 },
-      }),
-    );
-    await expect(pending).resolves.toBe('cancelled');
+    transport.retryPlanning();
+    expect(JSON.parse(String(socket.sent.at(-1))).type).toBe('planning.retry');
     expectNoProtocolFailure(socket);
   });
 
-  it('resolves the start handshake when the host goes live while preparation is still running', async () => {
+  it('resolves beginLive on the audio-ready session.state and rejects on audio failure', async () => {
     const socket = new EventSocket();
     const transport = await wiredTransport(socket);
-    const pending = transport.startSession({
-      sessionSeed: SESSION,
-      reasoningMode: 'full',
-      planning: { topic: 'radio', depth: 'standard' },
-      settings: { version: 1, persona: '', voice: { catalogId: 'catalog', voiceId: 'voice', speedModifier: 1 } },
+    const pending = transport.beginLive(7);
+    const begin = JSON.parse(String(socket.sent.at(-1))) as { type: string; payload: Record<string, unknown> };
+    expect(begin).toMatchObject({
+      type: 'session.begin',
+      payload: { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 },
     });
-    expect(pending).toBeInstanceOf(Promise);
     emitText(
       socket,
       hostEvent('session.state', {
-        phase: 'ready',
+        phase: 'starting_live',
         personaDigest: '0'.repeat(64),
-        planning: { status: 'planning', topic: 'radio', depth: 'standard', progress: 5 },
+        audio: { status: 'warming', capture: 'starting', vad: 'starting', tts: 'starting' },
       }),
     );
-    await expect(pending).resolves.toBe('planning');
+    expectNoProtocolFailure(socket);
+    emitText(
+      socket,
+      hostEvent('session.state', {
+        phase: 'starting_live',
+        personaDigest: '0'.repeat(64),
+        audio: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' },
+      }),
+    );
+    await expect(pending).resolves.toBeUndefined();
+    expectNoProtocolFailure(socket);
+  });
+
+  it('rejects beginLive when the host reports an audio engine failure', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const pending = transport.beginLive(7);
+    emitText(
+      socket,
+      hostEvent('session.state', {
+        phase: 'prelive',
+        personaDigest: '0'.repeat(64),
+        audio: { status: 'failed', capture: 'failed', vad: 'failed', tts: 'failed', detail: 'engine down' },
+      }),
+    );
+    await expect(pending).rejects.toThrow('engine down');
     expectNoProtocolFailure(socket);
   });
 
@@ -927,7 +941,7 @@ describe('WebSocketSessionTransport progressive ordering', () => {
   });
 });
 
-describe('WebSocketSessionTransport multi-part output routing', () => {
+describe.skip('obsolete multi-part output routing', () => {
   it('routes interleaved part PCM by outputStreamId and keeps parent identity across parts', async () => {
     const socket = new EventSocket();
     const transport = await wiredTransport(socket);
@@ -939,7 +953,12 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     // The wire contract emits response.part_started BEFORE reasoning.started.
     emitText(
       socket,
-      hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }),
+      hostEvent('response.part_started' as any, {
+        turnId: turnUuid,
+        responseId: responseA,
+        partIndex: 0,
+        kind: 'stall',
+      }),
     );
     emitText(
       socket,
@@ -958,7 +977,12 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     // Part 1 (body) starts while part 0 PCM is still streaming.
     emitText(
       socket,
-      hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 1, kind: 'body' }),
+      hostEvent('response.part_started' as any, {
+        turnId: turnUuid,
+        responseId: responseA,
+        partIndex: 1,
+        kind: 'body',
+      }),
     );
     emitText(
       socket,
@@ -991,7 +1015,7 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     );
     emitText(
       socket,
-      hostEvent('response.part_final', { turnId: turnUuid, responseId: responseA, partIndex: 1, kind: 'body' }),
+      hostEvent('response.part_final' as any, { turnId: turnUuid, responseId: responseA, partIndex: 1, kind: 'body' }),
     );
     emitText(
       socket,
@@ -1022,7 +1046,12 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     // must establish the response instead of failing the session.
     emitText(
       socket,
-      hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }),
+      hostEvent('response.part_started' as any, {
+        turnId: turnUuid,
+        responseId: responseA,
+        partIndex: 0,
+        kind: 'stall',
+      }),
     );
     emitText(
       socket,
@@ -1039,7 +1068,12 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     // Real wire order: part_started precedes reasoning.started for each part.
     emitText(
       socket,
-      hostEvent('response.part_started', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }),
+      hostEvent('response.part_started' as any, {
+        turnId: turnUuid,
+        responseId: responseA,
+        partIndex: 0,
+        kind: 'stall',
+      }),
     );
     emitText(
       socket,
@@ -1068,7 +1102,7 @@ describe('WebSocketSessionTransport multi-part output routing', () => {
     );
     emitText(
       socket,
-      hostEvent('response.part_final', { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }),
+      hostEvent('response.part_final' as any, { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }),
     );
     emitText(
       socket,
@@ -1132,16 +1166,17 @@ describe('WebSocketSessionTransport protocol failure diagnostics', () => {
     expect(socket.failureMessages).toEqual([expect.stringContaining('vad.speech_start')]);
   });
 
-  it('validates and forwards budget.mitigation events to event listeners', async () => {
+  it('rejects a budget.mitigation event as a protocol failure (event removed from the host contract)', async () => {
     const socket = new EventSocket();
-    const transport = await wiredTransport(socket);
-    const received: HostEvent[] = [];
-    transport.onEvent((event) => {
-      received.push(event);
-    });
-    emitText(
-      socket,
-      hostEvent('budget.mitigation', {
+    await wiredTransport(socket);
+    emitText(socket, {
+      protocolVersion: 1,
+      sessionId: SESSION,
+      epoch: 0,
+      eventId: `018f1f32-7abd-7def-8abc-0123456789${(++eventSequence + 0xa0).toString(16).padStart(2, '0')}`,
+      monotonicMs: Date.now(),
+      type: 'budget.mitigation',
+      payload: {
         turnId: turnUuid,
         responseId: responseA,
         kind: 'gap_measured',
@@ -1157,38 +1192,8 @@ describe('WebSocketSessionTransport protocol failure diagnostics', () => {
           },
           trigger: 'handoff gap 420ms > 150ms',
         },
-      }),
-    );
-    expectNoProtocolFailure(socket);
-    expect(received).toHaveLength(1);
-    expect(received[0]).toMatchObject({
-      type: 'budget.mitigation',
-      payload: expect.objectContaining({ kind: 'gap_measured', turnId: turnUuid, responseId: responseA }),
-    });
-  });
-
-  it('rejects a budget.mitigation event with an unknown kind as a protocol failure', async () => {
-    const socket = new EventSocket();
-    await wiredTransport(socket);
-    emitText(
-      socket,
-      hostEvent('budget.mitigation', {
-        turnId: turnUuid,
-        responseId: responseA,
-        kind: 'bridge',
-        detail: {
-          estimates: {
-            stallFirstDeltaMs: 1500,
-            stallTextMs: 4000,
-            bodyFirstPartMs: 8000,
-            ttsTtfaMs: 1000,
-            ttsRtf: 0.3,
-            wordsPerSecond: 2.5,
-          },
-          trigger: 'bridge inserted',
-        },
-      }),
-    );
+      },
+    } as unknown as HostEvent);
     expect(socket.closed).toBe(4000);
     expect(socket.failureMessages).toEqual([expect.stringContaining('budget.mitigation')]);
   });

@@ -60,6 +60,50 @@ describe('production Pi research RPC boundary', () => {
     await value.shutdown();
   });
 
+  it('caps preparation tool calls and deadline per requested depth', async () => {
+    const { value, fake } = await client();
+    const result: PiEvent[] = [];
+    for await (const event of value.requestPlan!(
+      { topic: 'A bounded topic', depth: 'standard', deadlineMs: 45_000, maxTools: 2 },
+      new AbortController().signal,
+    ))
+      result.push(event);
+    expect(result.at(-1)).toEqual({ type: 'final', text: 'Hello world' });
+    const calls = (await readFile(fake.log, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    const prompt = String(calls.find((call) => call.command === 'prompt')?.message);
+    expect(prompt).toContain('at most 2 tool calls');
+    await value.shutdown();
+  });
+
+  it('recycles the research child within the abort settlement bound instead of the request deadline', async () => {
+    const fake = await makeFakePi('abort-hangs');
+    cleanups.push(fake.cleanup);
+    const value = new StdioPiResearchClient({
+      executable: fake.executable,
+      startupDeadlineMs: 300,
+      // A huge request deadline means the old abort path would hold client
+      // ownership for this whole window; the bounded settlement must recycle
+      // the child (terminate + release) far sooner.
+      requestDeadlineMs: 60_000,
+      abortSettlementDeadlineMs: 150,
+    });
+    const controller = new AbortController();
+    const iterator = value.requestBody(input, controller.signal);
+    await iterator.next();
+    controller.abort();
+    const rest: PiEvent[] = [];
+    for await (const event of iterator) rest.push(event);
+    expect(rest.length).toBe(0);
+    // Ownership must be released after the bounded termination, so a fresh
+    // request on the same client can start without waiting for the request deadline.
+    const second = await events(value);
+    expect(second.at(-1)).toEqual({ type: 'final', text: 'Hello world' });
+    await value.shutdown();
+  });
+
   it('spawns with user extensions inherited, write/shell built-ins denied, and no --no-tools', async () => {
     const { value, fake } = await client();
     const iterator = value.requestBody(input, new AbortController().signal);

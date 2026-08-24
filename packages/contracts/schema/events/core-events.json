@@ -14,7 +14,8 @@
    "properties": {
     "type": {
      "enum": [
-      "session.start",
+      "session.open",
+      "session.begin",
       "planning.cancel",
       "planning.retry",
       "audio.start",
@@ -42,8 +43,6 @@
       "reasoning.started",
       "reasoning.delta",
       "reasoning.final",
-      "response.part_final",
-      "response.part_started",
       "tts.started",
       "tts.ended",
       "response.failed",
@@ -63,7 +62,7 @@
       "vad.speech_start",
       "vad.speech_end",
       "sidecar.failure",
-      "budget.mitigation"
+      "response.cancelled"
      ]
     }
    }

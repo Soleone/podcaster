@@ -65,6 +65,10 @@ export interface StoredTurn {
   policyReason?: string | null;
   responseId: string | null;
   assistantText: string | null;
+  /** Archived multipart finals, keyed by stable legacy part identity. */
+  legacyReasoningParts?: Record<string, { partIndex: number; text: string }>;
+  /** Active final checkpoints, keyed by response identity for replay ordering. */
+  reasoningFinals?: Record<string, { monotonicMs: number; text: string }>;
   playbackId: string | null;
   outputEpoch: number | null;
   sampleRate: number | null;

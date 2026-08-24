@@ -166,7 +166,7 @@ describe('settings validators', () => {
     ).toBe(false);
   });
 
-  it('accepts a Qwen-valued voice snapshot on the session.start wire shape', () => {
+  it('accepts a Qwen-valued voice snapshot on the session.open wire shape', () => {
     const qwenVoice = {
       catalogId: 'qwen-catalog',
       voiceId: 'Ryan',

@@ -3,7 +3,6 @@ import type {
   PiSettings,
   PlaybackPausedEvent,
   PlaybackStoppedEvent,
-  PlanningStatus,
   SessionPlanningRequest,
   TranscriptFinalEvent,
   VoicePreference,
@@ -22,15 +21,18 @@ export interface SessionStartRequest {
   planning?: SessionPlanningRequest;
   settings: { version: 1; persona: string; voice: VoicePreference; pi?: PiSettings };
 }
-export type PlanningStartResult = Extract<PlanningStatus, 'ready' | 'failed' | 'cancelled' | 'continued'> | 'planning';
 export interface SessionTransport {
   connect(capability: string): Promise<void>;
   disconnect(): void;
-  startSession(input: SessionStartRequest): void | Promise<PlanningStartResult | undefined>;
+  /** Pre-live open: freezes the session and optionally starts preparation; never requests microphone capture. */
+  openSession(input: SessionStartRequest): void;
+  /** Explicit live transition; resolves once the host acknowledges the audio engine, rejects on failure. */
+  beginLive(streamId: number): Promise<void>;
   cancelPlanning(): void | Promise<void>;
   retryPlanning(): void | Promise<void>;
   startAudio(streamId: number): void | Promise<void>;
   stopAudio(streamId: number): void | Promise<void>;
+  rollbackLive(): void | Promise<void>;
   acknowledgePersisted(event: TranscriptFinalEvent): void | Promise<void>;
   acknowledgePersistenceFailed(
     event: TranscriptFinalEvent,

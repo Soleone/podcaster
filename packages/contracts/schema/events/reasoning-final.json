@@ -1,19 +1,55 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/reasoning-final.json",
-  "title": "ReasoningFinalEvent",
-  "allOf": [
-    { "$ref": "../protocol-envelope.json" },
-    { "type": "object", "required": ["type", "payload"], "properties": {
-      "type": { "const": "reasoning.final" },
-      "payload": { "type": "object", "required": ["turnId", "responseId", "posture", "text"], "properties": {
-        "turnId": { "type": "string", "format": "uuid" },
-        "responseId": { "type": "string", "format": "uuid" },
-        "posture": { "enum": ["riff", "question", "challenge"] },
-        "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
-        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "partId": { "type": "string", "format": "uuid" }
-      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
-    } }
-  ]
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/reasoning-final.json",
+ "title": "ReasoningFinalEvent",
+ "allOf": [
+  {
+   "$ref": "../protocol-envelope.json"
+  },
+  {
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ],
+   "properties": {
+    "type": {
+     "const": "reasoning.final"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "turnId",
+      "responseId",
+      "posture",
+      "text"
+     ],
+     "properties": {
+      "turnId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "responseId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "posture": {
+       "enum": [
+        "riff",
+        "question",
+        "challenge"
+       ]
+      },
+      "text": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 4096
+      }
+     },
+     "dependentRequired": {},
+     "additionalProperties": false
+    }
+   }
+  }
+ ]
 }

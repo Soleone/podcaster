@@ -1,18 +1,49 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/reasoning-started.json",
-  "title": "ReasoningStartedEvent",
-  "allOf": [
-    { "$ref": "../protocol-envelope.json" },
-    { "type": "object", "required": ["type", "payload"], "properties": {
-      "type": { "const": "reasoning.started" },
-      "payload": { "type": "object", "required": ["turnId", "responseId", "posture"], "properties": {
-        "turnId": { "type": "string", "format": "uuid" },
-        "responseId": { "type": "string", "format": "uuid" },
-        "posture": { "enum": ["riff", "question", "challenge"] },
-        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "partId": { "type": "string", "format": "uuid" }
-      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
-    } }
-  ]
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/reasoning-started.json",
+ "title": "ReasoningStartedEvent",
+ "allOf": [
+  {
+   "$ref": "../protocol-envelope.json"
+  },
+  {
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ],
+   "properties": {
+    "type": {
+     "const": "reasoning.started"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "turnId",
+      "responseId",
+      "posture"
+     ],
+     "properties": {
+      "turnId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "responseId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "posture": {
+       "enum": [
+        "riff",
+        "question",
+        "challenge"
+       ]
+      }
+     },
+     "dependentRequired": {},
+     "additionalProperties": false
+    }
+   }
+  }
+ ]
 }

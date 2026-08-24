@@ -1,58 +1,76 @@
-# franken_tts evidence brief
+## Decision this research informs
+Whether the reported preparation failure and delayed conversational acknowledgement are explained by current behavior, and whether the system presently guarantees no microphone capture before an explicit live-begin action.
 
-## Summary
-**Do not adopt as a product dependency now.** It is a very young, CPU-only Rust implementation of a different model (Qwen3-TTS 0.6B), not a service/library designed for this Python adapter. Its only measured speed claims are on Apple M4 Pro, not this x86_64 WSL CPU; cold model load alone is ~3.7–4 s and the model download is ~2.0 GB. The source license is an MIT text with an added OpenAI/Anthropic exclusion rider, so it is not clean MIT/Apache and should not be incorporated without legal review. Borrow its *ideas*—persistent warm residency, bounded/separate PCM/event queues, packet-size benchmarking, output equivalence tests, and provenance-checked artifacts—not its code. [High]
+## Findings (each: claim — evidence/source — confidence)
+- **High — preparation intentionally starts the live session, not a pre-live-only phase.** `BrowserSession.start()` launches `runPlanning()` without awaiting it, connects audio, then emits planning at **5%** with `phase: 'ready'` (`apps/host/src/server/BrowserSession.ts:350-421`). Web transport explicitly resolves the start handshake when the host goes live while planning continues (`apps/web/src/session/websocket-transport.ts:211-228`). This exactly explains a session that looks started/listening during preparation. — Tests: `websocket-transport.test.ts` “resolves the start handshake…”; integration planning tests. — **High**
+- **High — microphone permission/capture begins automatically after the user invokes session start with preparation; there is no separate “begin live” gate.** After `startSession()`/`activate()`, `LiveSessionRuntime` calls `BrowserCapture.start()`, which immediately calls `getUserMedia`, connects the source to an AudioWorklet, invokes the recording callback, and queues frames (`apps/web/src/session/live-runtime.ts:240-304`; `apps/web/src/audio/capture.ts:30-96`). It does this while planning is still in flight. Browser-to-host PCM is held until `audio.start` resolves, and the host rejects binary before `audio.start` (`live-runtime.ts:275-303`; `BrowserSession.ts:240-247`), but local capture/recording starts first. Thus ambient speech cannot reach host VAD before `audio.start`, but it **can be acquired and passed to local recording before that acknowledgement**; it is not gated on preparation completing. — Tests: `capture.test.ts`, `live-runtime.test.ts` only establish start order, not this privacy boundary. — **High**
+- **High — the observed 5% is a static “live behind preparation” marker, not actual work progress.** Planning emits 0%, then 20% before consuming the iterator, 65% only on first textual delta, and 100% only terminally. Independently, after audio connection it emits 5%/“running behind live conversation,” which can be the last state displayed (`BrowserSession.ts:401-421,448-505`). Tool activity is displayed but does not advance progress. A tool call or model that yields no text therefore remains at 5% for up to the deadline. — **High**
+- **High — the likely timeout mechanism is a 120-second end-to-end research deadline, consistent with the report’s 1–2 minutes.** `requestPlan` uses `PLANNING_DEADLINE_MS = 120_000`; its timer fails the active RPC; `runPlanning()` maps any error/empty notes to the exact safe-continuation message observed (`apps/host/src/pi/PiResearchClient.ts:19-27,240-372`; `BrowserSession.ts:483-505`). The plan prompt permits up to three external read-only calls and waits for a final note, so a slow Pi startup/model/tool call/no-final response is sufficient. The UI intentionally suppresses provider detail, preventing diagnosis from the screen. — **High**
+- **Medium — retry/cancel protocol exists but the current live planning card exposes neither control.** Transport defines `cancelPlanning()`/`retryPlanning()` and host handles `planning.cancel`/`planning.retry` (`apps/web/src/session/websocket-transport.ts:497-529`; `BrowserSession.ts:259-266,511-521`); `PlanningStatusCard` accepts only planning state and renders no button (`apps/web/src/session/SessionScreen.tsx:405-455`). A failure says “retry later,” but a normal user cannot trigger retry from this card. — **High**
+- **High — multipart intent is stall-first, then researched body, one assistant conversation row.** `MultiPartResponse` emits part 0 (`stall`), runs a no-tool ≤45-word Pi hook, emits final, then starts the research request and converts released text into body parts 1–7 (`apps/host/src/session/MultiPartResponse.ts:80-324,510-600`; `PiClient.ts:28-33`). Web state groups deltas/finals by `responseId` and `partIndex`; `joinAssistantParts` renders them as one row separated by blank lines (`apps/web/src/session/state.ts:160-260`; `conversation.ts:20-44`). — Tests: `session-orchestrator-multipart.test.ts`, `state.test.ts`, `websocket-transport.test.ts`. — **High**
+- **High — stall-first is implemented but is not a hard prompt-to-audio latency guarantee.** The stall Pi request can take the normal response client deadline (60s), and only begins TTS after a valid sentence chunk/final; invalid/failed stalls fail the response (`PiClient.ts:15-16`; `MultiPartResponse.ts:155-239`). The body request begins only after the stall is finalized, allows up to three tool calls, and has a 180s deadline (`PiResearchClient.ts:19-28,152-154`; `MultiPartResponse.ts:270-324`). So it may offer a quick acknowledgement, but current code has no independently generated immediate acknowledgement, no maximum first-audio SLA, and no forced interruption of a still-running tool call before the stall exists. — **High**
+- **High — interruption is strong once output is playing, but not equivalent to interrupting arbitrary tool work immediately.** VAD speech during playback pauses TTS into provisional barge-in; stable transcript gets a bounded classifier (2.5s) and can advance epoch/abort all multipart streams; explicit “Stop speaking” also cancels active turn (`SessionOrchestrator.ts:620-863,880-1018,1084-1100`; `MultiPartResponse.ts:622-641`). Before playback (including stall/body reasoning and a tool call), speech start intentionally does not cancel; it waits for a stable final to avoid noise false positives (`SessionOrchestrator.ts:655-674`). — Tests: `controller.test.ts`, `session-orchestrator.test.ts`, `cancellation-races.test.ts`. — **High**
+- **Medium — timing calculations are instrumentation/telemetry only, not a mitigation.** Cold priors: stall first delta 1.5s, full stall 4s, body first part 8s, TTFA 1s, 2.5 words/s. The adaptive formula yields `ceil((8+1+1.5)*2.5)=27` words at cold start (bounded 20–45); D2 rechecks every 500ms but only emits `budget.mitigation`, never adds/extends audio (`apps/host/src/session/RuntimeBudget.ts:16-44,163-204`; `MultiPartResponse.ts:359-417`). The project document itself labels most values estimates and identifies short stalls/no bridge as the failure case (`docs/latency-budget.md:1-103`). — **High**
 
-## What it is
-A Rust 2024 workspace (nightly-2026-07-05; Rust 1.90) that reimplements one checkpoint, `Qwen/Qwen3-TTS-12Hz-0.6B-Base`, with custom CPU kernels: a 28-layer talker, 15 sequential residual-code microdecoder steps per 80-ms frame, then a causal codec to mono 24-kHz PCM/WAV. It ships a CLI (`ftts`/`franken_tts`), raw-PCM stdout and NDJSON robot events; there is no HTTP/WebSocket/gRPC server. Its base-model path supports enrolled x-vector/zero-shot voice cloning and ships seven enrolled voices. The Qwen model-card presents this *Base* checkpoint as rapid voice cloning; description-based control is a family-level claim, not evidence that franken_tts ships it. [High]
+## Prior art & competitive landscape
+None. This was a repository-behavior investigation; external market research would not resolve the reported failure.
 
-Maintenance is active but immature: repository created 2026-08-06; latest commit 2026-08-09; 8 stars, 1 fork, 0 open issues at inspection. Releases/readme describe v0.1.3 but also refer to v0.1.4, an internal version/documentation inconsistency. The owner says outside contributions are not accepted. [High]
+## Current-system reality (what actually exists today)
+1. Start with preparation persists/activates the session, starts host audio warmup, and begins browser microphone capture while planning runs out of band.
+2. Planning has only coarse milestone progress (0/20/65/100) plus a later 5% live marker; 120s timeout is fail-soft and the exact public message is intentionally generic.
+3. Conversation replies use a parent response ID: stall part 0 is generated first; research body text becomes bounded parts, pre-synthesized and queued sequentially in browser playback (`apps/web/src/session/controller.ts:200-253`).
+4. Current “quick response” is an LLM-generated/TTS stall, not deterministic acknowledgement audio/text. Tool activity is observable in the UI but not an interruption control.
 
-Licensing: runtime source is **not plain MIT**: `LICENSE` adds a rider denying rights/access to OpenAI, Anthropic, their affiliates/agents, and restricts derivative distribution to them. The project states its redistributed quantized Qwen weights are Apache-2.0; the upstream HF model card declares Apache-2.0 (no separate weights license file). This makes Qwen weights compatible in principle with the existing Apache-2.0 model posture, but the runtime rider is a dependency/copying legal blocker until counsel confirms the intended distribution and downstream relationships. [High]
+## Constraints discovered (technical, legal, operational)
+- Privacy constraint: `getUserMedia` access is browser-visible/permission-controlled, but application-level capture begins as part of Start+Preparation. No code evidence supports a promise that preparation alone is microphone-free.
+- Host must receive `audio.start` and matching stream ID before accepting PCM, which prevents accidental pre-start host ingestion but not pre-ack local capture/recording.
+- Planning/provider errors are deliberately redacted on wire; activity metadata excludes tool results. Useful for privacy, but operational root cause is unavailable without host logs.
+- Planning and body permits external tool latency (three calls) and each uses an end-to-end deadline, so timing varies materially with Pi/tool availability.
 
-## Latency evidence
-- It has credible *mechanisms*: default W8A8 talker/microdecoder, a persistent six-thread worker team, artifact-native int8 hydration, concurrent model/codec/tokenizer loading, and codec decode pipelined with generation. Its own ledger reports a warm model-load mean of **3,716 ms** on an Apple M4 Pro after the campaign (cold 5,118 ms); README summarizes ~3.7–4 s. This is a process-start cost, so a persistent sidecar could amortize it but cannot improve first request if spawned on demand. [High]
-- Repo-reported M4 Pro performance is **1.4–1.6× real time** and **~450 ms TTFA after synthesis starts**, while a dozen builds run. It is author/local evidence only, uses a different CPU/OS and definition boundary than this project, and has no x86_64/WSL or co-resident-STT result. It therefore does **not** establish improvement over Kokoro’s 848/1,582/2,140-ms TTFA or RTF 0.25. [High]
-- The official Qwen paper/model-card reports 97-ms first-packet latency for the model, but franken_tts’s own streaming analysis says hardware/precision are unspecified and the open-source upstream has no true streaming generation; it explicitly rejects an admissible ratio. Do not use 97 ms as a local target or comparison. [High]
-- Disconfirming evidence: its generated model work remains serial—15 microdecoder steps per 80-ms frame. The planned cache-resident hot pack and speculative FrankenMTP are unimplemented/unwired. On a loaded M4, repo says RTF can fall to 0.66–1.05×; f32 reference is 6–7× slower than real time. [High]
+## Implications for scope
+- Treat a “prepare without listening/recording until Begin” expectation as inconsistent with verified behavior, not a copy-only concern. Severity: **high privacy/trust risk** if UI implies that promise.
+- Treat 5% as an ambiguous/static status, not a meaningful progress signal. Severity: **high diagnosability issue** for the reported incident.
+- Treat stall-first as best-effort responsiveness rather than a distractible-tool guarantee; latency-budget events do not alter output. Severity: **medium interaction risk**.
+- A retry affordance is not presently reachable from the planning status card despite backend support. Severity: **medium recovery gap**.
 
-## Streaming evidence
-- The engine has bounded, independent PCM and lifecycle-event queues; producers observe cancellation under backpressure. CLI `--stream raw` writes signed PCM16LE mono 24 kHz to stdout and sends robot NDJSON to stderr. This is a usable **process protocol**, not an in-process Python dependency or browser service. [High]
-- Codec packets are whole model frames: selectable 1/2/4 frames = **80/160/320 ms** (1,920/3,840/7,680 samples), with interactive default 1 and balanced default 4. `PcmPacket` is defined in 80-ms frames. The implementation documents bit-identical streaming vs offline codec output under tested packet schedules. [High]
-- Thus its raw output format matches the project’s PCM16LE/mono/24-kHz contract, but its smallest native emission is 80 ms. A 20-ms adapter can split each 1,920-sample packet into four 480-sample chunks without resampling, but cannot make first audio arrive earlier than its 80-ms frame boundary; it also adds subprocess supervision, cancellation, readiness, and stderr event parsing. **Portable as an adapter pattern only, not drop-in streaming.** [High]
-- There is no WebSocket/gRPC/queue server. The project’s own Qwen streaming analysis confirms upstream released code only simulates streaming text input; franken_tts defines its own packetization. [High]
+## Still unknown (ranked, with how to resolve each)
+1. **Root cause of this specific timeout — high impact.** Could be Pi process startup, model/provider stall, or one of up to three tools; UI redaction means source is unknowable from the report. Resolve with timestamped host `[research]`/Pi RPC logs for the incident, retaining only sanitized call lifecycle.
+2. **Whether the user’s “explicitly begin” means clicking the current Start action or expects a later separate action — high impact.** Code supports only the former. Resolve with a short UX confirmation against the actual start flow.
+3. **Actual first-stall/body/tool timing under production backend — medium impact.** Current priors are estimates; tests use immediate fakes. Resolve with representative latency capture of `response.part_started`, first PCM, tool activity and playback terminals.
+4. **Whether local recording storage was enabled during the reported session — medium impact.** Capture callback always feeds recorder, but persistence depends on recorder/store settings. Resolve by inspecting that session’s local recording metadata; no incident data was supplied.
 
-## Quality evidence
-- Compared with stock Kokoro, it offers a materially different capability: zero-shot/enrolled voice cloning via a 1,024-float x-vector from reference audio (README recommends 30–50 seconds, no transcript); seven bundled x-vector voices; optional enrollment denoise. This is usable *feature inspiration* only pending consent/product-policy review. [High]
-- It does not ship fine-tuning, demonstrated emotion/prosody controls, multi-speaker dialogue, or a higher-fidelity post-processing chain. It runs only the Qwen 0.6B **Base** model; it samples with temperature/top-k/repetition penalty. Qwen’s model card asserts multilingual support and advanced controllability at the family level, but that is not proof of these controls in this runtime/checkpoint. [High]
-- Quality is not established as better than Kokoro: franken_tts admits no listening evaluation of its optimized sampled int8 default against its f32 reference. Its discrepancy ledger reports a synthetic-voice example with RMS/centroid shifts and “audible LF drone risk”; it retains `FTTS_INT8=0` as restoration. There is no matched listener test, no Kokoro comparison, and no x86 evidence. [High]
-
-## Dependency vs inspiration per axis
-| Axis | Dependency verdict | Inspiration verdict |
-|---|---|---|
-| Lower latency | **No.** Different runtime/language, 2-GB artifact, ~3.7–4-s warm load, unproven x86/WSL/co-resident behavior, and rider. A warmed external CLI sidecar is a spike candidate only. | **Yes:** persist the model process; load independent assets concurrently; record stage-level TTFA separately; quantify packet policy and warm/cold boundaries. |
-| Better streaming | **No.** It is a CLI raw-stdout protocol, not a Python library/service; 80-ms minimum native packet requires rechunking and process management. | **Yes:** separate bounded PCM and events so telemetry cannot block audio; cancellation-aware backpressure; streaming==offline conformance; raw PCM + structured lifecycle events. |
-| Higher audio quality | **No evidence.** The model adds cloning, but no comparative listening proof and the fast default has an unresolved listening gate. | **Yes, limited:** evaluate consented voice enrollment/x-vector cloning as a future candidate; preserve an explicit quality/reference route and listener gate. |
-
-## Dealbreakers
-- **High — license:** source rider is a material non-OSI restriction, incompatible with calling it ordinary MIT and risky to vendor/link/redistribute; retain only high-level ideas absent legal approval.
-- **High — performance uncertainty:** all meaningful runtime numbers are M4 Pro local results; no benchmark on target WSL/x86 CPU or with Nemotron.
-- **High — integration/operations:** no server; production use requires a supervised Rust CLI sidecar and translating 80-ms packets to the adapter’s 20-ms chunks.
-- **Medium — footprint/startup:** ~2.0-GB model download; ~3.7–4-s warm load; unknown target RSS. Current co-resident CPU/RSS budget could regress.
-- **Medium — maturity:** four releases over days, 8 stars, no external contribution path, version references inconsistent, nightly toolchain required for source builds.
-- **Medium — quality:** optimized default lacks listening validation and records an audible-artifact risk; no evidence it beats Kokoro.
-
-## Sources (URLs + confidence per claim)
-- [Repository README](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/README.md) — architecture, features, platform claims, limitations, model size/load, contribution policy. **High for what project claims/ships; low for cross-platform performance.**
-- [Source LICENSE](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/LICENSE) and [license analysis](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/docs/LICENSE_AND_ATTRIBUTION.md) — rider and Qwen attribution. **High.**
-- [Streaming contract](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/docs/QWEN3_TTS_STREAMING_CONTRACT.md), [core queues/PCM](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/crates/ftts-core/src/lib.rs), [CLI packet/output code](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/crates/ftts-cli/src/lib.rs) — packet and raw-output facts. **High.**
-- [Performance ledger](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/docs/PERF_LEDGER.md) and [discrepancy ledger](https://github.com/Dicklesworthstone/franken_tts/blob/6fa6dbd361717b7e9f5d059449404211011718ad/docs/DISCREPANCIES.md) — self-reported M4 load/perf and quality caveat. **High for internal measurements/caveats; low for target applicability.**
-- [GitHub API snapshot](https://api.github.com/repos/Dicklesworthstone/franken_tts) and [latest commit](https://api.github.com/repos/Dicklesworthstone/franken_tts/commits/6fa6dbd361717b7e9f5d059449404211011718ad) — activity/stars/issues at inspection. **High, time-sensitive.**
-- [Qwen Base model card](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) — checkpoint license and upstream capabilities/97-ms claim. **High for upstream claims; not local performance evidence.**
-- Local comparison baseline: [`docs/decisions/004-tts-selection.md`](../../docs/decisions/004-tts-selection.md). **High.**
-
-## Open questions needing a spike
-1. **Target feasibility (highest):** benchmark a pinned released binary/artifact as a long-lived sidecar on this WSL x86 CPU with Nemotron, using the existing harness: TTFA from request to first 20-ms adapted chunk, RTF, RSS, CPU contention, cancellation, and 30-min soak. This is required before any latency/throughput claim. Do not install/run as part of this research task.
-2. **Quality:** blinded, consented listener comparison of stock Kokoro versus Qwen/ftts reference and optimized routes, including clone quality; test whether optimized artifacts are audible. Required before a “better” claim.
-3. **Legal/product:** counsel review of the rider and whether process invocation, hosting, distribution, or derivative adapter code triggers unacceptable restrictions; obtain voice-cloning consent/abuse policy before enabling enrollment.
-4. **Integration:** verify a persistent child process can provide fail-closed artifact provenance, stderr/stdout framing, cancellation deadline, and clean restart without compromising the existing adapter contract.
+## Acceptance report
+```acceptance-report
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "Concrete severity-rated findings cite BrowserSession, LiveSessionRuntime, BrowserCapture, MultiPartResponse, RuntimeBudget, UI state, and focused tests."
+    }
+  ],
+  "changedFiles": ["artifacts/researcher/index.md"],
+  "testsAddedOrUpdated": [],
+  "commandsRun": [
+    {
+      "command": "corepack pnpm exec vitest run apps/web/src/audio/capture.test.ts apps/web/src/session/live-runtime.test.ts apps/web/src/session/websocket-transport.test.ts apps/host/test/session/session-orchestrator-multipart.test.ts apps/host/test/pi/pi-research-client.test.ts apps/host/test/integration/browser-conversation.test.ts",
+      "result": "passed",
+      "summary": "6 files, 116 tests passed."
+    }
+  ],
+  "validationOutput": ["Focused read-only test suite passed; no production code changed."],
+  "residualRisks": [
+    "Specific incident cause cannot be assigned without host/Pi/tool timing logs.",
+    "Focused tests do not assert a user-facing no-capture-before-separate-begin privacy contract or UI retry/cancel buttons."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Added researcher evidence brief only.",
+  "reviewFindings": [
+    "high: apps/web/src/session/live-runtime.ts:240-304 and apps/web/src/audio/capture.ts:30-96 — Start with preparation acquires and locally processes microphone audio while preparation continues; no separate begin gate.",
+    "high: apps/host/src/server/BrowserSession.ts:401-421,448-505 — 5% is a static behind-live marker and planning can remain there until 120-second timeout with no textual delta.",
+    "medium: apps/web/src/session/SessionScreen.tsx:405-455 — planning cancel/retry protocol exists but the status card offers neither control.",
+    "medium: apps/host/src/session/RuntimeBudget.ts:163-204 — timing budget observes/logs risk but does not insert a bridge or otherwise guarantee quick acknowledgement."
+  ],
+  "manualNotes": "Verified facts are separated from incident hypotheses in the brief."
+}
+```

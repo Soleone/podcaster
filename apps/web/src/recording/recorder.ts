@@ -182,7 +182,10 @@ export class RecordingRecorder {
           playbackId,
           responseId,
           turnId: this.responseTurns.get(responseId) ?? null,
-          partIndex: typeof event.payload.partIndex === 'number' ? event.payload.partIndex : null,
+          partIndex:
+            typeof (event.payload as { partIndex?: number }).partIndex === 'number'
+              ? ((event.payload as { partIndex?: number }).partIndex ?? null)
+              : null,
           sampleRate,
           outputEpoch: event.epoch,
           frames: [],

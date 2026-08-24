@@ -43,8 +43,13 @@ export interface SessionPlanningRequest {
 /** Durable, user-visible planning state attached to a local session row. */
 export interface SessionPlanningSnapshot {
   status: PlanningStatus;
+  attempt?: number;
+  stage?: 'starting' | 'researching' | 'finalizing';
+  deadlineMs?: number;
+  reasonCode?: 'timeout' | 'provider_unavailable' | 'invalid_result' | 'interrupted';
   topic?: string;
   depth?: PlanningDepth;
+  /** Legacy fabricated-percentage field; tolerated only in local archive reads. */
   progress?: number;
   detail?: string;
   notes?: string;
@@ -150,7 +155,7 @@ export interface VoicePreference {
 }
 
 /**
- * The frozen settings snapshot sent in `session.start`. Immutable for the
+ * The frozen settings snapshot sent in `session.open`. Immutable for the
  * lifetime of a session; later edits only affect the next session.
  */
 export interface SessionSettingsSnapshot {

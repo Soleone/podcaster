@@ -1,223 +1,227 @@
-# Architecture audit — Podcaster
-
-- **Audit date:** 2026-08-19
-- **Repository:** `/home/soleone/src/tries/2026-08-06-podcaster`
-- **Scope:** all tracked application, service, benchmark, script, test, documentation, configuration, generated-contract, and recent-history surfaces. Generated/build/cache/model assets were considered only where they affect ownership, reproducibility, or validation.
-**Authority used:** `artifacts/pm/index.md` is authoritative; `artifacts/ux/index.md` supplies the current UI data contract.
-
-## Start here
-
-1. Read this file for the verdict, current/target seams, and task order.
-2. Read [findings.md](findings.md) for the evidence-backed findings, health baseline, duplication inventory, and over-engineering inventory.
-3. Read [target-roadmap.md](target-roadmap.md) for the target architecture, sequencing, dependency graph, standards, rollback points, and cheap-model handoff template.
-4. Read [cleanup-ledger.md](cleanup-ledger.md) before deleting or moving anything.
-5. Give an implementation agent **one** linked task card, never the whole roadmap.
-
-### Task cards
-
-- [ARC-001 — Disable default multipart research](tasks/01-disable-default-multipart-research.md)
-- [ARC-002 — Make the editable persona drive policy](tasks/02-use-editable-persona-for-policy.md)
-- [ARC-003 — Make `pnpm check` authoritative](tasks/03-make-check-authoritative.md)
-- [ARC-004 — Add a canonical host-event contract](tasks/04-add-canonical-host-event-contract.md)
-- [ARC-005 — Adopt typed protocol boundaries](tasks/05-adopt-typed-protocol-boundaries.md)
-- [ARC-006 — Fix workspace package exports and build order](tasks/06-fix-workspace-package-exports.md)
-- [ARC-007 — Make Pi executable discovery portable](tasks/07-make-pi-discovery-portable.md)
-- [ARC-008 — Probe the selected Pi settings](tasks/08-align-pi-readiness-with-settings.md)
-- [ARC-009 — Fix IndexedDB resource ownership](tasks/09-fix-indexeddb-resource-ownership.md)
-- [ARC-010 — Keep the sidecar event loop non-blocking](tasks/10-keep-sidecar-loop-nonblocking.md)
-- [ARC-011 — Remove verified dead compatibility clutter](tasks/11-remove-dead-compatibility-clutter.md)
-- [ARC-012 — Correct repository truth and generated hygiene](tasks/12-correct-docs-and-generated-hygiene.md)
-- [ARC-013 — Extract the live web-session runtime](tasks/13-extract-live-session-runtime.md)
-- [ARC-014 — Move selected audio configuration to the audio service](tasks/14-move-selected-audio-config.md)
-- [ARC-015 — Share the Playwright server lifecycle](tasks/15-share-playwright-server-lifecycle.md)
-
-## Executive verdict
-
-**The repository is behaviorally well tested but architecturally overextended.** Its core loop—browser capture/playback, authenticated host, Pi RPC, loopback audio sidecar, local persistence—has sensible trust boundaries and unusually good race/security coverage. The main risk is not a need for a rewrite; it is that later features crossed the authoritative product boundary and then forced compatibility machinery through every layer.
-
-Highest-leverage conclusions:
-
-1. **Default multipart “research” is the wrong default architecture.** Every eligible turn takes the tool-enabled, up-to-600-word path (`SessionOrchestrator.ts:289-291,418-525`), while the authoritative PRD requires concise responses and explicitly excludes search (`artifacts/pm/index.md:16,23,32`). It also enables file-reading tools while the shared system prompt explicitly prohibits tools (`PODCASTER_SYSTEM_PROMPT`, `PiResearchClient.ts:168`). Disable it first; do not refactor its duplicate Pi client before deciding whether to delete it.
-2. **There are two personas, and the user-owned one does not control posture.** `BrowserSession` uses `settings.persona` only as a Pi prompt append, while `SessionOrchestrator` silently parses `DEFAULT_PERSONA_MARKDOWN`. This contradicts the PRD’s single user-owned configuration controlling personality and posture tendencies (`artifacts/pm/index.md:19`). Passing the validated frozen settings persona into the orchestrator is a small, behavior-preserving correction for ordinary plain-text personas.
-3. **The canonical event contract is not canonical.** `CoreEvent` validates an allowed type plus arbitrary object payload; a direct probe showed an invalid `failure` payload passes `CoreEvent` while failing `FailureEvent`. Host and web then use generic `{type:string,payload:Record}` types and the web maintains a 30-line hand validator. Add a generated `HostEvent` union and adopt it at trust boundaries.
-4. **The advertised quality gate is incomplete.** `scripts/check.sh` omits all 201 web unit tests and most of the 223 audio tests, even though full suites pass. Fixing the gate gives safer cheap-model execution than adding more tests or tooling.
-5. **Package and lifecycle seams need repair before large refactors.** `@app/contracts/settings` is exported from TypeScript source and fails under direct Node ESM after a successful build; `App.tsx` owns 30+ mutable states/refs and races two custom-voice store bootstraps; Pi readiness probes a fixed global client rather than selected settings. These are bounded, reversible fixes.
-
-**Do not rewrite the application.** Disable or freeze non-goal behavior, establish one contract owner, repair resource/build seams, and only then extract the web live-runtime coordinator. Keep the heavily tested playback, interruption, security, audio-adapter, and benchmark internals unless a task explicitly names them.
-
 ## System design (components + responsibilities)
 
-### Current architecture map
+### 1. Make preparation a real pre-live phase
 
-| Area | Current responsibility | Runtime/build dependency direction | Audit verdict |
-|---|---|---|---|
-| `apps/web` | React UI, readiness, session composition, capture/playback, WebSocket protocol checks, IndexedDB persistence, MP3 recording/export, settings and custom voices | Browser → host HTTP/WS; imports `@app/contracts/settings` and `/binary` | Sound feature modules underneath an oversized `App.tsx`; manual wire typing and fragmented DB ownership |
-| `apps/host` | Fastify static/API/WS server, cookie+capability auth, browser session registry, turn orchestration, Pi children, sidecar client | Host → contracts, policy, Python sidecar, Pi executable; serves built web | Trust boundary is strong; `app.ts`, `SessionOrchestrator`, `AudioClient`, and duplicated Pi clients are hotspots |
-| `services/audio` | Authenticated loopback WebSocket server, selected STT/TTS composition, model verification, streaming/cancellation, optional Qwen isolation and voice enrollment | Python sidecar → generated Python contracts; currently also → `benchmarks/configs` and `docs/model-manifest.json` | Process isolation is justified; production ownership leaks into benchmark/docs paths and one sync wait can block asyncio |
-| `packages/contracts` | JSON Schemas, generated TS/Python contract source, binary frame codec, browser-safe settings/persona semantics | Canonical schemas → generated TS and embedded Python schemas | Correct package to own shared concepts; event union and package exports are incomplete/inconsistent |
-| `packages/policy` | Deterministic posture selection | Policy → contracts persona type | Small and cohesive; keep separate |
-| `benchmarks/harness` | Reproducible synthetic/STT/TTS runs, validation, comparison, blinded ratings | Benchmark → audio adapters and benchmark schemas | Long but evidence-sensitive; avoid speculative cleanup |
-| `scripts` / `spikes` | Dev process ownership, acquisition, contract generation, real-stack retries, historical feasibility probes | Scripts → workspace tools/harness/services | Several useful tools; duplicated acquirers/process helpers and stale machine-specific fixture metadata |
-| `docs` / `artifacts/evidence` | Accepted decisions, reproducibility instructions, retained experiment evidence | Documentation only, except production currently reads model manifest | README/build document are materially stale; duplicate ADR number 007 |
-
-### Current runtime flow
-
-1. `pnpm dev` runs `scripts/dev-hmr.mjs`, builds the host (and contracts), launches `apps/host/dist/server/main.js`, then Vite.
-2. Host `main.ts` starts the Python sidecar, creates a fixed default Pi readiness client, builds Fastify, and binds loopback.
-3. Browser bootstraps a cookie/capability over HTTP, opens authenticated WS, sends a frozen session settings snapshot, starts binary PCM capture, and persists stable events before acknowledging final turns.
-4. Host `BrowserSession` validates browser commands, bridges PCM to `AudioClient`, and feeds sidecar STT events into `SessionOrchestrator`.
-5. The orchestrator selects posture, currently chooses multipart research by default, streams Pi text into sidecar TTS, and emits host events/audio to the browser.
-6. Browser `WebSocketSessionTransport` hand-validates events, `SessionController` serializes state/storage/playback effects, and recording/store modules persist local data.
-
-### Current generated/manual interfaces
-
-- Canonical JSON Schemas: `packages/contracts/schema/**`.
-- Generated TS: `packages/contracts/src/generated/contracts.ts`; generated compile assertions: `packages/contracts/test/types-required.generated.compile.ts`.
-- Generated Python embedded schemas/Pydantic wrappers: `services/audio/src/generated/contracts.py` and `__init__.py`.
-- Manually duplicated runtime interfaces: host `SessionEvent`, web `StableEvent`/`Envelope`, web `isStrictHostEvent`, settings validators, Python custom-voice constants.
-- Manually mirrored benchmark schemas: `packages/contracts/schema/benchmarks/*.json` → `benchmarks/results/schema/*.json` (currently byte-identical, guarded only by a test).
-
-### Target architecture
+Use one explicit host lifecycle, owned by `BrowserSession`:
 
 ```text
-web AppShell/routes/settings
-        |
-        v
-web LiveSessionRuntime (owns transport/controller/capture/recording handles)
-        |
-        +--> LocalDatabase owner --> typed stores
-        +--> HostEvent / BrowserCommand generated contracts
-        |
-        v
-host Fastify/auth/session registry
-        |
-        v
-BrowserSession (protocol adapter) --> SessionOrchestrator (single concise response)
-        |                                  |
-        v                                  v
-AudioClient ---------------------------> PiClient (no tools)
-        |
-        v
-Python SidecarServer --> SelectedAudioRuntime --> STT/TTS adapters
-
-benchmarks -------------------------------> audio adapters + service-owned selected config
-contracts schemas --> generated TS/Python; no hand-owned competing event model
+new
+  -> preparing              session.open(planning)
+  -> prelive                ready | failed | cancelled | no plan
+  -> starting_live          explicit session.begin(stream contract)
+  -> live                   audio engine open; browser capture may start
+  -> stopped
 ```
 
-Target dependency rules:
+- Replace overloaded `session.start` with `session.open`. It freezes settings/persona, creates the session-owned Pi clients, and optionally runs preparation; it does **not** create `AudioClient`, `SessionOrchestrator`, microphone capture, or a recorder.
+- Add `session.begin` as the only initial transition to live. It is valid only from `prelive`, creates/connects `AudioClient` and `SessionOrchestrator`, opens the capture stream, then acknowledges readiness. Keep `audio.start` only for live reconnect attachment.
+- `apps/web/src/session/live-runtime.ts` becomes a two-phase `SessionRuntime`: `open()` composes transport/controller and waits for preparation; `beginLive()` is called only by the explicit UI action, opens the recorder, sends `session.begin`, and then starts `BrowserCapture`. On any begin failure, stop recorder/capture and close the host stream, leaving the session pre-live and retryable.
+- Keep the local session row `draft` during preparation. Call `StableTurnWriter.beginSession()` only after `beginLive()` succeeds, so elapsed active time and “active session” recovery remain truthful. Planning `session.state` events may update the draft’s planning snapshot.
+- Web view state adds `mode: 'preparing' | 'prelive' | 'starting_live' | 'live' | 'paused' | 'stopped'` and `capture: 'off' | 'starting' | 'on' | 'failed'`. Preparation/ready/failure UI must say **Microphone off**. Exact presentation is UX-owned; required actions are Cancel while running, Retry after terminal failure/cancel, and Begin live (or Begin without preparation) only as an explicit action.
+- A no-preparation “Start session” click may execute `session.open` then `beginLive` in the same click; this remains an explicit start. “Prepare” executes only `session.open` and never requests microphone permission.
 
-- Web and host depend on generated contract types; neither invents a competing protocol event base type.
-- Host owns auth/session composition; orchestrator owns conversation state; `AudioClient` owns sidecar wire mechanics; none owns UI/storage presentation.
-- The web app owns exactly one live-session runtime object and one database lifecycle; React renders snapshots and dispatches commands.
-- Audio service owns selected production model config and manifest loading; benchmarks consume that config, never the reverse.
-- Default conversation uses one no-tool Pi client and one concise response. Multipart/file-reading research remains disabled unless a future product/security decision explicitly reauthorizes it.
-- User-editable `settings.persona` is the sole persona source for both policy interpretation and Pi prompt append.
+### 2. Replace fabricated planning percentage with an attempt state machine
+
+`BrowserSession` owns exactly one `PlanningAttempt`:
+
+```ts
+interface PlanningAttempt {
+  attempt: number;
+  state: 'running' | 'ready' | 'failed' | 'cancelled';
+  stage?: 'starting' | 'researching' | 'finalizing';
+  reasonCode?: 'timeout' | 'provider_unavailable' | 'invalid_result' | 'interrupted';
+  deadlineMs: number;
+  controller: AbortController;
+}
+```
+
+- Remove `progress` from new wire/view writes and delete the 5/20/65 pseudo-percent milestones. Show an indeterminate indicator, factual stage, and elapsed time.
+- Emit `starting` before Pi acquisition, `researching` when the request is dispatched/tool work occurs, and `finalizing` on first valid text delta. Emit one terminal state.
+- One deadline owner: `BrowserSession` passes the same deadline to `PiResearchClient` and aborts the attempt timer. Initial bounded defaults: light 30s/at most 1 tool, standard 60s/at most 2, deep 120s/at most 3. These are safe starting bounds, not progress predictions.
+- Cancel is idempotent and terminal. Retry is accepted only pre-live after a terminal state, increments `attempt`, and ignores all stale callbacks by attempt identity. Begin-without-preparation cancels and awaits the terminal cancellation before `session.begin`.
+- Provider details remain private; the bounded `reasonCode` drives coherent copy/actions. A stale persisted `running` attempt found after reload is normalized to `failed/interrupted`, never resumed implicitly.
+
+### 3. Collapse multipart output to one response, one text stream, one playback
+
+Replace `MultiPartResponse` with a small `LongResponsePipeline` used by the existing `SessionOrchestrator` active-response lifecycle:
+
+- One `responseId`, `AbortController`, `reasoning.started`, progressive speech stream, playback ledger, `reasoning.final`, and terminal outcome per user turn.
+- For the tool-capable research path only, append one fixed, neutral, sentence-complete acknowledgement (for example, “Let me think that through.”; final copy is writer/UX-owned) immediately to the same speech stream. It must not claim a search occurred. Pass that exact acknowledgement to `requestBody` so the body does not restart or repeat it.
+- Start body research immediately after appending the acknowledgement. Convert research deltas into validated, sentence-complete chunks and append them to the **same** speech stream. Emit cumulative `reasoning.delta` checkpoints and exactly one cumulative `reasoning.final`; call `finish()` once.
+- Normal concise/no-tool responses keep the existing single-stream path and do not gain an acknowledgement.
+- A stable non-empty user final supersedes active reasoning/tool work before posture selection; VAD alone still does not cancel. Playback barge-in keeps the existing immediate local pause/classification behavior. Explicit Stop aborts immediately.
+- Bound Pi abort settlement separately from the request deadline (target 2s). If Pi/tool work does not settle, terminate that session-owned research child, release ownership, and lazily restart it for the next turn. The cancelled epoch rejects every late delta/tool/TTS callback.
+- Persist cumulative sentence checkpoints so an acknowledgement already generated is not lost if interrupted. Add a stored response lifecycle (`generating | completed | interrupted | failed`); `response.cancelled` is an explicit host event carrying response/turn identity and reason. One reducer upsert by `responseId` owns the visible row.
+
+### 4. Delete multipart-only machinery
+
+- Delete `apps/host/src/session/MultiPartResponse.ts` and `apps/host/src/session/RuntimeBudget.ts`; replace `ResearchPartAssembler` with a sentence-chunk assembler that has total word/byte bounds but no indices or playback semantics.
+- Remove `response.part_started`, `response.part_final`, `budget.mitigation`, and active-path `partIndex/partId` from contracts, host/web transport validation, `AudioClient`, sidecar TTS messages, controller playback groups, conversation state, and tests.
+- Delete predicted handoff/stall formulas and the timing-tab claims they feed. Retain raw monotonic milestones/logs and test measured durations directly; do not present ETA as mitigation.
+- New recordings always store one agent item per playback with `partIndex: null`. Keep the nullable IndexedDB field and legacy export/grouping read path so existing recordings remain usable; do not migrate or rewrite old audio.
 
 ## Key decisions & tradeoffs
 
-| Decision | Why | Tradeoff |
-|---|---|---|
-| Disable multipart research before deleting it | Immediate alignment with authoritative scope and privacy; one boolean rollback | Dormant compatibility code remains temporarily |
-| Freeze custom-voice expansion; do not immediately delete local data paths | It is an explicit PRD non-goal, but users may already have browser-local references needing deletion/recovery | Leaves 1,456+ explicit LOC until product/UX approve data-safe retirement |
-| Keep JSON Schema generation | Cross-language validation is earning its cost | Improve the event union and generated-output gate rather than replacing the generator wholesale |
-| Generate types but keep a small browser runtime validator initially | Avoids bundling Ajv into the browser entry | Hand validator remains temporarily, but parity tests make drift visible |
-| Repair package `dist` exports and build prerequisites | Common ESM workspace behavior; direct imports become truthful | Fresh build/test commands must build contracts first |
-| Extract `LiveSessionRuntime` only after scope/contract/lifecycle fixes | Prevents moving unstable accidental complexity into a new abstraction | `App.tsx` remains large for the first checkpoints |
-| Keep sidecar process isolation and duplicate validation at trust boundaries | Python dependency conflict and untrusted wire data justify them | Some repetition is intentionally retained |
-| No formatting-only or framework rewrite | Low payoff and high review noise | Inconsistent historical style remains until touched organically |
+- **Explicit protocol gate, not a UI-only guard.** `session.begin` makes pre-live capture impossible even if a UI caller regresses. It costs one small contract transition but removes ambiguity from `session.start`/`audio.start` overloading.
+- **Indeterminate factual progress over invented percentages.** Users lose a percent bar but gain accurate stage, elapsed, cancellation, failure category, and retry.
+- **Deterministic neutral acknowledgement over a second LLM call.** This gives bounded generation latency, starts the body sooner, and cannot contradict the body. It is used only on the long/tool path.
+- **One progressive TTS stream over prefetched parts.** This removes cross-part ordering, duplicate final/persistence, multiple playback ledgers, trim identities, and handoff predictions. A long tool can still create silence after the acknowledgement; the UI truthfully shows tool activity and remains interruptible rather than pretending an ETA can prevent it.
+- **Persist sentence checkpoints.** This adds a few bounded IndexedDB writes but makes interruption/reload lifecycle truthful. Coalesce to acknowledgement plus each released sentence group; never persist token deltas.
+- **Backward-compatible reads, simplified new writes.** Legacy `partIndex` recording rows remain exportable, but no new runtime branch depends on them.
 
 ## Interfaces / contracts (the seams between tasks)
 
-### Contract seam C1 — Host events
-
-`HostEvent` will be a generated discriminated union of host→browser events, including dedicated VAD schemas. Runtime validation remains strict. Invalid specialized payloads must not pass a broad “core” validator.
-
-### Contract seam C2 — Browser commands and persisted events
-
-`BrowserCommand` remains the browser→host union. Web storage accepts only:
+### Browser ↔ host
 
 ```ts
-type PersistedSessionEvent = HostEvent | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent;
+type SessionOpen = {
+  type: 'session.open';
+  payload: { sessionSeed: string; reasoningMode: ReasoningMode; settings: SessionSettings; planning?: PlanningRequest };
+};
+type SessionBegin = {
+  type: 'session.begin';
+  payload: { streamId: number; sampleRate: 16000; channels: 1; frameSamples: 320 };
+};
+
+type PlanningState = {
+  status: 'planning' | 'ready' | 'failed' | 'cancelled';
+  attempt: number;
+  stage?: 'starting' | 'researching' | 'finalizing';
+  deadlineMs?: number;
+  reasonCode?: 'timeout' | 'provider_unavailable' | 'invalid_result' | 'interrupted';
+  topic?: string;
+  depth?: PlanningDepth;
+  detail?: string;
+  notes?: string;
+};
 ```
 
-Local degradation events must use a schema-valid `FailureEvent` payload, not a partial object masquerading as a wire event.
+`session.state.phase` adds `preparing`, `prelive`, and `starting_live`. It must never report `listening` before successful `session.begin`. Remove new writes of planning `progress`; tolerate the old optional field only in local archive reads.
 
-### Contract seam C3 — Persona
-
-`SessionSettingsSnapshot.persona` is frozen at session start. Host applies the same string to:
-
-- `parsePersona(settings.persona)` for policy fields/digest; plain text remains valid and receives supported defaults.
-- `composePersonaAppend(settings.persona)` for Pi personality.
-
-No hidden second runtime default may override it.
-
-### Contract seam C4 — Pi configuration/readiness
-
-A host-owned Pi configuration resolver supplies a canonical executable path plus `DEFAULT_PI_MODEL`. Readiness is keyed by the browser-selected, validated `PiSettings`; session response/classifier clients use the same model/thinking tuple. Readiness child ownership is host-scoped and shut down on app close.
-
-### Contract seam C5 — Web live runtime
+### Web runtime
 
 ```ts
-interface LiveSessionRuntime {
-  readonly sessionId: string;
+interface SessionRuntime {
   snapshot(): SessionViewState;
-  cancelAssistant(): Promise<void>;
-  pause(): Promise<boolean>;
+  beginLive(): Promise<void>;       // mutexed, retryable while prelive
+  cancelPlanning(): Promise<void>;
+  retryPlanning(): Promise<void>;
   stop(): Promise<void>;
-  dispose(): Promise<void>;
-}
-
-interface LiveSessionRuntimeCallbacks {
-  onView(state: SessionViewState): void;
-  onTransportFailure(message: string): void;
-  onRecordingChanged(): void;
 }
 ```
 
-It owns `SessionTransport`, `SessionController`, `BrowserCapture`, `RecordingRecorder`, `RecordingStore`, reconnect subscriptions, and teardown ordering. `App.tsx` owns routes/settings/capability acquisition and never mutates those handles individually.
+`beginLive()` is the sole caller of recorder start and `BrowserCapture.start()`. `getUserMedia`, `onCaptureAudio`, and `sendCapture` are impossible before it.
 
-### Contract seam C6 — Audio configuration
+### Response lifecycle
 
-Service-owned selected configs and model manifest are immutable inputs to `SelectedAudioRuntime`. Benchmark commands point at them. Shared verification helpers verify safe path, model entry, revision, and file hashes; modality-specific checks stay next to STT/TTS adapters.
+```text
+reasoning.started
+reasoning.delta*        cumulative, sentence-complete checkpoint
+reasoning.final         exactly once, cumulative complete text
+response.cancelled | response.failed | playback.stopped(completed)
+```
+
+Invariants: one row and one playback per `responseId`; event order is monotonic within the session controller queue; only the current `(epoch,responseId)` may mutate output; terminal state is idempotent and immutable. `StableTurnWriter` replaces `assistantText` from cumulative checkpoints—it never concatenates by arrival order.
 
 ## Task breakdown (each: path, boundary, interface, done-criteria, dependencies, parallel-safe?)
 
-The compact index and dependency graph are in [target-roadmap.md](target-roadmap.md#compact-task-index). Every task’s exact files, steps, invariants, commands, diff shape, and pitfalls are in its linked card above.
+**Path:** one vertical implementation; no separate task file.
 
-| ID | Boundary | Depends on | Parallel-safe? |
-|---|---|---|---|
-| ARC-001 | Host composition default only; retain compatibility | None | Yes, except ARC-002/008 touch nearby host composition |
-| ARC-002 | Frozen settings persona → policy + Pi | ARC-001 preferred | No with ARC-001 |
-| ARC-003 | Validation scripts only | None | Yes |
-| ARC-004 | Schemas/generator/contract fixtures only | None | Yes; exclusive ownership of contracts files |
-| ARC-005 | Host/web event types and validators | ARC-004 | No with ARC-011/013 |
-| ARC-006 | Package exports/build order | None | Yes; coordinate with ARC-003 if package scripts change |
-| ARC-007 | Pi executable/default config | ARC-006 preferred | Yes, except ARC-008 touches Pi composition |
-| ARC-008 | Settings-aware readiness client ownership | ARC-007 | No with ARC-001/002 |
-| ARC-009 | IndexedDB handles and App bootstrap effects | None | No with ARC-013 |
-| ARC-010 | Python server dispatch only | None | Yes |
-| ARC-011 | Proven-dead symbols/files | ARC-004/005 preferred | No with ARC-005/013 |
-| ARC-012 | README/ADR/ignore/generated hygiene | ARC-001/003 outcomes | Yes after those land |
-| ARC-013 | Web runtime extraction | ARC-001,002,005,008,009,011 | No; sole owner of `App.tsx` |
-| ARC-014 | Audio config ownership/verifier | ARC-010 preferred | Yes after ARC-010 |
-| ARC-015 | Playwright server lifecycle | ARC-003 | Yes; sole owner of e2e config/support |
+**Boundary:** contracts, host session/preparation lifecycle, web runtime/state/actions, single-stream long response, and associated persistence/recording compatibility. Do not redesign general session IA, speech models, posture policy, or legacy recording export.
+
+**Interface:** the contracts above.
+
+**Dependencies:** implement in this order:
+
+1. Update contract schemas/types/fixtures and state-machine unit tests (`packages/contracts/**`).
+2. Gate host preparation/live construction and implement attempt identity/deadline semantics (`BrowserSession.ts`, `PiResearchClient.ts`).
+3. Split web open/begin transactions, defer capture/recording/activation, and expose pre-live actions/state (`live-runtime.ts`, `transport.ts`, `websocket-transport.ts`, `App.tsx`, draft/session surfaces).
+4. Replace multipart host output with one progressive stream and bounded Pi abort settlement (`SessionOrchestrator.ts`, new sentence assembler); then remove multipart/budget host code.
+5. Simplify web transport/controller/reducer/persistence to one response/playback and cumulative checkpoints; retain legacy recording reads.
+6. Regenerate contracts, run the focused matrix below, then full typecheck/test/build.
+
+**Done-criteria / test matrix:**
+
+| Area | Required cases |
+|---|---|
+| Pre-live privacy | Prepare never calls `getUserMedia`, recorder start, `AudioClient`, orchestrator start, `session.begin`, or binary send; ambient worklet input cannot create a transcript. |
+| Explicit begin | Ready/failed/cancelled preparation stays `capture=off`; only Begin transitions `starting_live → live`; direct no-plan Start performs open+begin from the same explicit click. |
+| Begin rollback | Host begin failure, permission denial, recorder failure, activation failure, duplicate click, stop/disconnect, and reconnect leave no leaked capture/stream/recorder and permit a coherent retry or stop. |
+| Planning truth | Factual stage ordering, elapsed display without percent, light/standard/deep bounds, timeout reason, provider failure, invalid/empty final, cancel race, retry attempt increment, stale-attempt suppression, and stale persisted-running normalization. |
+| Recovery actions | Cancel visible only while running; Retry only terminal/pre-live; Begin without preparation cancels first; no retry can inject notes after live begins. |
+| Single response | Research turn produces one response ID, one `reasoning.started/final`, one speech open/finish, one playback ID, one row, and ordered ack+body text with no `partIndex` or duplicate persistence. |
+| Long-tool interruption | Stable speech before first TTS, during a tool, during acknowledgement, and during body all abort the old epoch; explicit Stop is immediate; Pi abort settles/recycles within the bound; late tool/text/TTS events are ignored. |
+| Failure/cancel | Body error/timeout/invalid final after acknowledgement, TTS failure, cancellation before TTS start, and cancellation after checkpoint each yield one immutable terminal lifecycle and truthful retained/interrupted text. |
+| Playback/barge-in | Existing ≤300ms local pause path, resume, accepted takeover, repeated interruptions, terminal receipt idempotence, and no queued-successor overlap regression. |
+| Persistence/legacy | Reload during generation, after completion, after interruption, and after failure yields one row; new recording is one item; old multipart recording rows still group/export in order. |
+| Timing | Assert actual injected-clock durations for open→ack checkpoint, open→TTS start, and cancel→abort settlement; no ETA/percentage/budget event remains user-visible. |
+
+**Parallel-safe?** No. The wire contract and lifecycle semantics are shared across every phase; land sequentially in one branch. Test additions within a phase may be written alongside that phase, but builders must not independently change the same schemas/reducers.
 
 ## Risks & assumptions
 
-- **Verified, not speculative:** all critical/high findings cite current code or executed commands. Findings labelled “scope decision” rely on the authoritative PM versus later ADRs and are called out openly.
-- Disabling multipart changes current default behavior but restores the authoritative concise, no-search product contract. Rollback is one opt-in boolean while compatibility remains.
-- Passing the editable persona to policy changes digest/selection for new sessions; frozen existing session settings remain the boundary. Tests must pin this intentionally.
-- Existing browser-local custom voices and multipart recordings may exist. Do not delete stores, deletion UI, or compatibility fields without a data-retirement decision.
-- Full real Pi/provider calls, real five-minute GPU soak, and manual accessibility/browser checks were not run during this read-only audit. Unit/integration/e2e/build validation was comprehensive and green.
-- No CI currently enforces checks. The roadmap does not assume a GPU CI runner.
+- **High — current privacy/trust defect:** `apps/host/src/server/BrowserSession.ts:350-421` deliberately runs preparation behind live setup, while `apps/web/src/session/live-runtime.ts:240-304` and `apps/web/src/audio/capture.ts:30-96` acquire/process microphone audio before planning completes. The protocol gate above is required; copy alone is insufficient.
+- **High — current progress is not work completion:** `BrowserSession.ts:401-421,448-505` can leave a static 5% state until timeout. Removing percent is safer than trying to estimate opaque provider/tool completion.
+- **High — current persistence is arrival-order fragile:** `apps/web/src/storage/stable-turn-writer.ts:508-515` concatenates multipart finals, and `apps/web/src/session/state.ts:160-260` assumes append order. Duplicate/out-of-order events can create incoherent text. Cumulative replacement plus one final removes this class.
+- **High — current cancellation can hold the research client for the full request deadline:** `apps/host/src/pi/PiResearchClient.ts:372-405` uses `active.deadlineMs` for abort settlement. A short separate abort bound and subprocess recycle are needed for real distractibility.
+- **Medium — generated stall and body are separate lifecycle trees:** `apps/host/src/session/MultiPartResponse.ts:80-324,429-641` creates multiple streams, ledgers, finals, and completion gates; web/controller/recording then reconstruct one message. The one-stream design deliberately gives up body-part prefetch and per-part recording trim.
+- **Medium — existing timing “mitigation” does not mitigate:** `apps/host/src/session/RuntimeBudget.ts` predicts handoffs but only emits telemetry. Deletion avoids misleading precision; representative latency measurement remains operational work.
+- Assumption: the sidecar’s existing progressive single-stream TTS begins from sentence appends before `finish()`; the current concise-response path depends on the same behavior and must be covered by integration tests.
+- Assumption: a neutral fixed acknowledgement is acceptable only for tool-capable long responses and is not considered a second posture/message.
 
 ## Open questions
 
-1. **Product/architecture conflict:** accepted `docs/decisions/007-multi-part-responses.md` enables tool-backed long answers, but the later authoritative PM excludes search and requires concise responses. This audit follows the PM and recommends default-off now. Reauthorization would require a new product/privacy/security decision, not merely toggling it back on.
-2. **Custom voice:** `docs/decisions/008-consent-local-voice-enrollment.md` and current code productize enrollment, while the PM explicitly excludes custom-voice productization. Freeze expansion; UX/product must choose data-safe retirement versus a PM amendment before deletion.
-3. **Recording:** rich MP3 recording/trim/export is implemented but is not clearly named in MVP scope. Keep it for now; confirm ownership before further feature work.
-4. What Pi installation/version discovery contract should fresh-machine setup support? Safe fallback: explicit `PODCASTER_PI_EXECUTABLE` plus PATH discovery and fail-closed readiness.
-5. How long must readers retain multipart fields and browser-local custom-voice data? No telemetry/migration policy exists.
-6. Is Linux the only supported dev/runtime OS? Process-group scripts and CUDA paths assume it; current README says Linux.
+1. The specific reported preparation timeout (Pi startup, provider, or tool) cannot be resolved from code or sanitized UI events; obtain incident host/Pi lifecycle timestamps. It does not change the gating/state-machine fix.
+2. Production latency data is insufficient to attest that 30/60/120 seconds and 1/2/3 tools are the optimal depth bounds. Start there because they are bounded and materially improve light preparation; revise from measured p95 attempt/tool timings.
+3. Final acknowledgement wording cannot be selected from code. It must remain short, neutral, and non-committal; architecture does not require generated wording.
 
-No Staffed effort/tier escalation is required: the immediate remediation path is safe despite the product decisions above, and unresolved deletions are explicitly blocked rather than guessed.
+```acceptance-report
+{
+  "criteriaSatisfied": [
+    {
+      "id": "criterion-1",
+      "status": "satisfied",
+      "evidence": "Severity-rated review findings cite BrowserSession.ts, live-runtime.ts, capture.ts, stable-turn-writer.ts, state.ts, PiResearchClient.ts, MultiPartResponse.ts, and RuntimeBudget.ts; the design includes residual risks and a concrete test matrix."
+    }
+  ],
+  "changedFiles": [
+    "artifacts/architect/index.md"
+  ],
+  "testsAddedOrUpdated": [],
+  "commandsRun": [
+    {
+      "command": "source inspection (research/PM/UX artifacts plus targeted host, web, contract, persistence, recording, and test files)",
+      "result": "passed",
+      "summary": "Verified the preparation/capture order, static planning percentages, multipart lifecycle, persistence append behavior, and abort-settlement ownership."
+    },
+    {
+      "command": "python artifact assertion",
+      "result": "failed",
+      "summary": "Python is not installed; reran the same structural assertion with Node."
+    },
+    {
+      "command": "node artifact heading/acceptance assertion; git diff --check; staged-file check",
+      "result": "passed",
+      "summary": "Required headings and acceptance block are present; diff hygiene passed and no files are staged."
+    }
+  ],
+  "validationOutput": [
+    "Architecture defines explicit pre-live/live and planning-attempt state machines, one concurrency owner per operation, end-to-end contract changes, deletion opportunities, ordered implementation, and a failure/race/legacy test matrix."
+  ],
+  "residualRisks": [
+    "Production planning and tool latency has not been measured, so initial depth deadlines require p95 validation.",
+    "The exact incident timeout source is unavailable without sanitized host/Pi lifecycle logs.",
+    "Single-stream progressive acknowledgement latency depends on existing sidecar append-before-finish behavior and must be integration-tested."
+  ],
+  "noStagedFiles": true,
+  "diffSummary": "Added the smallest dependable cross-cut architecture: explicit pre-live gating, truthful attempt-based planning, and deletion of multipart output in favor of one interruptible progressive response stream.",
+  "reviewFindings": [
+    "blocker: apps/web/src/session/live-runtime.ts:240-304 and apps/web/src/audio/capture.ts:30-96 - preparation composition starts microphone acquisition and local recording callbacks without a separate live-begin gate.",
+    "major: apps/host/src/server/BrowserSession.ts:350-421,448-505 - preparation runs behind live setup and exposes static pseudo-progress that can remain at 5% until timeout.",
+    "major: apps/web/src/storage/stable-turn-writer.ts:508-515 and apps/web/src/session/state.ts:160-260 - multipart assistant text is reconstructed by arrival-order append, making ordering/duplication/persistence unnecessarily fragile.",
+    "major: apps/host/src/pi/PiResearchClient.ts:372-405 - cancellation settlement inherits the full research deadline, so interrupted tool work can retain client ownership far too long.",
+    "moderate: apps/host/src/session/RuntimeBudget.ts - timing formulas report projected gaps but do not change output behavior, creating complexity without a responsiveness guarantee."
+  ],
+  "manualNotes": "No feature code was modified."
+}
+```

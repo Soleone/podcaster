@@ -1,1197 +1,1153 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/sidecar-message.json",
-  "title": "SidecarMessage",
-  "type": "object",
-  "required": [
-    "type",
-    "payload"
-  ],
-  "properties": {
-    "type": {
-      "type": "string"
-    },
-    "payload": {
-      "type": "object"
-    }
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/sidecar-message.json",
+ "title": "SidecarMessage",
+ "type": "object",
+ "required": [
+  "type",
+  "payload"
+ ],
+ "properties": {
+  "type": {
+   "type": "string"
   },
-  "additionalProperties": false,
-  "$defs": {
-    "stream": {
-      "type": "string",
-      "format": "uuid"
+  "payload": {
+   "type": "object"
+  }
+ },
+ "additionalProperties": false,
+ "$defs": {
+  "stream": {
+   "type": "string",
+   "format": "uuid"
+  },
+  "utterance": {
+   "type": "string",
+   "format": "uuid"
+  },
+  "response": {
+   "type": "string",
+   "format": "uuid"
+  },
+  "speedCapability": {
+   "type": "object",
+   "required": [
+    "supported",
+    "min",
+    "max",
+    "default"
+   ],
+   "properties": {
+    "supported": {
+     "type": "boolean"
     },
-    "utterance": {
-      "type": "string",
-      "format": "uuid"
+    "min": {
+     "type": "number",
+     "minimum": 0.5,
+     "maximum": 2.0
     },
-    "response": {
-      "type": "string",
-      "format": "uuid"
+    "max": {
+     "type": "number",
+     "minimum": 0.5,
+     "maximum": 2.0
     },
-    "speedCapability": {
-      "type": "object",
-      "required": [
-        "supported",
-        "min",
-        "max",
-        "default"
-      ],
-      "properties": {
-        "supported": {
-          "type": "boolean"
-        },
-        "min": {
-          "type": "number",
-          "minimum": 0.5,
-          "maximum": 2.0
-        },
-        "max": {
-          "type": "number",
-          "minimum": 0.5,
-          "maximum": 2.0
-        },
-        "default": {
-          "type": "number",
-          "minimum": 0.5,
-          "maximum": 2.0
-        }
-      },
-      "additionalProperties": false
+    "default": {
+     "type": "number",
+     "minimum": 0.5,
+     "maximum": 2.0
+    }
+   },
+   "additionalProperties": false
+  },
+  "ttsModel": {
+   "type": "object",
+   "required": [
+    "backendId",
+    "modelId"
+   ],
+   "properties": {
+    "backendId": {
+     "type": "string",
+     "minLength": 1
     },
-    "ttsModel": {
-      "type": "object",
-      "required": [
-        "backendId",
-        "modelId"
-      ],
-      "properties": {
-        "backendId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "modelId": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "additionalProperties": false
+    "modelId": {
+     "type": "string",
+     "minLength": 1
+    }
+   },
+   "additionalProperties": false
+  },
+  "warmupStatus": {
+   "enum": [
+    "starting",
+    "warming",
+    "ready",
+    "failed"
+   ]
+  },
+  "warmup": {
+   "type": "object",
+   "required": [
+    "vad",
+    "tts"
+   ],
+   "properties": {
+    "vad": {
+     "$ref": "#/$defs/warmupStatus"
     },
-    "warmupStatus": {
-      "enum": ["starting", "warming", "ready", "failed"]
+    "tts": {
+     "$ref": "#/$defs/warmupStatus"
+    }
+   },
+   "additionalProperties": false
+  },
+  "ttsModelDescriptor": {
+   "type": "object",
+   "required": [
+    "backendId",
+    "modelId",
+    "label",
+    "status"
+   ],
+   "properties": {
+    "backendId": {
+     "type": "string",
+     "minLength": 1
     },
-    "warmup": {
-      "type": "object",
-      "required": ["vad", "tts"],
-      "properties": {
-        "vad": { "$ref": "#/$defs/warmupStatus" },
-        "tts": { "$ref": "#/$defs/warmupStatus" }
-      },
-      "additionalProperties": false
+    "modelId": {
+     "type": "string",
+     "minLength": 1
     },
-    "ttsModelDescriptor": {
-      "type": "object",
-      "required": [
-        "backendId",
-        "modelId",
-        "label",
-        "status"
-      ],
-      "properties": {
-        "backendId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "modelId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "label": {
-          "type": "string",
-          "minLength": 1
-        },
-        "status": {
-          "enum": [
-            "ready",
-            "unavailable"
-          ]
-        },
-        "speed": {
-          "$ref": "#/$defs/speedCapability"
-        },
-        "voiceCatalog": {
-          "$ref": "#/$defs/voiceCatalog"
-        },
-        "reason": {
-          "type": "string"
-        },
-        "fallback": {
-          "$ref": "#/$defs/ttsModel"
-        }
-      },
-      "additionalProperties": false
+    "label": {
+     "type": "string",
+     "minLength": 1
+    },
+    "status": {
+     "enum": [
+      "ready",
+      "unavailable"
+     ]
+    },
+    "speed": {
+     "$ref": "#/$defs/speedCapability"
     },
     "voiceCatalog": {
+     "$ref": "#/$defs/voiceCatalog"
+    },
+    "reason": {
+     "type": "string"
+    },
+    "fallback": {
+     "$ref": "#/$defs/ttsModel"
+    }
+   },
+   "additionalProperties": false
+  },
+  "voiceCatalog": {
+   "type": "object",
+   "required": [
+    "catalogId",
+    "backendId",
+    "modelId",
+    "runtimeConfigId",
+    "revision",
+    "defaultVoiceId",
+    "voices"
+   ],
+   "properties": {
+    "catalogId": {
+     "type": "string",
+     "minLength": 1
+    },
+    "backendId": {
+     "type": "string",
+     "minLength": 1
+    },
+    "modelId": {
+     "type": "string",
+     "minLength": 1
+    },
+    "runtimeConfigId": {
+     "type": "string",
+     "minLength": 1
+    },
+    "revision": {
+     "type": "string",
+     "minLength": 1
+    },
+    "defaultVoiceId": {
+     "type": "string",
+     "minLength": 1
+    },
+    "speed": {
+     "$ref": "#/$defs/speedCapability"
+    },
+    "voices": {
+     "type": "array",
+     "minItems": 1,
+     "uniqueItems": true,
+     "items": {
       "type": "object",
       "required": [
-        "catalogId",
-        "backendId",
-        "modelId",
-        "runtimeConfigId",
-        "revision",
-        "defaultVoiceId",
-        "voices"
+       "id",
+       "label"
       ],
       "properties": {
-        "catalogId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "backendId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "modelId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "runtimeConfigId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "revision": {
-          "type": "string",
-          "minLength": 1
-        },
-        "defaultVoiceId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "speed": {
-          "$ref": "#/$defs/speedCapability"
-        },
-        "voices": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "type": "object",
-            "required": [
-              "id",
-              "label"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "label": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          }
-        }
+       "id": {
+        "type": "string",
+        "minLength": 1
+       },
+       "label": {
+        "type": "string"
+       }
       },
       "additionalProperties": false
+     }
     }
-  },
-  "oneOf": [
-    {
-      "properties": {
-        "type": {
-          "const": "readiness.snapshot"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "status",
-            "stt",
-            "tts"
-          ],
-          "properties": {
-            "status": {
-              "enum": [
-                "starting",
-                "ready",
-                "failed"
-              ]
-            },
-            "stt": {
-              "const": "nemotron-3.5-transformers-fp32-320ms-paced-v1"
-            },
-            "tts": {
-              "type": "string",
-              "minLength": 1
-            },
-            "warmup": {
-              "$ref": "#/$defs/warmup"
-            },
-            "activeTtsModel": {
-              "$ref": "#/$defs/ttsModel"
-            },
-            "ttsModels": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/ttsModelDescriptor"
-              }
-            },
-            "voiceCatalog": {
-              "$ref": "#/$defs/voiceCatalog"
-            }
-          },
-          "additionalProperties": false
-        }
+   },
+   "additionalProperties": false
+  }
+ },
+ "oneOf": [
+  {
+   "properties": {
+    "type": {
+     "const": "readiness.snapshot"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "status",
+      "stt",
+      "tts"
+     ],
+     "properties": {
+      "status": {
+       "enum": [
+        "starting",
+        "ready",
+        "failed"
+       ]
       },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ],
-      "if": {
-        "properties": {
-          "payload": {
-            "type": "object",
-            "properties": {
-              "status": {
-                "const": "ready"
-              }
-            }
-          }
-        }
+      "stt": {
+       "const": "nemotron-3.5-transformers-fp32-320ms-paced-v1"
       },
-      "then": {
-        "properties": {
-          "payload": {
-            "type": "object",
-            "required": [
-              "voiceCatalog"
-            ]
-          }
-        }
+      "tts": {
+       "type": "string",
+       "minLength": 1
+      },
+      "warmup": {
+       "$ref": "#/$defs/warmup"
+      },
+      "activeTtsModel": {
+       "$ref": "#/$defs/ttsModel"
+      },
+      "ttsModels": {
+       "type": "array",
+       "minItems": 1,
+       "items": {
+        "$ref": "#/$defs/ttsModelDescriptor"
+       }
+      },
+      "voiceCatalog": {
+       "$ref": "#/$defs/voiceCatalog"
       }
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "stream.open"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "captureStreamId",
-            "sampleRate",
-            "frameSamples"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "captureStreamId": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 4294967295
-            },
-            "sampleRate": {
-              "const": 16000
-            },
-            "frameSamples": {
-              "const": 320
-            },
-            "streamMode": {
-              "enum": [
-                "capture",
-                "preview"
-              ]
-            },
-            "catalogId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "backendId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "modelId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "dependentRequired": {
-            "backendId": ["modelId"],
-            "modelId": ["backendId"]
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "enum": [
-            "stream.opened",
-            "stream.reset",
-            "stream.close",
-            "stream.closed"
-          ]
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "backendId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "modelId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "voiceCatalog": {
-              "$ref": "#/$defs/voiceCatalog"
-            },
-            "fallback": {
-              "$ref": "#/$defs/ttsModel"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "vad.speech_start"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "utteranceId",
-            "captureStartSequence"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "utteranceId": {
-              "$ref": "#/$defs/utterance"
-            },
-            "captureStartSequence": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "vad.speech_end"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "utteranceId",
-            "captureStartSequence",
-            "captureEndSequence"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "utteranceId": {
-              "$ref": "#/$defs/utterance"
-            },
-            "captureStartSequence": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "captureEndSequence": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "stt.bind_epoch"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "utteranceId",
-            "epoch"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "utteranceId": {
-              "$ref": "#/$defs/utterance"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "stt.partial"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "utteranceId",
-            "epoch",
-            "sequence",
-            "text",
-            "replacedCharacters"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "utteranceId": {
-              "$ref": "#/$defs/utterance"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "sequence": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "text": {
-              "type": "string",
-              "maxLength": 16384
-            },
-            "replacedCharacters": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "stt.final"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "utteranceId",
-            "epoch",
-            "text",
-            "endpointComplete"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "utteranceId": {
-              "$ref": "#/$defs/utterance"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "text": {
-              "type": "string",
-              "maxLength": 16384
-            },
-            "endpointComplete": {
-              "const": true
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.request"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch",
-            "text",
-            "voiceId"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "text": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 4000
-            },
-            "voiceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "speedModifier": {
-              "type": "number",
-              "minimum": 0.5,
-              "maximum": 2.0
-            },
-            "tonePrompt": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 1024
-            },
-            "language": {
-              "enum": [
-                "Chinese",
-                "English",
-                "Japanese",
-                "Korean",
-                "German",
-                "French",
-                "Russian",
-                "Portuguese",
-                "Spanish",
-                "Italian"
-              ]
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.open"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch",
-            "voiceId"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "voiceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "speedModifier": {
-              "type": "number",
-              "minimum": 0.5,
-              "maximum": 2.0
-            },
-            "tonePrompt": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 1024
-            },
-            "language": {
-              "enum": [
-                "Chinese",
-                "English",
-                "Japanese",
-                "Korean",
-                "German",
-                "French",
-                "Russian",
-                "Portuguese",
-                "Spanish",
-                "Italian"
-              ]
-            },
-            "partIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 7
-            },
-            "partId": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.append"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch",
-            "sequence",
-            "text"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "sequence": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "text": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 4000
-            },
-            "partIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 7
-            },
-            "partId": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.commit"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch",
-            "nextSequence",
-            "textSha256"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "nextSequence": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "textSha256": {
-              "type": "string",
-              "pattern": "^[a-f0-9]{64}$"
-            },
-            "partIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 7
-            },
-            "partId": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.cancel"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "partIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 7
-            },
-            "partId": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.started"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch",
-            "playbackId",
-            "outputStreamId",
-            "sampleRate",
-            "voiceId"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "playbackId": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "outputStreamId": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 4294967295
-            },
-            "sampleRate": {
-              "const": 24000
-            },
-            "voiceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "backendId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "modelId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "partIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 7
-            },
-            "partId": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "dependentRequired": {
-            "backendId": ["modelId"],
-            "modelId": ["backendId"],
-            "partId": ["partIndex"]
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.ended"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch",
-            "playbackId",
-            "generatedSamples"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "playbackId": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "generatedSamples": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "partIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 7
-            },
-            "partId": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "tts.cancelled"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "streamId",
-            "responseId",
-            "epoch"
-          ],
-          "properties": {
-            "streamId": {
-              "$ref": "#/$defs/stream"
-            },
-            "responseId": {
-              "$ref": "#/$defs/response"
-            },
-            "epoch": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "partIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 7
-            },
-            "partId": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "sidecar.failure"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "code",
-            "recoverable"
-          ],
-          "properties": {
-            "code": {
-              "enum": [
-                "invalid_message",
-                "invalid_audio",
-                "queue_overflow",
-                "runtime_unavailable",
-                "runtime_poisoned",
-                "cancelled"
-              ]
-            },
-            "recoverable": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "voice.enroll"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "enrollment"
-          ],
-          "properties": {
-            "enrollment": {
-              "$ref": "../voice-enrollment.json"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "voice.enrolled"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "voiceId"
-          ],
-          "properties": {
-            "voiceId": {
-              "type": "string",
-              "pattern": "^custom:[0-9a-f]{24}$"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "voice.remove"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "voiceId"
-          ],
-          "properties": {
-            "voiceId": {
-              "type": "string",
-              "pattern": "^custom:[0-9a-f]{24}$"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "voice.removed"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "voiceId"
-          ],
-          "properties": {
-            "voiceId": {
-              "type": "string",
-              "pattern": "^custom:[0-9a-f]{24}$"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
-    },
-    {
-      "properties": {
-        "type": {
-          "const": "voice.error"
-        },
-        "payload": {
-          "type": "object",
-          "required": [
-            "voiceId",
-            "code",
-            "message"
-          ],
-          "properties": {
-            "voiceId": {
-              "type": "string",
-              "pattern": "^custom:[0-9a-f]{24}$"
-            },
-            "code": {
-              "type": "string",
-              "minLength": 1
-            },
-            "message": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "type": "object",
-      "required": [
-        "type",
-        "payload"
-      ]
+     },
+     "additionalProperties": false
     }
-  ]
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ],
+   "if": {
+    "properties": {
+     "payload": {
+      "type": "object",
+      "properties": {
+       "status": {
+        "const": "ready"
+       }
+      }
+     }
+    }
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "type": "object",
+      "required": [
+       "voiceCatalog"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "stream.open"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "captureStreamId",
+      "sampleRate",
+      "frameSamples"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "captureStreamId": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 4294967295
+      },
+      "sampleRate": {
+       "const": 16000
+      },
+      "frameSamples": {
+       "const": 320
+      },
+      "streamMode": {
+       "enum": [
+        "capture",
+        "preview"
+       ]
+      },
+      "catalogId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "backendId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "modelId": {
+       "type": "string",
+       "minLength": 1
+      }
+     },
+     "dependentRequired": {
+      "backendId": [
+       "modelId"
+      ],
+      "modelId": [
+       "backendId"
+      ]
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "enum": [
+      "stream.opened",
+      "stream.reset",
+      "stream.close",
+      "stream.closed"
+     ]
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "backendId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "modelId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "voiceCatalog": {
+       "$ref": "#/$defs/voiceCatalog"
+      },
+      "fallback": {
+       "$ref": "#/$defs/ttsModel"
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "vad.speech_start"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "utteranceId",
+      "captureStartSequence"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "utteranceId": {
+       "$ref": "#/$defs/utterance"
+      },
+      "captureStartSequence": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "vad.speech_end"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "utteranceId",
+      "captureStartSequence",
+      "captureEndSequence"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "utteranceId": {
+       "$ref": "#/$defs/utterance"
+      },
+      "captureStartSequence": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "captureEndSequence": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "stt.bind_epoch"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "utteranceId",
+      "epoch"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "utteranceId": {
+       "$ref": "#/$defs/utterance"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "stt.partial"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "utteranceId",
+      "epoch",
+      "sequence",
+      "text",
+      "replacedCharacters"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "utteranceId": {
+       "$ref": "#/$defs/utterance"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "sequence": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "text": {
+       "type": "string",
+       "maxLength": 16384
+      },
+      "replacedCharacters": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "stt.final"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "utteranceId",
+      "epoch",
+      "text",
+      "endpointComplete"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "utteranceId": {
+       "$ref": "#/$defs/utterance"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "text": {
+       "type": "string",
+       "maxLength": 16384
+      },
+      "endpointComplete": {
+       "const": true
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.request"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch",
+      "text",
+      "voiceId"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "text": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 4000
+      },
+      "voiceId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "speedModifier": {
+       "type": "number",
+       "minimum": 0.5,
+       "maximum": 2.0
+      },
+      "tonePrompt": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 1024
+      },
+      "language": {
+       "enum": [
+        "Chinese",
+        "English",
+        "Japanese",
+        "Korean",
+        "German",
+        "French",
+        "Russian",
+        "Portuguese",
+        "Spanish",
+        "Italian"
+       ]
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.open"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch",
+      "voiceId"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "voiceId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "speedModifier": {
+       "type": "number",
+       "minimum": 0.5,
+       "maximum": 2.0
+      },
+      "tonePrompt": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 1024
+      },
+      "language": {
+       "enum": [
+        "Chinese",
+        "English",
+        "Japanese",
+        "Korean",
+        "German",
+        "French",
+        "Russian",
+        "Portuguese",
+        "Spanish",
+        "Italian"
+       ]
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.append"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch",
+      "sequence",
+      "text"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "sequence": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "text": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 4000
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.commit"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch",
+      "nextSequence",
+      "textSha256"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "nextSequence": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "textSha256": {
+       "type": "string",
+       "pattern": "^[a-f0-9]{64}$"
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.cancel"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.started"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch",
+      "playbackId",
+      "outputStreamId",
+      "sampleRate",
+      "voiceId"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "playbackId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "outputStreamId": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 4294967295
+      },
+      "sampleRate": {
+       "const": 24000
+      },
+      "voiceId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "backendId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "modelId": {
+       "type": "string",
+       "minLength": 1
+      }
+     },
+     "dependentRequired": {
+      "backendId": [
+       "modelId"
+      ],
+      "modelId": [
+       "backendId"
+      ]
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.ended"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch",
+      "playbackId",
+      "generatedSamples"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "playbackId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "generatedSamples": {
+       "type": "integer",
+       "minimum": 1
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "tts.cancelled"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "streamId",
+      "responseId",
+      "epoch"
+     ],
+     "properties": {
+      "streamId": {
+       "$ref": "#/$defs/stream"
+      },
+      "responseId": {
+       "$ref": "#/$defs/response"
+      },
+      "epoch": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "sidecar.failure"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "code",
+      "recoverable"
+     ],
+     "properties": {
+      "code": {
+       "enum": [
+        "invalid_message",
+        "invalid_audio",
+        "queue_overflow",
+        "runtime_unavailable",
+        "runtime_poisoned",
+        "cancelled"
+       ]
+      },
+      "recoverable": {
+       "type": "boolean"
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "voice.enroll"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "enrollment"
+     ],
+     "properties": {
+      "enrollment": {
+       "$ref": "../voice-enrollment.json"
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "voice.enrolled"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "voiceId"
+     ],
+     "properties": {
+      "voiceId": {
+       "type": "string",
+       "pattern": "^custom:[0-9a-f]{24}$"
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "voice.remove"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "voiceId"
+     ],
+     "properties": {
+      "voiceId": {
+       "type": "string",
+       "pattern": "^custom:[0-9a-f]{24}$"
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "voice.removed"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "voiceId"
+     ],
+     "properties": {
+      "voiceId": {
+       "type": "string",
+       "pattern": "^custom:[0-9a-f]{24}$"
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  },
+  {
+   "properties": {
+    "type": {
+     "const": "voice.error"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "voiceId",
+      "code",
+      "message"
+     ],
+     "properties": {
+      "voiceId": {
+       "type": "string",
+       "pattern": "^custom:[0-9a-f]{24}$"
+      },
+      "code": {
+       "type": "string",
+       "minLength": 1
+      },
+      "message": {
+       "type": "string",
+       "minLength": 1
+      }
+     },
+     "additionalProperties": false
+    }
+   },
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ]
+  }
+ ]
 }

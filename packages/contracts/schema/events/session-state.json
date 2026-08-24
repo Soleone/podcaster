@@ -17,12 +17,15 @@
     },
     "planningStatus": {
       "type": "object",
-      "required": ["status"],
+      "required": ["status", "attempt"],
       "properties": {
         "status": { "enum": ["skipped", "planning", "ready", "failed", "cancelled", "continued"] },
+        "attempt": { "type": "integer", "minimum": 0 },
+        "stage": { "enum": ["starting", "researching", "finalizing"] },
+        "deadlineMs": { "type": "integer", "minimum": 0 },
+        "reasonCode": { "enum": ["timeout", "provider_unavailable", "invalid_result", "interrupted"] },
         "topic": { "type": "string", "minLength": 1, "maxUtf8Bytes": 2048 },
         "depth": { "enum": ["light", "standard", "deep"] },
-        "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
         "detail": { "type": "string", "maxLength": 512 },
         "notes": { "type": "string", "maxUtf8Bytes": 12288 }
       },
@@ -34,7 +37,7 @@
     { "type": "object", "required": ["type", "payload"], "properties": {
       "type": { "const": "session.state" },
       "payload": { "type": "object", "required": ["phase", "personaDigest"], "properties": {
-        "phase": { "enum": ["idle", "planning", "ready", "listening", "deciding", "reasoning", "synthesizing", "playing", "echo_provisional", "interruption_deciding", "stopped"] },
+        "phase": { "enum": ["idle", "preparing", "prelive", "starting_live", "planning", "ready", "listening", "deciding", "reasoning", "synthesizing", "playing", "echo_provisional", "interruption_deciding", "stopped"] },
         "personaDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "audio": { "$ref": "#/$defs/audioEngineStatus" },
         "planning": { "$ref": "#/$defs/planningStatus" }

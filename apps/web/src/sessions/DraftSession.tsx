@@ -163,7 +163,7 @@ export function DraftSession(props: DraftSessionProps) {
           </Button>
           <h1 className="text-2xl font-semibold leading-tight tracking-tight">New session</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Set the direction now. The microphone stays off until you start.
+            Set the direction now. The microphone stays off until you go live.
           </p>
         </div>
         <Badge variant="secondary">
@@ -192,7 +192,8 @@ export function DraftSession(props: DraftSessionProps) {
         <CardHeader>
           <CardTitle>Prepare the conversation</CardTitle>
           <CardDescription>
-            Optional private notes can give the live conversation a useful starting point.
+            Optional private notes can give the live conversation a useful starting point. Preparing never turns the
+            microphone on; you begin live from the session screen.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -207,7 +208,8 @@ export function DraftSession(props: DraftSessionProps) {
             <span>
               <span className="font-medium">Prepare before going live</span>
               <span className="mt-1 block text-muted-foreground">
-                A bounded research pass creates private notes, talking points, and questions before capture begins.
+                A bounded research pass creates private notes, talking points, and questions before you begin live
+                capture.
               </span>
             </span>
           </label>
@@ -296,7 +298,7 @@ export function DraftSession(props: DraftSessionProps) {
             ) : preparation.enabled ? (
               <>
                 <Sparkles data-icon="inline-start" aria-hidden="true" />
-                Prepare and start
+                Prepare
               </>
             ) : (
               <>

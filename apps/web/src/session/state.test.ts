@@ -15,28 +15,65 @@ const event = <T extends StableEvent['type']>(type: T, payload: Record<string, u
   }) as StableEvent;
 
 describe('session presentation state', () => {
-  it('shows bounded planning progress and preserves notes when live capture starts', () => {
+  it('tracks factual planning attempt/stage state and preserves notes into pre-live', () => {
     let state = reduceSessionState(
       initialSessionState,
       event('session.state', {
-        phase: 'planning',
-        planning: { status: 'planning', topic: 'radio', depth: 'light', progress: 35, detail: 'Researching' },
+        phase: 'preparing',
+        planning: {
+          status: 'planning',
+          attempt: 1,
+          stage: 'researching',
+          deadlineMs: 60_000,
+          topic: 'radio',
+          depth: 'light',
+          detail: 'Researching',
+        },
       }),
     );
     expect(state.dominant).toBe('planning');
-    expect(state.planning).toMatchObject({ status: 'planning', topic: 'radio', depth: 'light', progress: 35 });
+    expect(state.planning).toMatchObject({
+      status: 'planning',
+      attempt: 1,
+      stage: 'researching',
+      deadlineMs: 60_000,
+      topic: 'radio',
+      depth: 'light',
+    });
     state = reduceSessionState(
       state,
       event('session.state', {
-        phase: 'ready',
-        planning: { status: 'ready', topic: 'radio', depth: 'light', progress: 100, notes: 'Talking points' },
+        phase: 'prelive',
+        planning: {
+          status: 'ready',
+          attempt: 1,
+          topic: 'radio',
+          depth: 'light',
+          notes: 'Talking points',
+        },
       }),
     );
     expect(state.dominant).toBe('ready');
     expect(state.planning.notes).toBe('Talking points');
     state = reduceSessionState(state, event('session.state', { phase: 'listening' }));
     expect(state.dominant).toBe('listening');
-    expect(state.planning).toMatchObject({ status: 'ready', notes: 'Talking points' });
+    expect(state.planning).toMatchObject({ status: 'ready', notes: 'Talking points', attempt: 1 });
+  });
+
+  it('maps terminal failure reason codes and starting_live transitions onto the view', () => {
+    let state = reduceSessionState(
+      initialSessionState,
+      event('session.state', {
+        phase: 'prelive',
+        planning: { status: 'failed', attempt: 2, reasonCode: 'timeout', depth: 'standard' },
+      }),
+    );
+    expect(state.dominant).toBe('ready');
+    expect(state.planning).toMatchObject({ status: 'failed', attempt: 2, reasonCode: 'timeout' });
+    state = reduceSessionState(state, event('session.state', { phase: 'starting_live' }));
+    expect(state.dominant).toBe('ready');
+    state = reduceSessionState(state, event('session.state', { phase: 'listening' }));
+    expect(state.dominant).toBe('listening');
   });
 
   it('keeps partials tentative and out of announcements', () => {

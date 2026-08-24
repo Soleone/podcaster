@@ -1,415 +1,518 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/browser-command.json",
-  "title": "BrowserCommand",
-  "allOf": [
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/browser-command.json",
+ "title": "BrowserCommand",
+ "allOf": [
+  {
+   "$ref": "../protocol-envelope.json"
+  },
+  {
+   "oneOf": [
     {
-      "$ref": "../protocol-envelope.json"
+     "properties": {
+      "type": {
+       "const": "session.open"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "sessionSeed",
+        "reasoningMode",
+        "settings"
+       ],
+       "properties": {
+        "sessionSeed": {
+         "type": "string",
+         "format": "uuid"
+        },
+        "reasoningMode": {
+         "enum": [
+          "full",
+          "transcript_only"
+         ]
+        },
+        "planning": {
+         "type": "object",
+         "required": [
+          "topic",
+          "depth"
+         ],
+         "properties": {
+          "enabled": {
+           "const": true
+          },
+          "topic": {
+           "type": "string",
+           "minLength": 1,
+           "maxUtf8Bytes": 2048
+          },
+          "depth": {
+           "enum": [
+            "light",
+            "standard",
+            "deep"
+           ]
+          },
+          "notes": {
+           "type": "string",
+           "maxUtf8Bytes": 12288
+          },
+          "reuse": {
+           "type": "boolean"
+          }
+         },
+         "additionalProperties": false
+        },
+        "settings": {
+         "type": "object",
+         "required": [
+          "version",
+          "persona",
+          "voice"
+         ],
+         "properties": {
+          "version": {
+           "const": 1
+          },
+          "persona": {
+           "type": "string",
+           "maxUtf8Bytes": 8192
+          },
+          "pi": {
+           "type": "object",
+           "required": [
+            "model",
+            "thinkingLevel"
+           ],
+           "properties": {
+            "model": {
+             "type": "string",
+             "pattern": "^[^-\\s][^\\s]*$",
+             "minLength": 1,
+             "maxUtf8Bytes": 256
+            },
+            "thinkingLevel": {
+             "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+             ]
+            }
+           },
+           "additionalProperties": false
+          },
+          "voice": {
+           "type": "object",
+           "required": [
+            "catalogId",
+            "voiceId"
+           ],
+           "properties": {
+            "catalogId": {
+             "type": "string",
+             "minLength": 1
+            },
+            "voiceId": {
+             "type": "string",
+             "minLength": 1
+            },
+            "backendId": {
+             "type": "string",
+             "minLength": 1
+            },
+            "modelId": {
+             "type": "string",
+             "minLength": 1
+            },
+            "speedModifier": {
+             "type": "number",
+             "minimum": 0.5,
+             "maximum": 2.0
+            },
+            "tonePrompt": {
+             "type": "string",
+             "minLength": 1,
+             "maxLength": 1024
+            },
+            "language": {
+             "enum": [
+              "Chinese",
+              "English",
+              "Japanese",
+              "Korean",
+              "German",
+              "French",
+              "Russian",
+              "Portuguese",
+              "Spanish",
+              "Italian"
+             ]
+            }
+           },
+           "dependentRequired": {
+            "backendId": [
+             "modelId"
+            ],
+            "modelId": [
+             "backendId"
+            ]
+           },
+           "additionalProperties": false
+          }
+         },
+         "additionalProperties": false
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
     },
     {
-      "oneOf": [
-        {
-          "properties": {
-            "type": {
-              "const": "session.start"
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "sessionSeed",
-                "reasoningMode",
-                "settings"
-              ],
-              "properties": {
-                "sessionSeed": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "reasoningMode": {
-                  "enum": [
-                    "full",
-                    "transcript_only"
-                  ]
-                },
-                "planning": {
-                  "type": "object",
-                  "required": ["topic", "depth"],
-                  "properties": {
-                    "enabled": { "const": true },
-                    "topic": { "type": "string", "minLength": 1, "maxUtf8Bytes": 2048 },
-                    "depth": { "enum": ["light", "standard", "deep"] },
-                    "notes": { "type": "string", "maxUtf8Bytes": 12288 },
-                    "reuse": { "type": "boolean" }
-                  },
-                  "additionalProperties": false
-                },
-                "settings": {
-                  "type": "object",
-                  "required": [
-                    "version",
-                    "persona",
-                    "voice"
-                  ],
-                  "properties": {
-                    "version": {
-                      "const": 1
-                    },
-                    "persona": {
-                      "type": "string",
-                      "maxUtf8Bytes": 8192
-                    },
-                    "pi": {
-                      "type": "object",
-                      "required": ["model", "thinkingLevel"],
-                      "properties": {
-                        "model": { "type": "string", "pattern": "^[^-\\s][^\\s]*$", "minLength": 1, "maxUtf8Bytes": 256 },
-                        "thinkingLevel": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"] }
-                      },
-                      "additionalProperties": false
-                    },
-                    "voice": {
-                      "type": "object",
-                      "required": [
-                        "catalogId",
-                        "voiceId"
-                      ],
-                      "properties": {
-                        "catalogId": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "voiceId": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "backendId": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "modelId": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "speedModifier": {
-                          "type": "number",
-                          "minimum": 0.5,
-                          "maximum": 2.0
-                        },
-                        "tonePrompt": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 1024
-                        },
-                        "language": {
-                          "enum": [
-                            "Chinese",
-                            "English",
-                            "Japanese",
-                            "Korean",
-                            "German",
-                            "French",
-                            "Russian",
-                            "Portuguese",
-                            "Spanish",
-                            "Italian"
-                          ]
-                        }
-                      },
-                      "dependentRequired": {
-                        "backendId": ["modelId"],
-                        "modelId": ["backendId"]
-                      },
-                      "additionalProperties": false
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
+     "properties": {
+      "type": {
+       "const": "session.begin"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "streamId",
+        "sampleRate",
+        "channels",
+        "frameSamples"
+       ],
+       "properties": {
+        "streamId": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 4294967295
         },
-        {
-          "properties": {
-            "type": {
-              "const": "planning.cancel"
-            },
-            "payload": {
-              "type": "object",
-              "required": ["reason"],
-              "properties": {
-                "reason": { "enum": ["user", "stop"] }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
+        "sampleRate": {
+         "const": 16000
         },
-        {
-          "properties": {
-            "type": {
-              "const": "planning.retry"
-            },
-            "payload": {
-              "type": "object",
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
+        "channels": {
+         "const": 1
         },
-        {
-          "properties": {
-            "type": {
-              "const": "audio.start"
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "streamId",
-                "sampleRate",
-                "channels",
-                "frameSamples"
-              ],
-              "properties": {
-                "streamId": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 4294967295
-                },
-                "sampleRate": {
-                  "const": 16000
-                },
-                "channels": {
-                  "const": 1
-                },
-                "frameSamples": {
-                  "const": 320
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "audio.stop"
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "streamId"
-              ],
-              "properties": {
-                "streamId": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 4294967295
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "turn.cancel"
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "reason"
-              ],
-              "properties": {
-                "reason": {
-                  "enum": [
-                    "user",
-                    "stop"
-                  ]
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "enum": [
-                "barge_in.confirm",
-                "barge_in.reject"
-              ]
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "responseId",
-                "outputEpoch"
-              ],
-              "properties": {
-                "responseId": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "outputEpoch": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "turn.persisted"
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "turnId",
-                "finalEventId",
-                "persistedEpoch"
-              ],
-              "properties": {
-                "turnId": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "finalEventId": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "persistedEpoch": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "turn.persistence_failed"
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "turnId",
-                "finalEventId",
-                "persistedEpoch",
-                "reasonCode"
-              ],
-              "properties": {
-                "turnId": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "finalEventId": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "persistedEpoch": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "reasonCode": {
-                  "enum": [
-                    "quota",
-                    "unavailable",
-                    "aborted"
-                  ]
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "const": "session.stop"
-            },
-            "payload": {
-              "type": "object",
-              "required": [
-                "reason"
-              ],
-              "properties": {
-                "reason": {
-                  "enum": [
-                    "user",
-                    "expired",
-                    "disconnect"
-                  ]
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "type",
-            "payload"
-          ],
-          "type": "object"
-        },
-        {
-          "$ref": "./playback-progress.json"
-        },
-        {
-          "$ref": "./playback-paused.json"
-        },
-        {
-          "$ref": "./playback-stopped.json"
+        "frameSamples": {
+         "const": 320
         }
-      ]
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "planning.cancel"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "reason"
+       ],
+       "properties": {
+        "reason": {
+         "enum": [
+          "user",
+          "stop"
+         ]
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "planning.retry"
+      },
+      "payload": {
+       "type": "object",
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "audio.start"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "streamId",
+        "sampleRate",
+        "channels",
+        "frameSamples"
+       ],
+       "properties": {
+        "streamId": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 4294967295
+        },
+        "sampleRate": {
+         "const": 16000
+        },
+        "channels": {
+         "const": 1
+        },
+        "frameSamples": {
+         "const": 320
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "audio.stop"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "streamId"
+       ],
+       "properties": {
+        "streamId": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 4294967295
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "turn.cancel"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "reason"
+       ],
+       "properties": {
+        "reason": {
+         "enum": [
+          "user",
+          "stop"
+         ]
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "enum": [
+        "barge_in.confirm",
+        "barge_in.reject"
+       ]
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "responseId",
+        "outputEpoch"
+       ],
+       "properties": {
+        "responseId": {
+         "type": "string",
+         "format": "uuid"
+        },
+        "outputEpoch": {
+         "type": "integer",
+         "minimum": 0
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "turn.persisted"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "turnId",
+        "finalEventId",
+        "persistedEpoch"
+       ],
+       "properties": {
+        "turnId": {
+         "type": "string",
+         "format": "uuid"
+        },
+        "finalEventId": {
+         "type": "string",
+         "format": "uuid"
+        },
+        "persistedEpoch": {
+         "type": "integer",
+         "minimum": 0
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "turn.persistence_failed"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "turnId",
+        "finalEventId",
+        "persistedEpoch",
+        "reasonCode"
+       ],
+       "properties": {
+        "turnId": {
+         "type": "string",
+         "format": "uuid"
+        },
+        "finalEventId": {
+         "type": "string",
+         "format": "uuid"
+        },
+        "persistedEpoch": {
+         "type": "integer",
+         "minimum": 0
+        },
+        "reasonCode": {
+         "enum": [
+          "quota",
+          "unavailable",
+          "aborted"
+         ]
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "session.stop"
+      },
+      "payload": {
+       "type": "object",
+       "required": [
+        "reason"
+       ],
+       "properties": {
+        "reason": {
+         "enum": [
+          "user",
+          "expired",
+          "disconnect"
+         ]
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
+    },
+    {
+     "$ref": "./playback-progress.json"
+    },
+    {
+     "$ref": "./playback-paused.json"
+    },
+    {
+     "$ref": "./playback-stopped.json"
+    },
+    {
+     "properties": {
+      "type": {
+       "const": "session.rollback_begin"
+      },
+      "payload": {
+       "type": "object",
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "type",
+      "payload"
+     ],
+     "type": "object"
     }
-  ]
+   ]
+  }
+ ]
 }

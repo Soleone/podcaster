@@ -12,13 +12,14 @@ import {
   type BrowserCommand,
   type HostEvent,
   type PiSettings,
+  type PlanningDepth,
   type SessionPlanningRequest,
+  type VoicePreference,
 } from '@app/contracts';
 import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
 import type { PiResearchClient, ResearchToolActivity } from '../pi/PiResearchClient.js';
 import { SessionOrchestrator } from '../session/SessionOrchestrator.js';
-import { RuntimeBudget } from '../session/RuntimeBudget.js';
 import { PiInterruptionIntentClassifier } from '../session/InterruptionIntentClassifier.js';
 import {
   AudioClient,
@@ -34,6 +35,23 @@ const MAX_PENDING_FINALS = 8;
 const MAX_COMPLETED_PERSISTENCE_ACKS = 64;
 const MAX_RECONNECT_QUEUE_MESSAGES = 4_096;
 const MAX_RECONNECT_QUEUE_BYTES = 8 * 1024 * 1024;
+// Safe starting bounds per preparation depth: these are hard attempt deadlines
+// and prompt-level tool caps, not progress predictions. Revised from measured
+// p95 attempt/tool timings when available.
+const PLANNING_BOUNDS: Record<PlanningDepth, { deadlineMs: number; maxTools: number }> = {
+  light: { deadlineMs: 30_000, maxTools: 1 },
+  standard: { deadlineMs: 60_000, maxTools: 2 },
+  deep: { deadlineMs: 120_000, maxTools: 3 },
+};
+/** One factual planning attempt; the host owns exactly one at a time. */
+interface PlanningAttempt {
+  attempt: number;
+  state: 'running' | 'ready' | 'failed' | 'cancelled';
+  stage?: 'starting' | 'researching' | 'finalizing';
+  reasonCode?: 'timeout' | 'provider_unavailable' | 'invalid_result' | 'interrupted';
+  deadlineMs: number;
+  controller: AbortController;
+}
 interface OutboundFrame {
   value: string | Buffer;
   bytes: number;
@@ -137,6 +155,9 @@ export class BrowserSession {
   private orchestrator: SessionOrchestrator | undefined;
   private audio: AudioClient | undefined;
   private captureStreamId: number | undefined;
+  private liveBegin:
+    | { epoch: number; streamId: number; sampleRate: number; channels: number; frameSamples: number }
+    | undefined;
   private pending = new Map<string, PendingFinal>();
   private completedPersistenceAcks = new Map<string, CompletedPersistenceAck>();
   private stopped = false;
@@ -146,9 +167,18 @@ export class BrowserSession {
   private ownedPis: Array<{ shutdown(): Promise<void> }> = [];
   private planningRequest: SessionPlanningRequest | undefined;
   private planningNotes: string | undefined;
+  private planningAttempt: PlanningAttempt | undefined;
   private personaDigest = '0'.repeat(64);
+  /** Frozen persona/session identity from session.open; consumed by session.begin. */
+  private personaSource = '';
+  private sessionSeed = '';
   private planningAbort: AbortController | undefined;
   private planningPromise: Promise<'ready' | 'failed' | 'cancelled'> | undefined;
+  /** Frozen voice preference from session.open; consumed by session.begin. */
+  private voice: VoicePreference | undefined;
+  private transcriptOnly = false;
+  /** True once session.begin completed; audio status before that is pre-live. */
+  private live = false;
 
   constructor(socket: WebSocket, sidecar: SidecarProcess, options: BrowserSessionOptions) {
     this.socket = socket;
@@ -264,13 +294,19 @@ export class BrowserSession {
     if (!CONTRACT_VALIDATORS.BrowserCommand(value)) return this.protocolError('invalid_command');
     const command = value as BrowserCommand;
     if (this.sessionId && command.sessionId !== this.sessionId) return this.protocolError('session_mismatch');
-    if (command.type === 'session.start') return this.start(command);
+    if (command.type === 'session.open') return this.open(command);
+    if (command.type === 'session.begin') return this.begin(command);
+    if (command.type === 'session.rollback_begin') return this.rollbackBegin();
     if (command.type === 'planning.cancel') {
       this.cancelPlanning();
       return;
     }
     if (command.type === 'planning.retry') {
       await this.retryPlanning();
+      return;
+    }
+    if (command.type === 'session.stop') {
+      await this.stop();
       return;
     }
     if (!this.orchestrator || !this.sessionId) return this.protocolError('command_before_start');
@@ -316,16 +352,20 @@ export class BrowserSession {
       case 'turn.cancel':
         this.orchestrator.cancelCurrentTurn();
         break;
-      case 'session.stop':
-        await this.stop();
-        break;
       default:
         this.protocolError('unsupported_command');
     }
   }
 
-  private async start(command: BrowserCommandFor<'session.start'>): Promise<void> {
-    if (this.orchestrator || command.epoch !== 0 || this.planningPromise) return this.protocolError('second_start');
+  /**
+   * Pre-live open: freezes settings/persona, creates the session-owned Pi
+   * clients, and optionally runs preparation. It never creates the audio
+   * client, orchestrator, microphone capture, or recorder, and never reports
+   * a listening phase. session.begin is the only initial transition to live.
+   */
+  private async open(command: BrowserCommandFor<'session.open'>): Promise<void> {
+    if (this.sessionId || this.orchestrator || this.planningPromise) return this.protocolError('second_open');
+    if (command.epoch !== 0) return this.protocolError('epoch_mismatch');
     const settings = command.payload.settings;
     if (!isValidSessionSettingsSnapshot(settings)) return this.protocolError('invalid_settings');
     const voice = normalizeVoicePreference(settings.voice);
@@ -333,10 +373,13 @@ export class BrowserSession {
     const planning = command.payload.planning ? normalizeSessionPlanningRequest(command.payload.planning) : undefined;
     if (command.payload.planning && !planning) return this.protocolError('invalid_planning');
     this.sessionId = command.sessionId;
+    this.sessionSeed = String(command.payload.sessionSeed);
     const parsedPersona = parsePersona(settings.persona);
     if (parsedPersona.ok) this.personaDigest = parsedPersona.digest;
+    this.personaSource = settings.persona;
     this.planningRequest = planning;
-    const reasoningMode = command.payload.reasoningMode;
+    this.voice = voice;
+    this.transcriptOnly = command.payload.reasoningMode === 'transcript_only';
     const personaAppend = composePersonaAppend(settings.persona);
     const piSettings = normalizePiSettings(settings.pi);
     // Session-owned Pi clients carry the frozen persona and Pi controls; never
@@ -346,120 +389,215 @@ export class BrowserSession {
     this.classifierPi = this.options.createClassifierClient(piSettings);
     this.ownedPis.push(this.responsePi, this.researchPi, this.classifierPi);
 
-    // The absent-planning branch deliberately does not await or touch the
-    // research client. This keeps the existing direct-to-live start path fast.
     if (planning) {
-      if (reasoningMode === 'transcript_only') {
-        this.emitPlanningState('continued', planning, 100, 'Transcript-only mode is continuing without preparation.');
+      if (this.transcriptOnly) {
+        this.emitPlanningState('continued', planning, undefined, {
+          detail: 'Transcript-only mode is continuing without preparation.',
+        });
       } else if (planning.reuse || planning.notes !== undefined) {
         this.planningNotes = planning.notes ? truncatePlanningNotes(planning.notes) : undefined;
         this.emitPlanningState(
           'ready',
           planning,
-          100,
+          undefined,
           this.planningNotes
-            ? 'Saved preparation restored for this session.'
-            : 'No saved preparation was available; continuing without it.',
+            ? { detail: 'Saved preparation restored for this session.' }
+            : { detail: 'No saved preparation was available; continuing without it.' },
           this.planningNotes,
         );
       } else {
-        // Preparation runs behind the live start: the microphone and
-        // conversation come up immediately and the notes land in the
-        // reasoning context when the research pass finishes. The web resolves
-        // its start handshake on the first ready phase below, not on a
-        // terminal planning status.
+        // Preparation runs pre-live: the microphone and conversation stay off
+        // until session.begin. The web resolves its open handshake immediately
+        // and renders the preparation card from planning session.state events.
         this.planningPromise = this.runPlanning(planning).finally(() => {
           this.planningPromise = undefined;
         });
       }
+    } else {
+      this.emitSessionPhase('prelive');
+    }
+  }
+
+  /**
+   * The only initial transition to live, valid only from the pre-live phase.
+   * Cancels a running preparation (begin-without-preparation) and awaits its
+   * terminal cancellation before constructing the audio engine and
+   * orchestrator. On failure the session stays pre-live and retryable.
+   */
+  private async begin(command: BrowserCommandFor<'session.begin'>): Promise<void> {
+    if (this.stopped) return;
+    if (!this.sessionId || !this.voice) return this.protocolError('begin_before_open');
+    const payload = command.payload;
+    const streamId = Number(payload.streamId);
+    if (!Number.isSafeInteger(streamId) || streamId < 0) return this.protocolError('invalid_begin');
+    // A live begin is idempotent only when it is an exact retransmission. Do
+    // not let a stale or misconfigured retry rebind the active audio stream.
+    if (this.live && this.orchestrator && this.audio && this.captureStreamId !== undefined && this.liveBegin) {
+      const exact =
+        command.epoch === this.liveBegin.epoch &&
+        streamId === this.liveBegin.streamId &&
+        payload.sampleRate === this.liveBegin.sampleRate &&
+        payload.channels === this.liveBegin.channels &&
+        payload.frameSamples === this.liveBegin.frameSamples;
+      if (exact) return;
+      // A live begin mismatch is a recoverable command rejection. Keep the
+      // active orchestrator, audio/capture streams, and websocket untouched.
+      this.failure('begin_mismatch');
+      return;
+    }
+    if (this.orchestrator) return this.protocolError('second_begin');
+    if (command.epoch !== 0) return this.protocolError('epoch_mismatch');
+    if (this.planningPromise) {
+      this.cancelPlanning();
+      await this.planningPromise.catch(() => undefined);
     }
     if (this.stopped) return;
-    this.audio = new AudioClient(
-      this.sidecar,
-      {
-        status: (value) => this.audioStatus(value),
-        speechStart: (value) => this.speechStart(value),
-        speechEnd: (value) => this.speechEnd(value),
-        partial: (value) => this.partial(value),
-        final: (value) => this.final(value),
-        failure: (code) => this.failure(code),
-      },
-      (frame) => {
-        if (!this.stopped) this.sendFrame(Buffer.from(frame), true);
-      },
-      voice,
-    );
-    this.orchestrator = new SessionOrchestrator({
-      sessionId: command.sessionId,
-      sessionSeed: String(command.payload.sessionSeed),
-      pi: this.responsePi,
-      speech: this.audio,
-      personaSource: settings.persona,
-      researchPi: this.researchPi,
-      ...(this.planningNotes ? { planningContext: this.planningNotes } : {}),
-      multiPartEnabled: this.options.multiPartEnabled,
-      ...(this.options.multiPartEnabled ? { budget: new RuntimeBudget() } : {}),
-      transcriptOnly: reasoningMode === 'transcript_only',
-      interruptionClassifier: new PiInterruptionIntentClassifier(this.classifierPi),
-      emit: (value) => this.send(value),
-    });
-    await this.audio.connect();
-    if (this.planningRequest && this.planningPromise) {
-      this.emitPlanningState(
-        'planning',
-        this.planningRequest,
-        5,
-        'Preparation is running behind the live conversation.',
-        undefined,
-        'ready',
+    this.emitSessionPhase('starting_live');
+    const sessionId = this.sessionId;
+    try {
+      const audio = new AudioClient(
+        this.sidecar,
+        {
+          status: (value) => this.audioStatus(value),
+          speechStart: (value) => this.speechStart(value),
+          speechEnd: (value) => this.speechEnd(value),
+          partial: (value) => this.partial(value),
+          final: (value) => this.final(value),
+          failure: (code) => this.failure(code),
+        },
+        (frame) => {
+          if (!this.stopped) this.sendFrame(Buffer.from(frame), true);
+        },
+        this.voice,
       );
+      const orchestrator = new SessionOrchestrator({
+        sessionId,
+        sessionSeed: this.sessionSeed,
+        pi: this.responsePi!,
+        speech: audio,
+        personaSource: this.personaSource,
+        ...(this.researchPi ? { researchPi: this.researchPi } : {}),
+        ...(this.planningNotes ? { planningContext: this.planningNotes } : {}),
+        multiPartEnabled: this.options.multiPartEnabled,
+        transcriptOnly: this.transcriptOnly,
+        interruptionClassifier: new PiInterruptionIntentClassifier(this.classifierPi),
+        emit: (value) => this.send(value),
+      });
+      this.audio = audio;
+      this.orchestrator = orchestrator;
+      await audio.connect();
+      await audio.open(streamId);
+      if (this.stopped) {
+        await audio.close().catch(() => undefined);
+        this.audio = undefined;
+        this.orchestrator = undefined;
+        return;
+      }
+      this.captureStreamId = streamId;
+      this.liveBegin = {
+        epoch: command.epoch,
+        streamId,
+        sampleRate: payload.sampleRate,
+        channels: payload.channels,
+        frameSamples: payload.frameSamples,
+      };
+      orchestrator.start();
+      this.live = true;
+    } catch (error) {
+      // Roll back: close the audio engine and release the orchestrator so the
+      // session stays pre-live and a retry can begin again. The browser keeps
+      // the connection and may call session.begin again.
+      this.captureStreamId = undefined;
+      this.liveBegin = undefined;
+      await this.audio?.close().catch(() => undefined);
+      this.audio = undefined;
+      this.orchestrator = undefined;
+      if (!this.stopped) {
+        this.emitSessionPhase('prelive');
+        this.failure('audio_engine_not_ready');
+      }
     }
-    // Do not mark the session listening yet. audio.start must complete the
-    // capture/VAD/TTS warmup contract first, otherwise the first utterance can
-    // race a sidecar that only announced `starting`.
+  }
+
+  /** Factual pre-live/live transition phase; carries no planning payload. */
+  private emitSessionPhase(phase: 'prelive' | 'starting_live'): void {
+    if (!this.sessionId || this.stopped) return;
+    const snapshot = this.orchestrator?.snapshot();
+    this.send(
+      event(this.sessionId, snapshot?.epoch ?? 0, 'session.state', {
+        phase,
+        personaDigest: snapshot?.personaDigest ?? this.personaDigest,
+      }),
+    );
   }
 
   private emitPlanningState(
     status: 'planning' | 'ready' | 'failed' | 'cancelled' | 'continued',
     request: SessionPlanningRequest,
-    progress: number,
-    detail: string,
+    attempt: Pick<PlanningAttempt, 'attempt' | 'deadlineMs' | 'stage' | 'reasonCode'> | undefined,
+    fields: { stage?: PlanningAttempt['stage']; reasonCode?: PlanningAttempt['reasonCode']; detail: string },
     notes?: string,
-    phaseOverride?: 'ready',
   ): void {
     if (!this.sessionId || this.stopped) return;
     const snapshot = this.orchestrator?.snapshot();
+    const stage = fields.stage ?? attempt?.stage;
     this.send(
       event(this.sessionId, snapshot?.epoch ?? 0, 'session.state', {
-        phase: phaseOverride ?? (status === 'planning' ? 'planning' : 'ready'),
+        // Terminal planning states land the session in the explicit pre-live
+        // phase; a running attempt is reported as preparing. session.begin is
+        // the only path from prelive into a listening phase.
+        phase: status === 'planning' ? 'preparing' : 'prelive',
         personaDigest: snapshot?.personaDigest ?? this.personaDigest,
         planning: {
           status,
+          attempt: attempt?.attempt ?? 0,
+          ...(attempt?.deadlineMs !== undefined ? { deadlineMs: attempt.deadlineMs } : {}),
+          ...(stage !== undefined ? { stage } : {}),
+          ...(fields.reasonCode !== undefined ? { reasonCode: fields.reasonCode } : {}),
           topic: request.topic,
           depth: request.depth,
-          progress: Math.max(0, Math.min(100, Math.round(progress))),
-          detail,
-          ...(notes ? { notes } : {}),
+          detail: fields.detail,
+          ...(notes !== undefined ? { notes } : {}),
         },
       }),
     );
   }
 
   private async runPlanning(request: SessionPlanningRequest): Promise<'ready' | 'failed' | 'cancelled'> {
+    const bounds = PLANNING_BOUNDS[request.depth];
     const controller = new AbortController();
+    const attempt: PlanningAttempt = {
+      attempt: (this.planningAttempt?.attempt ?? 0) + 1,
+      state: 'running',
+      deadlineMs: bounds.deadlineMs,
+      controller,
+    };
     this.planningAbort = controller;
-    this.emitPlanningState('planning', request, 0, `Preparing a ${request.depth} briefing before microphone capture.`);
+    this.planningAttempt = attempt;
+    this.emitPlanningState('planning', request, attempt, {
+      stage: 'starting',
+      detail: `Preparing a ${request.depth} briefing. The microphone stays off until you go live.`,
+    });
     try {
       const research = this.researchPi;
       if (!research?.requestPlan) throw new Error('planning provider unavailable');
-      this.emitPlanningState('planning', request, 20, 'Running a bounded read-only research pass.');
+      this.emitPlanningState('planning', request, attempt, {
+        stage: 'researching',
+        detail: 'Running a bounded read-only research pass.',
+      });
       let notes = '';
       let sawDelta = false;
       for await (const item of research.requestPlan(
         {
           topic: request.topic,
           depth: request.depth,
-          onToolActivity: (activity) => this.emitPlanningToolActivity(activity),
+          deadlineMs: bounds.deadlineMs,
+          maxTools: bounds.maxTools,
+          // Stale callbacks from a superseded attempt must never surface:
+          // emit only while this attempt is still the registered one.
+          onToolActivity: (activity) => {
+            if (this.planningAttempt === attempt) this.emitPlanningToolActivity(activity);
+          },
         },
         controller.signal,
       )) {
@@ -469,33 +607,61 @@ export class BrowserSession {
           // are retained and injected into the live reasoning context.
           if (!sawDelta) {
             sawDelta = true;
-            this.emitPlanningState('planning', request, 65, 'Condensing research into conversation notes.');
+            attempt.stage = 'finalizing';
+            this.emitPlanningState('planning', request, attempt, {
+              stage: 'finalizing',
+              detail: 'Condensing research into conversation notes.',
+            });
           }
         } else if (item.type === 'final') {
           notes = truncatePlanningNotes(item.text);
         } else if (item.type === 'error') {
-          throw new Error('planning provider unavailable');
+          throw new Error(item.detail ?? 'planning provider unavailable');
         }
       }
-      if (!notes) throw new Error('planning returned no notes');
+      if (controller.signal.aborted || this.stopped) throw new PlanningCancelled();
+      if (!notes) {
+        attempt.state = 'failed';
+        attempt.reasonCode = 'invalid_result';
+        this.emitPlanningState('failed', request, attempt, {
+          reasonCode: 'invalid_result',
+          detail: 'Preparation finished without usable notes. Begin without preparation, or retry.',
+        });
+        return 'failed';
+      }
       this.planningNotes = notes;
-      this.orchestrator?.setPlanningContext(notes);
-      this.emitPlanningState('ready', request, 100, 'Preparation is ready. Notes joined the live conversation.', notes);
+      attempt.state = 'ready';
+      this.emitPlanningState(
+        'ready',
+        request,
+        attempt,
+        { detail: 'Preparation is ready. Notes join the conversation when you go live.' },
+        notes,
+      );
       return 'ready';
     } catch (error) {
       this.planningNotes = undefined;
       if (controller.signal.aborted || error instanceof PlanningCancelled || this.stopped) {
-        this.emitPlanningState('cancelled', request, 100, 'Preparation was cancelled. Continuing without preparation.');
+        attempt.state = 'cancelled';
+        attempt.reasonCode = 'interrupted';
+        this.emitPlanningState('cancelled', request, attempt, {
+          reasonCode: 'interrupted',
+          detail: 'Preparation was cancelled. Begin without preparation, or retry.',
+        });
         return 'cancelled';
       }
-      // Keep provider detail out of the wire and spoken context. The lifecycle
-      // state is enough for the browser to explain the safe continue path.
-      this.emitPlanningState(
-        'failed',
-        request,
-        100,
-        'Preparation failed or timed out. Continuing without preparation is safe; retry later if needed.',
-      );
+      // Keep provider detail out of the wire and spoken context. The bounded
+      // reasonCode drives the browser's copy and available actions.
+      const timedOut =
+        error instanceof Error && (error.message.includes('timed out') || error.message.includes('timeout'));
+      attempt.state = 'failed';
+      attempt.reasonCode = timedOut ? 'timeout' : 'provider_unavailable';
+      this.emitPlanningState('failed', request, attempt, {
+        reasonCode: attempt.reasonCode,
+        detail: timedOut
+          ? 'Preparation timed out. Begin without preparation, or retry.'
+          : 'Preparation failed. Begin without preparation, or retry.',
+      });
       return 'failed';
     } finally {
       if (this.planningAbort === controller) this.planningAbort = undefined;
@@ -514,7 +680,10 @@ export class BrowserSession {
 
   private async retryPlanning(): Promise<void> {
     const request = this.planningRequest;
-    if (!request || this.stopped || this.planningPromise) return;
+    // Retry is accepted only pre-live after a terminal state; a running attempt
+    // or an already-live session must ignore it.
+    if (!request || this.stopped || this.orchestrator || this.planningPromise) return;
+    if (this.planningAttempt?.state === 'running') return;
     this.planningPromise = this.runPlanning(request).finally(() => {
       this.planningPromise = undefined;
     });
@@ -536,13 +705,27 @@ export class BrowserSession {
       throw error;
     }
   }
+  private async rollbackBegin(): Promise<void> {
+    await this.rollbackLiveToPrelive();
+  }
+
   private stopAudio(payload: BrowserCommandPayload<'audio.stop'>): void {
-    // Duplicate or late stops are expected when a reconnect races the last
-    // command from the old socket. Treat them as idempotent instead of killing
-    // the newly attached conversation.
     if (this.captureStreamId === undefined || Number(payload.streamId) !== this.captureStreamId) return;
-    this.audio!.reset();
+    // audio.stop is the browser's compensating action when local activation
+    // fails after begin acknowledgement. Tear down both live owners so the
+    // next explicit session.begin is a real, retryable pre-live transition.
+    void this.rollbackLiveToPrelive();
+  }
+  private async rollbackLiveToPrelive(): Promise<void> {
+    const audio = this.audio;
     this.captureStreamId = undefined;
+    this.liveBegin = undefined;
+    this.live = false;
+    this.orchestrator?.stop();
+    this.orchestrator = undefined;
+    this.audio = undefined;
+    await audio?.close().catch(() => undefined);
+    if (!this.stopped) this.emitSessionPhase('prelive');
   }
 
   private audioStatus(value: AudioEngineStatusSnapshot): void {
@@ -551,7 +734,9 @@ export class BrowserSession {
     if (snapshot.phase === 'acceptance_pending_terminal') return;
     this.send(
       event(this.sessionId, snapshot.epoch, 'session.state', {
-        phase: snapshot.phase,
+        // Audio status emitted while session.begin is still in flight must not
+        // report an idle/live phase; pre-live transitions are explicit.
+        phase: this.live ? snapshot.phase : 'starting_live',
         personaDigest: snapshot.personaDigest,
         audio: value,
       }),
@@ -670,9 +855,9 @@ export class BrowserSession {
     }
   }
   private failure(code: string): void {
-    if (!this.sessionId || !this.orchestrator || this.stopped) return;
+    if (!this.sessionId || this.stopped) return;
     this.send(
-      event(this.sessionId, this.orchestrator.snapshot().epoch, 'failure', {
+      event(this.sessionId, this.orchestrator?.snapshot().epoch ?? 0, 'failure', {
         code,
         detail: 'The local audio conversation could not continue this turn.',
         correctiveAction: 'Continue listening, retry, or stop the session.',

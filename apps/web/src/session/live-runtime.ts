@@ -22,6 +22,10 @@ import type { SessionSettingsSnapshot } from '@app/contracts/settings';
 export interface LiveSessionRuntime {
   readonly sessionId: string;
   snapshot(): SessionViewState;
+  /** Explicit pre-live-to-live transition; the sole caller of capture/recorder activation. */
+  beginLive(): Promise<void>;
+  cancelPlanning(): Promise<void>;
+  retryPlanning(): Promise<void>;
   cancelAssistant(): Promise<void>;
   pause(): Promise<boolean>;
   stop(): Promise<void>;
@@ -150,7 +154,7 @@ class Runtime implements LiveSessionRuntime {
   static async create(options: LiveRuntimeOptions): Promise<LiveSessionRuntime> {
     const runtime = new Runtime(options);
     try {
-      await runtime.compose();
+      await runtime.open();
       return runtime;
     } catch (error) {
       await runtime.dispose();
@@ -165,7 +169,14 @@ class Runtime implements LiveSessionRuntime {
     return this.controller?.snapshot() ?? this.options.initialState ?? initialSessionState;
   }
 
-  private async compose(): Promise<void> {
+  /**
+   * Pre-live open: composes storage, recorder, transport, and controller, and
+   * sends session.open (optionally starting preparation). It never acquires or
+   * processes microphone audio: no getUserMedia, no recorder capture feed, no
+   * capture stream, and no activation of the local session row. beginLive() is
+   * the only path into live capture.
+   */
+  private async open(): Promise<void> {
     const store = await (this.options.openRecordingStore ?? (() => RecordingStore.open()))();
     this.store = store;
     const recorder = new RecordingRecorder({
@@ -237,60 +248,106 @@ class Runtime implements LiveSessionRuntime {
         void capture?.stop().catch(() => undefined);
       }),
     );
-    if (!this.options.fake) this.unsubs.push(transport.onReconnect(() => this.recoverCapture()));
-    if (!this.options.fake) {
-      await transport.startSession({
-        sessionSeed: this.options.seed,
-        reasoningMode: this.options.reasoningMode,
-        ...(this.options.planning ? { planning: this.options.planning } : {}),
-        settings: this.options.settings,
-      });
-    }
+    transport.openSession({
+      sessionSeed: this.options.seed,
+      reasoningMode: this.options.reasoningMode,
+      ...(this.options.planning ? { planning: this.options.planning } : {}),
+      settings: this.options.settings,
+    });
     const fakeTransport = this.options.fake ? (transport as FakeSessionTransport) : undefined;
     if (fakeTransport && this.options.planning)
       await fakeTransport.emit(
         fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', {
-          phase: 'ready',
+          phase: 'preparing',
           personaDigest: '0'.repeat(64),
           planning: {
-            status: 'ready',
+            status: 'planning',
+            attempt: 1,
+            stage: 'starting',
             topic: this.options.planning.topic,
             depth: this.options.planning.depth,
-            progress: 100,
-            detail: 'Fake services are ready to go live.',
+            detail: 'Fake services are preparing the briefing. The microphone stays off until you go live.',
           },
         }),
       );
-    await this.options.activate();
-    if (this.options.fake) {
-      await this.startCapture();
-      if (fakeTransport && this.options.planning)
-        await fakeTransport.emit(
-          fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', {
-            phase: 'listening',
-            personaDigest: '0'.repeat(64),
-          }),
-        );
-    } else {
-      const random = new Uint32Array(1);
-      crypto.getRandomValues(random);
-      this.streamId = random[0] ?? 0;
-      let audioReady = false;
-      const pending: Uint8Array[] = [];
-      this.capture = await this.makeCapture(
-        this.streamId,
-        (audio) => recorder.onCaptureAudio(audio),
-        (frame) => {
-          if (audioReady) void transport.sendCapture(frame);
-          else if (pending.length < 128) pending.push(frame);
-          else controller.degrade('Microphone audio arrived before the audio engine was ready.');
-        },
-      );
-      await transport.startAudio(this.streamId);
-      audioReady = true;
-      for (const frame of pending.splice(0)) void transport.sendCapture(frame);
-      this.stats.captureStarts++;
-    }
+  }
+
+  private beginning: Promise<void> | undefined;
+
+  /**
+   * The explicit Begin live action. Mutexed and retryable while pre-live: it
+   * sends session.begin (the host cancels any running preparation first and
+   * awaits its terminal state), activates the local session row only after the
+   * host acknowledges, and only then starts BrowserCapture. Any failure leaves
+   * the runtime pre-live without a leaked capture stream.
+   */
+  async beginLive(): Promise<void> {
+    if (this.beginning) return this.beginning;
+    if (this.stopped || this.disposed) throw new Error('The session is not pre-live.');
+    if (!this.transport || !this.controller) throw new Error('The session is not open.');
+    const transport = this.transport;
+    const controller = this.controller;
+    const recorder = this.recorder!;
+    let liveStreamId: number | undefined;
+    const run = (async () => {
+      try {
+        if (this.options.fake) {
+          await this.options.activate();
+          await this.startCapture();
+          if (this.options.planning)
+            await (transport as FakeSessionTransport).emit(
+              fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', {
+                phase: 'listening',
+                personaDigest: '0'.repeat(64),
+              }),
+            );
+        } else {
+          const random = new Uint32Array(1);
+          crypto.getRandomValues(random);
+          const streamId = random[0] ?? 0;
+          liveStreamId = streamId;
+          await transport.beginLive(streamId);
+          await this.options.activate();
+          let audioReady = false;
+          const pending: Uint8Array[] = [];
+          this.capture = await this.makeCapture(
+            streamId,
+            (audio) => recorder.onCaptureAudio(audio),
+            (frame) => {
+              if (audioReady) void transport.sendCapture(frame);
+              else if (pending.length < 128) pending.push(frame);
+              else controller.degrade('Microphone audio arrived before the audio engine was ready.');
+            },
+          );
+          this.streamId = streamId;
+          audioReady = true;
+          for (const frame of pending.splice(0)) void transport.sendCapture(frame);
+          this.stats.captureStarts++;
+          this.unsubs.push(transport.onReconnect(() => this.recoverCapture()));
+        }
+      } catch (error) {
+        // Roll back any partial capture so a failed begin never leaves a live
+        // microphone stream behind; the session stays pre-live and retryable.
+        const capture = this.capture;
+        this.capture = undefined;
+        this.streamId = undefined;
+        if (capture) await capture.stop().catch(() => undefined);
+        if (!this.options.fake) await Promise.resolve(transport.rollbackLive()).catch(() => undefined);
+        throw error;
+      }
+    })().finally(() => {
+      if (this.beginning === run) this.beginning = undefined;
+    });
+    this.beginning = run;
+    return run;
+  }
+
+  async cancelPlanning(): Promise<void> {
+    await this.transport?.cancelPlanning();
+  }
+
+  async retryPlanning(): Promise<void> {
+    await this.transport?.retryPlanning();
   }
 
   private makeCapture(
@@ -331,7 +388,8 @@ class Runtime implements LiveSessionRuntime {
       this.capture = undefined;
       this.streamId = undefined;
       if (oldCapture) await oldCapture.stop().catch(() => undefined);
-      if (oldStream !== undefined) await Promise.resolve(transport.stopAudio(oldStream)).catch(() => undefined);
+      // Keep the host live during reconnect; audio.open rebinds the capture
+      // stream. audio.stop is reserved for compensating a failed initial begin.
       if (this.stopped || this.disposed) return;
       const random = new Uint32Array(1);
       crypto.getRandomValues(random);

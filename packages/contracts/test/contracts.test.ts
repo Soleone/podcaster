@@ -41,7 +41,6 @@ const cases = [
   ['protocol-envelope.json', 'core-event', 'protocol-envelope'],
   ['events/core-events.json', 'core-event', 'core-events'],
   ['events/barge-in.json', 'barge-in', 'barge-in'],
-  ['events/budget-mitigation.json', 'budget-mitigation', 'budget-mitigation'],
   ['events/browser-command.json', 'browser-command', 'browser-command'],
   ['events/failure.json', 'failure', 'failure'],
   ['events/host-event.json', 'host-event', 'host-event'],
@@ -53,9 +52,8 @@ const cases = [
   ['events/reasoning-started.json', 'reasoning-started', 'reasoning-started'],
   ['events/reasoning-final.json', 'reasoning-final', 'reasoning-final'],
   ['events/reasoning-delta.json', 'reasoning-delta', 'reasoning-delta'],
+  ['events/response-cancelled.json', 'response.cancelled', 'response-cancelled'],
   ['events/response-failed.json', 'response-failed', 'response-failed'],
-  ['events/response-part-final.json', 'response.part_final', 'response-part-final'],
-  ['events/response-part-started.json', 'response.part_started', 'response-part-started'],
   ['events/session-state.json', 'session-state', 'session-state'],
   ['events/sidecar-message.json', 'sidecar-message', 'sidecar-message'],
   ['events/transcript-final.json', 'transcript-final', 'transcript-final'],
@@ -77,7 +75,6 @@ const cases = [
 
 const hostEventSchemaPaths = new Set([
   'events/barge-in.json',
-  'events/budget-mitigation.json',
   'events/failure.json',
   'events/host-event.json',
   'events/interruption-decision.json',
@@ -85,9 +82,8 @@ const hostEventSchemaPaths = new Set([
   'events/reasoning-delta.json',
   'events/reasoning-final.json',
   'events/reasoning-started.json',
+  'events/response-cancelled.json',
   'events/response-failed.json',
-  'events/response-part-final.json',
-  'events/response-part-started.json',
   'events/session-state.json',
   'events/transcript-final.json',
   'events/transcript-partial.json',
@@ -247,78 +243,87 @@ describe('HostEvent union', () => {
   });
 });
 
-describe('multi-part response part constraints', () => {
-  const partStarted = (payload: Record<string, unknown>) =>
-    CONTRACT_VALIDATORS.ResponsePartStartedEvent({
-      protocolVersion: 1,
-      sessionId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f1',
-      epoch: 2,
-      eventId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f3',
-      monotonicMs: 1000,
-      type: 'response.part_started',
-      payload,
-    });
-  const base = { turnId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f5', responseId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f6' };
-  test('accepts stall at index 0 and body at indices 1-7', () => {
-    expect(partStarted({ ...base, kind: 'stall', partIndex: 0 })).toBe(true);
-    for (const index of [1, 3, 7]) expect(partStarted({ ...base, kind: 'body', partIndex: index })).toBe(true);
-  });
-  test('rejects stall at nonzero index, body at index 0, and out-of-range indices', () => {
-    expect(partStarted({ ...base, kind: 'stall', partIndex: 1 })).toBe(false);
-    expect(partStarted({ ...base, kind: 'body', partIndex: 0 })).toBe(false);
-    expect(partStarted({ ...base, kind: 'body', partIndex: 8 })).toBe(false);
-    expect(partStarted({ ...base, kind: 'body', partIndex: -1 })).toBe(false);
-    expect(partStarted({ ...base, kind: 'stall', partIndex: 0.5 })).toBe(false);
-  });
-  test('rejects a partId without a partIndex, and unknown kinds', () => {
-    expect(partStarted({ ...base, kind: 'body', partIndex: 1, partId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f7' })).toBe(
-      true,
-    );
-    expect(partStarted({ ...base, kind: 'body', partId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f7' })).toBe(false);
-    expect(partStarted({ ...base, kind: 'intro', partIndex: 0 })).toBe(false);
-  });
-  test('multipart TTS started requires outputStreamId; legacy may omit it', () => {
-    const env = {
-      protocolVersion: 1,
-      sessionId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f1',
-      epoch: 2,
-      eventId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f3',
-      monotonicMs: 1000,
-      type: 'tts.started',
+describe('single-stream response lifecycle constraints', () => {
+  const env = {
+    protocolVersion: 1,
+    sessionId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f1',
+    epoch: 2,
+    eventId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f3',
+    monotonicMs: 1000,
+  };
+  test('response.cancelled requires identity and a bounded reason', () => {
+    const base = {
+      turnId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f5',
+      responseId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f6',
     };
+    expect(
+      CONTRACT_VALIDATORS.ResponseCancelledEvent({
+        ...env,
+        type: 'response.cancelled',
+        payload: { ...base, reason: 'superseded' },
+      }),
+    ).toBe(true);
+    expect(
+      CONTRACT_VALIDATORS.ResponseCancelledEvent({
+        ...env,
+        type: 'response.cancelled',
+        payload: { ...base, reason: 'user' },
+      }),
+    ).toBe(true);
+    expect(
+      CONTRACT_VALIDATORS.ResponseCancelledEvent({
+        ...env,
+        type: 'response.cancelled',
+        payload: { ...base, reason: 'stopped' },
+      }),
+    ).toBe(true);
+    expect(
+      CONTRACT_VALIDATORS.ResponseCancelledEvent({
+        ...env,
+        type: 'response.cancelled',
+        payload: { ...base, reason: 'unknown' },
+      }),
+    ).toBe(false);
+    expect(
+      CONTRACT_VALIDATORS.ResponseCancelledEvent({ ...env, type: 'response.cancelled', payload: { ...base } }),
+    ).toBe(false);
+  });
+  test('tts.started carries one output stream without part identity', () => {
     const base = {
       responseId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f6',
       playbackId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f7',
       sampleRate: 24000,
     };
-    expect(CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, payload: base })).toBe(true);
-    expect(CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, payload: { ...base, partIndex: 1 } })).toBe(false);
+    expect(CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, type: 'tts.started', payload: base })).toBe(true);
     expect(
-      CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, payload: { ...base, partIndex: 1, outputStreamId: 42 } }),
+      CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, type: 'tts.started', payload: { ...base, outputStreamId: 42 } }),
     ).toBe(true);
+    expect(
+      CONTRACT_VALIDATORS.TtsStartedEvent({ ...env, type: 'tts.started', payload: { ...base, partIndex: 1 } }),
+    ).toBe(false);
   });
-  test('reasoning events reject partId without partIndex', () => {
-    const env = {
-      protocolVersion: 1,
-      sessionId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f1',
-      epoch: 2,
-      eventId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f3',
-      monotonicMs: 1000,
-      type: 'reasoning.delta',
-    };
+  test('reasoning events reject part identity on the active path', () => {
     const base = {
       turnId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f5',
       responseId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f6',
       text: 'hi',
     };
-    expect(CONTRACT_VALIDATORS.ReasoningDeltaEvent({ ...env, payload: base })).toBe(true);
-    expect(CONTRACT_VALIDATORS.ReasoningDeltaEvent({ ...env, payload: { ...base, partIndex: 2 } })).toBe(true);
+    expect(CONTRACT_VALIDATORS.ReasoningDeltaEvent({ ...env, type: 'reasoning.delta', payload: base })).toBe(true);
+    expect(
+      CONTRACT_VALIDATORS.ReasoningDeltaEvent({ ...env, type: 'reasoning.delta', payload: { ...base, partIndex: 2 } }),
+    ).toBe(false);
     expect(
       CONTRACT_VALIDATORS.ReasoningDeltaEvent({
         ...env,
+        type: 'reasoning.delta',
         payload: { ...base, partId: '018f06b5-3c8d-7b2a-9f35-8b3388a857f8' },
       }),
     ).toBe(false);
+  });
+  test('session.rollback_begin is a payload-less browser command', () => {
+    const value = { ...env, type: 'session.rollback_begin', payload: {} };
+    expect(CONTRACT_VALIDATORS.BrowserCommand(value)).toBe(true);
+    expect(CONTRACT_VALIDATORS.BrowserCommand({ ...value, payload: { streamId: 1 } })).toBe(false);
   });
 });
 
@@ -392,7 +397,7 @@ describe('optional session planning contract', () => {
   test('accepts a bounded topic and validated depth while keeping planning optional', () => {
     const value = {
       ...envelope,
-      type: 'session.start',
+      type: 'session.open',
       payload: {
         sessionSeed: '018f06b5-3c8d-7b2a-9f35-8b3388a857f5',
         reasoningMode: 'full',
@@ -408,7 +413,7 @@ describe('optional session planning contract', () => {
   test('rejects incomplete, unknown, and oversized planning input', () => {
     const base = {
       ...envelope,
-      type: 'session.start',
+      type: 'session.open',
       payload: {
         sessionSeed: '018f06b5-3c8d-7b2a-9f35-8b3388a857f5',
         reasoningMode: 'full',
@@ -437,9 +442,17 @@ describe('optional session planning contract', () => {
       ...envelope,
       type: 'session.state',
       payload: {
-        phase: 'planning',
+        phase: 'preparing',
         personaDigest: '0'.repeat(64),
-        planning: { status: 'planning', topic: 'topic', depth: 'standard', progress: 40, detail: 'Researching' },
+        planning: {
+          status: 'planning',
+          attempt: 2,
+          stage: 'researching',
+          deadlineMs: 60_000,
+          topic: 'topic',
+          depth: 'standard',
+          detail: 'Researching',
+        },
       },
     };
     expect(CONTRACT_VALIDATORS.SessionStateEvent(value)).toBe(true);
@@ -449,6 +462,53 @@ describe('optional session planning contract', () => {
         payload: { ...value.payload, planning: { ...value.payload.planning, notes: 'x'.repeat(12_289) } },
       }),
     ).toBe(false);
+  });
+  test('accepts terminal planning state with reasonCode and prelive phase', () => {
+    const value = {
+      ...envelope,
+      type: 'session.state',
+      payload: {
+        phase: 'prelive',
+        personaDigest: '0'.repeat(64),
+        planning: { status: 'failed', attempt: 1, reasonCode: 'timeout', depth: 'light' },
+      },
+    };
+    expect(CONTRACT_VALIDATORS.SessionStateEvent(value)).toBe(true);
+  });
+  test('rejects fabricated planning progress and unknown reason codes', () => {
+    const base = {
+      ...envelope,
+      type: 'session.state',
+      payload: {
+        phase: 'preparing',
+        personaDigest: '0'.repeat(64),
+        planning: { status: 'planning', attempt: 1 },
+      },
+    };
+    expect(
+      CONTRACT_VALIDATORS.SessionStateEvent({
+        ...base,
+        payload: { ...base.payload, planning: { ...base.payload.planning, progress: 40 } },
+      }),
+    ).toBe(false);
+    expect(
+      CONTRACT_VALIDATORS.SessionStateEvent({
+        ...base,
+        payload: { ...base.payload, planning: { ...base.payload.planning, reasonCode: 'unknown' } },
+      }),
+    ).toBe(false);
+  });
+  test('accepts the explicit session.begin live transition only with the stream contract', () => {
+    const value = {
+      ...envelope,
+      type: 'session.begin',
+      payload: { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 },
+    };
+    expect(CONTRACT_VALIDATORS.BrowserCommand(value)).toBe(true);
+    expect(CONTRACT_VALIDATORS.BrowserCommand({ ...value, payload: { ...value.payload, frameSamples: 321 } })).toBe(
+      false,
+    );
+    expect(CONTRACT_VALIDATORS.BrowserCommand({ ...value, payload: { ...value.payload, streamId: -1 } })).toBe(false);
   });
 });
 

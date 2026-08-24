@@ -356,17 +356,88 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
-  it('preserves every finalized part of a multipart response for reloads', async () => {
+  it('uses each active final as the authoritative cumulative response checkpoint', async () => {
+    const { writer } = await open();
+    await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
+    await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));
+    const complete = event('s', 'reasoning.final', {
+      turnId: 't',
+      responseId: 'r',
+      posture: 'question',
+      text: 'Full answer',
+    });
+    complete.monotonicMs = 2;
+    await writer.apply(complete);
+    // An earlier checkpoint replayed after the final must not regress it; an
+    // identical final is idempotent even when it has a new event id.
+    const earlier = event('s', 'reasoning.final', {
+      turnId: 't',
+      responseId: 'r',
+      posture: 'question',
+      text: 'Earlier',
+    });
+    earlier.monotonicMs = 1;
+    await writer.apply(earlier);
+    const duplicate = event('s', 'reasoning.final', {
+      turnId: 't',
+      responseId: 'r',
+      posture: 'question',
+      text: 'Full answer',
+    });
+    duplicate.monotonicMs = 2;
+    await writer.apply(duplicate);
+    expect(await writer.getTurns('s')).toMatchObject([{ responseId: 'r', assistantText: 'Full answer' }]);
+    writer.close();
+  });
+
+  it('replaces a final checkpoint and retains it through interruption or failure', async () => {
+    const { writer } = await open();
+    await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
+    await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));
+    await writer.apply(event('s', 'reasoning.delta', { turnId: 't', responseId: 'r', text: 'Partial checkpoint' }));
+    await writer.apply(
+      event('s', 'reasoning.final', { turnId: 't', responseId: 'r', posture: 'question', text: 'Replacement final' }),
+    );
+    await writer.apply(event('s', 'response.failed', { turnId: 't', responseId: 'r', reasonCode: 'provider_error' }));
+    await writer.apply(event('s', 'response.cancelled', { turnId: 't', responseId: 'r' }));
+    expect(await writer.getTurns('s')).toMatchObject([
+      { assistantText: 'Replacement final', terminalReason: 'failed', continuationState: 'discarded' },
+    ]);
+    writer.close();
+  });
+
+  it('reconstructs archived multipart finals by part identity rather than arrival order', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
     await writer.apply(event('s', 'transcript.final', { turnId: 't', text: 'hello' }));
     await writer.apply(
-      event('s', 'reasoning.final', { turnId: 't', responseId: 'r', partIndex: 0, text: 'First part.' }),
+      event('s', 'reasoning.final', {
+        turnId: 't',
+        responseId: 'r',
+        partIndex: 1,
+        partId: 'part-b',
+        text: 'Second part.',
+      }),
     );
     await writer.apply(
-      event('s', 'reasoning.final', { turnId: 't', responseId: 'r', partIndex: 1, text: 'Second part.' }),
+      event('s', 'reasoning.final', {
+        turnId: 't',
+        responseId: 'r',
+        partIndex: 0,
+        partId: 'part-a',
+        text: 'First part.',
+      }),
     );
-    expect(await writer.getTurns('s')).toMatchObject([{ assistantText: 'First part.\n\nSecond part.' }]);
+    await writer.apply(
+      event('s', 'reasoning.final', {
+        turnId: 't',
+        responseId: 'r',
+        partIndex: 1,
+        partId: 'part-b',
+        text: 'Replaced second part.',
+      }),
+    );
+    expect(await writer.getTurns('s')).toMatchObject([{ assistantText: 'First part.\n\nReplaced second part.' }]);
     writer.close();
   });
 

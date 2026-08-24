@@ -20,7 +20,8 @@ export type FakePiScenario =
   | 'stubborn-descendant'
   | 'incompatible-model'
   | 'unrelated-probe'
-  | 'tools';
+  | 'tools'
+  | 'abort-hangs';
 
 export interface FakePi {
   executable: string;
@@ -48,7 +49,7 @@ function command(c) {
   fs.appendFileSync(log, JSON.stringify({ command: c.type, message: c.message }) + "\\n");
   if (c.type === "get_state") return send({ type:"response", id:c.id, command:c.type, success:true, data:{ model:{ provider:"openai-codex", id:"gpt-5.6-sol" }, isStreaming:false } });
   if (c.type === "get_available_models") return send({ type:"response", id:c.id, command:c.type, success:true, data:{ models: scenario === "incompatible-model" ? [] : [{ provider:"openai-codex", id:"gpt-5.6-sol" }] } });
-  if (c.type === "abort") { timers.forEach(clearTimeout); timers = []; aborted = true; send({type:"message_end", message:{role:"assistant", stopReason:"aborted", errorMessage:"aborted"}}); send({type:"agent_settled"}); later(() => send({ type:"response", id:c.id, command:c.type, success:true }), 2); return; }
+  if (c.type === "abort") { timers.forEach(clearTimeout); timers = []; aborted = true; send({type:"message_end", message:{role:"assistant", stopReason:"aborted", errorMessage:"aborted"}}); send({type:"agent_settled"}); if (scenario === "abort-hangs") return; later(() => send({ type:"response", id:c.id, command:c.type, success:true }), 2); return; }
   if (c.type !== "prompt") return;
   if (scenario === "login") return send({type:"response", id:c.id, command:c.type, success:false, error:"sign-in required token=<secret>"});
   if (scenario === "rate-limit") return send({type:"response", id:c.id, command:c.type, success:false, error:"HTTP 429 quota"});

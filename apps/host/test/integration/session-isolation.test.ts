@@ -178,7 +178,7 @@ async function bootstrapSession(app: FastifyInstance, origin: string, persona: s
   });
   socket.send(
     JSON.stringify(
-      command(sid, 'session.start', {
+      command(sid, 'session.open', {
         sessionSeed: '018f1f32-7abd-7def-8abc-0123456789ab',
         reasoningMode: 'full',
         settings: {

@@ -26,9 +26,12 @@ export interface AudioEngineViewState {
 }
 export interface PlanningViewState {
   status: PlanningStatus;
+  attempt: number;
+  stage?: 'starting' | 'researching' | 'finalizing';
+  deadlineMs?: number;
+  reasonCode?: 'timeout' | 'provider_unavailable' | 'invalid_result' | 'interrupted';
   topic?: string;
   depth?: PlanningDepth;
-  progress: number;
   detail?: string;
   notes?: string;
 }
@@ -90,7 +93,7 @@ export interface SessionViewState {
 export const initialSessionState: SessionViewState = {
   dominant: 'idle',
   audioEngine: { status: 'starting', capture: 'starting', vad: 'starting', tts: 'starting' },
-  planning: { status: 'skipped', progress: 0 },
+  planning: { status: 'skipped', attempt: 0 },
   epoch: 0,
   tentativeText: '',
   stableTurns: [],
@@ -204,7 +207,10 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     if (!responseId || !text) return next;
-    const partIndex = typeof event.payload.partIndex === 'number' ? event.payload.partIndex : undefined;
+    const partIndex =
+      typeof (event.payload as { partIndex?: number }).partIndex === 'number'
+        ? (event.payload as { partIndex?: number }).partIndex
+        : undefined;
     // Presentational preview: accumulate the cumulative text into the assistant row
     // and mark it tentative so the UI can render it dimmed until it materializes.
     const exists = next.conversationItems.some((item) => item.kind === 'assistant' && item.responseId === responseId);
@@ -248,7 +254,10 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   if (event.type === 'reasoning.final') {
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
-    const partIndex = typeof event.payload.partIndex === 'number' ? event.payload.partIndex : undefined;
+    const partIndex =
+      typeof (event.payload as { partIndex?: number }).partIndex === 'number'
+        ? (event.payload as { partIndex?: number }).partIndex
+        : undefined;
     const existing = next.conversationItems.find(
       (item): item is Extract<ConversationItem, { kind: 'assistant' }> =>
         item.kind === 'assistant' && item.responseId === responseId,
@@ -515,8 +524,17 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
           ...next,
           planning: {
             status: value.status,
-            progress:
-              typeof value.progress === 'number' ? Math.max(0, Math.min(100, value.progress)) : next.planning.progress,
+            attempt: typeof value.attempt === 'number' ? Math.max(0, value.attempt) : next.planning.attempt,
+            ...(value.stage === 'starting' || value.stage === 'researching' || value.stage === 'finalizing'
+              ? { stage: value.stage }
+              : {}),
+            ...(typeof value.deadlineMs === 'number' && value.deadlineMs >= 0 ? { deadlineMs: value.deadlineMs } : {}),
+            ...(value.reasonCode === 'timeout' ||
+            value.reasonCode === 'provider_unavailable' ||
+            value.reasonCode === 'invalid_result' ||
+            value.reasonCode === 'interrupted'
+              ? { reasonCode: value.reasonCode }
+              : {}),
             ...(typeof value.topic === 'string' ? { topic: value.topic } : {}),
             ...(value.depth === 'light' || value.depth === 'standard' || value.depth === 'deep'
               ? { depth: value.depth }
@@ -557,8 +575,8 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     }
     if (audioStatusUpdated) return next;
     const phase = event.payload.phase;
-    if (phase === 'planning') return dominant(next, 'planning');
-    if (phase === 'ready') return dominant(next, 'ready');
+    if (phase === 'preparing' || phase === 'planning') return dominant(next, 'planning');
+    if (phase === 'prelive' || phase === 'starting_live' || phase === 'ready') return dominant(next, 'ready');
     if (phase === 'listening') return dominant(next, 'listening');
     if (phase === 'deciding' || phase === 'interruption_deciding') return dominant(next, 'deciding');
     if (phase === 'reasoning' || phase === 'synthesizing') return dominant(next, 'reasoning');

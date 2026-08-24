@@ -60,37 +60,34 @@ type SessionStartSettings = SessionSettingsSnapshot;
 type LifecycleAction = 'idle' | 'pausing' | 'resuming' | 'ending';
 
 function planningSnapshotForStart(planning: SessionPlanningRequest | undefined): SessionPlanningSnapshot {
-  if (!planning) return { status: 'skipped', progress: 100 };
+  if (!planning) return { status: 'skipped', attempt: 0 };
   return {
     status: planning.reuse ? 'ready' : 'planning',
+    attempt: 1,
     topic: planning.topic,
     depth: planning.depth,
-    progress: planning.reuse ? 100 : 0,
     ...(planning.notes ? { notes: planning.notes } : {}),
   };
 }
 function planningForResume(planning: SessionPlanningSnapshot | undefined): SessionPlanningRequest | undefined {
-  if (
-    !planning ||
-    (planning.status !== 'ready' && planning.status !== 'planning') ||
-    !planning.topic ||
-    !planning.depth
-  )
-    return undefined;
+  // Only a terminal ready plan is reusable on resume. A stale persisted
+  // running attempt is normalized away (never resumed implicitly) so no
+  // research pass restarts or injects notes after the session comes back.
+  if (!planning || planning.status !== 'ready' || !planning.topic || !planning.depth) return undefined;
   return {
     topic: planning.topic,
     depth: planning.depth,
-    ...(planning.status === 'ready' && planning.notes ? { notes: planning.notes } : {}),
+    ...(planning.notes ? { notes: planning.notes } : {}),
     reuse: true,
   };
 }
 function planningViewForStart(planning: SessionPlanningRequest | undefined): SessionViewState['planning'] {
-  if (!planning) return { status: 'skipped', progress: 100 };
+  if (!planning) return { status: 'skipped', attempt: 0 };
   return {
     status: planning.reuse ? 'ready' : 'planning',
+    attempt: 1,
     topic: planning.topic,
     depth: planning.depth,
-    progress: planning.reuse ? 100 : 0,
     ...(planning.notes ? { notes: planning.notes } : {}),
   };
 }
@@ -478,9 +475,9 @@ export function App() {
         ? await sessionViewStateFromTurns(opened, id, 'active')
         : {
             ...initialSessionState,
-            dominant: planning ? 'planning' : 'listening',
+            dominant: planning ? 'planning' : 'ready',
             planning: planningViewForStart(planning),
-            announcement: planning ? 'Preparing your session' : 'Listening',
+            announcement: planning ? 'Preparing your session' : 'Ready to go live',
           };
       const activate = async (): Promise<void> => {
         const persisted = await opened.beginSession({
@@ -494,6 +491,10 @@ export function App() {
         configureSessionClock(await opened.getSession(id));
       };
       await composeSession(opened, id, initial, cap, seed, reasoningMode, settings, planning, activate);
+      // A no-preparation start is one explicit click: open and begin in the same
+      // gesture. Preparation leaves the session pre-live with an explicit Begin
+      // live action on the session screen.
+      if (!planning) await runtimeRef.current?.beginLive();
     } catch (error) {
       // A failed composition must release the partially-created runtime before
       // returning to the durable paused state.
@@ -907,6 +908,9 @@ export function App() {
               onTogglePause={() => void togglePause()}
               onStop={() => void stop()}
               onCancelAssistant={() => void runtimeRef.current?.cancelAssistant()}
+              onCancelPlanning={() => void runtimeRef.current?.cancelPlanning()}
+              onRetryPlanning={() => void runtimeRef.current?.retryPlanning()}
+              onBeginLive={() => runtimeRef.current?.beginLive()}
               onToggleBubbleTrim={toggleBubbleTrim}
               onDeleteRecording={deleteRecording}
               buildExport={buildExport}
@@ -983,6 +987,9 @@ interface SessionRouteProps {
   onTogglePause: () => void;
   onStop: () => void;
   onCancelAssistant: () => void;
+  onCancelPlanning: () => void;
+  onRetryPlanning: () => void;
+  onBeginLive: () => Promise<void> | undefined;
   onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
   onDeleteRecording: () => Promise<void>;
   buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>;
@@ -1025,6 +1032,9 @@ function SessionRoute(props: SessionRouteProps) {
           onTogglePause={props.onTogglePause}
           onStop={props.onStop}
           onCancelAssistant={props.onCancelAssistant}
+          onCancelPlanning={props.onCancelPlanning}
+          onRetryPlanning={props.onRetryPlanning}
+          onBeginLive={props.onBeginLive}
           settingsOpen={props.settingsOpen}
           recording={props.recordingView}
           onToggleBubbleTrim={props.onToggleBubbleTrim}

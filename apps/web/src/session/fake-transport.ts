@@ -21,8 +21,12 @@ export class FakeSessionTransport implements SessionTransport {
   disconnect(): void {
     this.connected = false;
   }
-  startSession(): void {
-    this.commands.push('session.start');
+  openSession(): void {
+    this.commands.push('session.open');
+  }
+  beginLive(): Promise<void> {
+    this.commands.push('session.begin');
+    return Promise.resolve();
   }
   cancelPlanning(): void {
     this.commands.push('planning.cancel');
@@ -35,6 +39,9 @@ export class FakeSessionTransport implements SessionTransport {
   }
   stopAudio(): void {
     this.commands.push('audio.stop');
+  }
+  rollbackLive(): void {
+    this.commands.push('session.rollback_begin');
   }
   acknowledgePersisted(): void {
     this.commands.push('turn.persisted');

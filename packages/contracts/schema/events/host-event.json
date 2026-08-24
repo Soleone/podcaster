@@ -1,26 +1,58 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/host-event.json",
-  "title": "HostEvent",
-  "oneOf": [
-    { "$ref": "./session-state.json" },
-    { "$ref": "./vad-speech-start.json" },
-    { "$ref": "./vad-speech-end.json" },
-    { "$ref": "./transcript-partial.json" },
-    { "$ref": "./transcript-final.json" },
-    { "$ref": "./policy-decision.json" },
-    { "$ref": "./barge-in.json" },
-    { "$ref": "./interruption-decision.json" },
-    { "$ref": "./reasoning-started.json" },
-    { "$ref": "./reasoning-delta.json" },
-    { "$ref": "./reasoning-final.json" },
-    { "$ref": "./response-part-started.json" },
-    { "$ref": "./response-part-final.json" },
-    { "$ref": "./response-failed.json" },
-    { "$ref": "./tts-started.json" },
-    { "$ref": "./tts-ended.json" },
-    { "$ref": "./tool-activity.json" },
-    { "$ref": "./failure.json" },
-    { "$ref": "./budget-mitigation.json" }
-  ]
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/host-event.json",
+ "title": "HostEvent",
+ "oneOf": [
+  {
+   "$ref": "./session-state.json"
+  },
+  {
+   "$ref": "./vad-speech-start.json"
+  },
+  {
+   "$ref": "./vad-speech-end.json"
+  },
+  {
+   "$ref": "./transcript-partial.json"
+  },
+  {
+   "$ref": "./transcript-final.json"
+  },
+  {
+   "$ref": "./policy-decision.json"
+  },
+  {
+   "$ref": "./barge-in.json"
+  },
+  {
+   "$ref": "./interruption-decision.json"
+  },
+  {
+   "$ref": "./reasoning-started.json"
+  },
+  {
+   "$ref": "./reasoning-delta.json"
+  },
+  {
+   "$ref": "./reasoning-final.json"
+  },
+  {
+   "$ref": "./response-failed.json"
+  },
+  {
+   "$ref": "./tts-started.json"
+  },
+  {
+   "$ref": "./tts-ended.json"
+  },
+  {
+   "$ref": "./tool-activity.json"
+  },
+  {
+   "$ref": "./failure.json"
+  },
+  {
+   "$ref": "./response-cancelled.json"
+  }
+ ]
 }

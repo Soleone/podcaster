@@ -1,23 +1,66 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/tts-started.json",
-  "title": "TtsStartedEvent",
-  "allOf": [
-    { "$ref": "../protocol-envelope.json" },
-    { "type": "object", "required": ["type", "payload"], "properties": {
-      "type": { "const": "tts.started" },
-      "payload": { "type": "object", "required": ["responseId", "playbackId", "sampleRate"], "properties": {
-        "responseId": { "type": "string", "format": "uuid" },
-        "playbackId": { "type": "string", "format": "uuid" },
-        "sampleRate": { "type": "integer", "minimum": 1 },
-        "backendId": { "type": "string", "minLength": 1 },
-        "modelId": { "type": "string", "minLength": 1 },
-        "outputStreamId": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
-        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "partId": { "type": "string", "format": "uuid" }
-      }, "dependentRequired": { "backendId": ["modelId"], "modelId": ["backendId"], "partId": ["partIndex"] }, "additionalProperties": false,
-      "if": { "properties": { "partIndex": { "type": "integer", "minimum": 0 } }, "required": ["partIndex"] },
-      "then": { "required": ["outputStreamId"] } }
-    } }
-  ]
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/tts-started.json",
+ "title": "TtsStartedEvent",
+ "allOf": [
+  {
+   "$ref": "../protocol-envelope.json"
+  },
+  {
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ],
+   "properties": {
+    "type": {
+     "const": "tts.started"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "responseId",
+      "playbackId",
+      "sampleRate"
+     ],
+     "properties": {
+      "responseId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "playbackId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "sampleRate": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "backendId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "modelId": {
+       "type": "string",
+       "minLength": 1
+      },
+      "outputStreamId": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 4294967295
+      }
+     },
+     "dependentRequired": {
+      "backendId": [
+       "modelId"
+      ],
+      "modelId": [
+       "backendId"
+      ]
+     },
+     "additionalProperties": false
+    }
+   }
+  }
+ ]
 }

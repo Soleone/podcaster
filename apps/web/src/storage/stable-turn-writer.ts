@@ -51,6 +51,17 @@ const stringValue = (value: unknown): string | undefined => (typeof value === 's
 const numberValue = (value: unknown): number | undefined =>
   Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
 
+/**
+ * Multipart finals were retired from the active protocol. Retain their old
+ * paired part identity only for deterministic archive reconstruction; a bare
+ * partIndex must never change active final checkpoint semantics.
+ */
+function legacyMultipartPart(payload: Record<string, unknown>): { partId: string; partIndex: number } | undefined {
+  const partId = stringValue(payload.partId);
+  const partIndex = numberValue(payload.partIndex);
+  return partId !== undefined && partIndex !== undefined ? { partId, partIndex } : undefined;
+}
+
 function timestampMs(value: string | null | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Date.parse(value);
@@ -115,9 +126,33 @@ function planningSnapshot(value: unknown): StoredSession['planning'] | undefined
   const input = value as Record<string, unknown>;
   const statuses: PlanningStatus[] = ['skipped', 'planning', 'ready', 'failed', 'cancelled', 'continued'];
   const depths: PlanningDepth[] = ['light', 'standard', 'deep'];
-  if (!Object.keys(input).every((key) => ['status', 'topic', 'depth', 'progress', 'detail', 'notes'].includes(key)))
+  const stages = ['starting', 'researching', 'finalizing'] as const;
+  const reasonCodes = ['timeout', 'provider_unavailable', 'invalid_result', 'interrupted'] as const;
+  if (
+    !Object.keys(input).every((key) =>
+      [
+        'status',
+        'attempt',
+        'stage',
+        'deadlineMs',
+        'reasonCode',
+        'topic',
+        'depth',
+        'progress',
+        'detail',
+        'notes',
+      ].includes(key),
+    )
+  )
     return undefined;
   if (!statuses.includes(input.status as PlanningStatus)) return undefined;
+  if (input.attempt !== undefined && (!Number.isSafeInteger(input.attempt) || Number(input.attempt) < 0))
+    return undefined;
+  if (input.stage !== undefined && !stages.includes(input.stage as (typeof stages)[number])) return undefined;
+  if (input.deadlineMs !== undefined && (!Number.isSafeInteger(input.deadlineMs) || Number(input.deadlineMs) < 0))
+    return undefined;
+  if (input.reasonCode !== undefined && !reasonCodes.includes(input.reasonCode as (typeof reasonCodes)[number]))
+    return undefined;
   if (
     input.topic !== undefined &&
     (typeof input.topic !== 'string' ||
@@ -139,6 +174,14 @@ function planningSnapshot(value: unknown): StoredSession['planning'] | undefined
     return undefined;
   return {
     status: input.status as PlanningStatus,
+    ...(typeof input.attempt === 'number' ? { attempt: input.attempt } : {}),
+    ...(stages.includes(input.stage as (typeof stages)[number])
+      ? { stage: input.stage as (typeof stages)[number] }
+      : {}),
+    ...(typeof input.deadlineMs === 'number' ? { deadlineMs: input.deadlineMs } : {}),
+    ...(reasonCodes.includes(input.reasonCode as (typeof reasonCodes)[number])
+      ? { reasonCode: input.reasonCode as (typeof reasonCodes)[number] }
+      : {}),
     ...(typeof input.topic === 'string' ? { topic: input.topic } : {}),
     ...(depths.includes(input.depth as PlanningDepth) ? { depth: input.depth as PlanningDepth } : {}),
     ...(typeof input.progress === 'number' ? { progress: input.progress } : {}),
@@ -437,7 +480,7 @@ export class StableTurnWriter {
   }
 
   async apply(event: StableEvent): Promise<StorageResult> {
-    if (event.type === 'transcript.partial' || event.type === 'reasoning.delta') return { ok: true };
+    if (event.type === 'transcript.partial') return { ok: true };
     return this.guard(async () => {
       const transaction = this.db.transaction(
         [STORES.sessions, STORES.turns, STORES.appliedEvents, STORES.terminalReceipts],
@@ -505,19 +548,57 @@ export class StableTurnWriter {
         // Associate the response identity with the user turn before any early
         // tts.started needs to reconcile playback accounting against it.
         turn.responseId = responseId;
+      } else if (event.type === 'reasoning.delta' && turn && responseId) {
+        const final = turn.reasoningFinals?.[responseId];
+        // Finals are authoritative checkpoints. A delayed or replayed delta,
+        // regardless of its monotonic timestamp, must not regress text or the
+        // turn's lifecycle after the final was persisted.
+        if (!final) {
+          turn.responseId = responseId;
+          const text = stringValue(event.payload.text);
+          if (text !== undefined) turn.assistantText = text;
+        }
       } else if (event.type === 'reasoning.final' && turn) {
         if (responseId) turn.responseId = responseId;
         const text = stringValue(event.payload.text);
         if (text !== undefined) {
-          const partIndex = numberValue(event.payload.partIndex);
-          turn.assistantText =
-            partIndex === undefined || !turn.assistantText ? text : `${turn.assistantText}\n\n${text}`;
+          const legacy = legacyMultipartPart(event.payload as Record<string, unknown>);
+          if (legacy) {
+            const parts = { ...turn.legacyReasoningParts, [legacy.partId]: { partIndex: legacy.partIndex, text } };
+            turn.legacyReasoningParts = parts;
+            turn.assistantText = Object.entries(parts)
+              .sort(
+                ([leftId, left], [rightId, right]) => left.partIndex - right.partIndex || leftId.localeCompare(rightId),
+              )
+              .map(([, part]) => part.text)
+              .join('\n\n');
+          } else if (responseId) {
+            // Active single-response finals are cumulative checkpoints. Keep
+            // them by response identity and accept only the newest emitted
+            // checkpoint, so replay arrival order cannot concatenate or
+            // regress a completed response.
+            const previous = turn.reasoningFinals?.[responseId];
+            if (!previous || event.monotonicMs >= previous.monotonicMs) {
+              turn.reasoningFinals = {
+                ...turn.reasoningFinals,
+                [responseId]: { monotonicMs: event.monotonicMs, text },
+              };
+              turn.assistantText = text;
+            }
+          } else {
+            turn.assistantText = text;
+          }
         }
+      } else if (event.type === 'response.cancelled' && turn) {
+        turn.interrupted = true;
+        turn.terminalReason ??= 'stopped';
+        turn.continuationState = 'discarded';
       } else if (event.type === 'response.failed' && turn) {
         // Scope the failure to the matching turn instead of session-level storage.
         const code = stringValue(event.payload.reasonCode) ?? 'response_failed';
         if (!turn.failures.includes(code)) turn.failures.push(code);
         turn.interrupted = true;
+        turn.terminalReason ??= 'failed';
       } else if (event.type === 'tts.started' && turn && playbackId) {
         turn.playbackId = playbackId;
         turn.outputEpoch = event.epoch;

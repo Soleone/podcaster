@@ -9,7 +9,7 @@ import type {
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
 import { activityLog } from './activity-log';
 import { createEnvelope, type BrowserCommandPayload } from './envelope';
-import type { OutputAudioChunk, PlanningStartResult, SessionStartRequest, SessionTransport } from './transport';
+import type { OutputAudioChunk, SessionStartRequest, SessionTransport } from './transport';
 
 const MAX_BINARY_PAYLOAD = 64 * 1024 - 20;
 // Close codes in 3000-4999 are application-defined and valid for a browser
@@ -92,7 +92,6 @@ export class WebSocketSessionTransport implements SessionTransport {
   private intentionalDisconnect = false;
   private failureNotified = false;
   private pendingAudioStart: { streamId: number; resolve(): void; reject(error: Error): void } | undefined;
-  private pendingPlanningStart: { resolve(result: PlanningStartResult): void; reject(error: Error): void } | undefined;
 
   constructor(
     private readonly sessionId: string,
@@ -209,31 +208,12 @@ export class WebSocketSessionTransport implements SessionTransport {
         this.protocolFailure('the event sessionId did not match this session.');
         return;
       }
-      if (hostEvent.type === 'session.state' && this.pendingPlanningStart) {
-        const planningPayload =
-          hostEvent.payload.planning &&
-          typeof hostEvent.payload.planning === 'object' &&
-          !Array.isArray(hostEvent.payload.planning)
-            ? (hostEvent.payload.planning as { status?: unknown })
-            : undefined;
-        const status = planningPayload?.status;
-        const terminal = status === 'ready' || status === 'failed' || status === 'cancelled' || status === 'continued';
-        // Terminal planning statuses settle the start handshake; any non-planning
-        // phase means the host went live while preparation keeps running behind
-        // the session, so the live screen can show the preparation banner.
-        if (terminal || hostEvent.payload.phase !== 'planning') {
-          const pending = this.pendingPlanningStart;
-          this.pendingPlanningStart = undefined;
-          pending.resolve(terminal ? (status as PlanningStartResult) : 'planning');
-        }
-      }
       if (hostEvent.type === 'reasoning.started') {
         const responseId = String(hostEvent.payload.responseId);
-        const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
         if (this.latestResponseId !== undefined) {
           // A duplicate reasoning.started for the SAME response is a protocol anomaly
           // unless it starts a new part of a multi-part response.
-          if (responseId === this.latestResponseId && partIndex === undefined) {
+          if (responseId === this.latestResponseId) {
             this.protocolFailure('a duplicate reasoning.started was received for the current response.');
             return;
           }
@@ -256,33 +236,6 @@ export class WebSocketSessionTransport implements SessionTransport {
           this.protocolFailure('reasoning.final did not match the established response.');
           return;
         }
-      } else if (hostEvent.type === 'response.part_started') {
-        const responseId = String(hostEvent.payload.responseId);
-        activityLog.append({
-          level: 'info',
-          source: 'transport',
-          message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} started`,
-        });
-        // A part_started may be the FIRST event of a new response (the host emits
-        // it before reasoning.started). If it belongs to a different response
-        // than the one currently established, the previous response was
-        // superseded before it terminalized and its output bindings are dead.
-        if (this.latestResponseId !== undefined && responseId !== this.latestResponseId) {
-          for (const binding of this.outputs.byStream.values()) binding.terminal = true;
-          if (this.outputs.single) this.outputs.single.terminal = true;
-        }
-        this.latestResponseId = responseId;
-      } else if (hostEvent.type === 'response.part_final') {
-        // A part_final must follow that part's reasoning.started/final, so keep strict matching.
-        if (hostEvent.payload.responseId !== this.latestResponseId) {
-          this.protocolFailure('response.part_final did not match the established response.');
-          return;
-        }
-        activityLog.append({
-          level: 'info',
-          source: 'transport',
-          message: `part ${String(hostEvent.payload.kind)} ${String(hostEvent.payload.partIndex)} final`,
-        });
       } else if (hostEvent.type === 'tts.started') {
         if (hostEvent.epoch !== this.epoch() || hostEvent.payload.responseId !== this.latestResponseId) {
           this.protocolFailure('tts.started did not match the established response identity.');
@@ -290,7 +243,6 @@ export class WebSocketSessionTransport implements SessionTransport {
         }
         const outputStreamId =
           typeof hostEvent.payload.outputStreamId === 'number' ? hostEvent.payload.outputStreamId : undefined;
-        const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
         const binding: OutputBinding = {
           playbackId: String(hostEvent.payload.playbackId),
           responseId: String(hostEvent.payload.responseId),
@@ -300,7 +252,6 @@ export class WebSocketSessionTransport implements SessionTransport {
           terminal: false,
           receivedAt: Date.now(),
           ...(outputStreamId !== undefined ? { streamId: outputStreamId } : {}),
-          ...(partIndex !== undefined ? { partIndex } : {}),
         };
         if (outputStreamId !== undefined) {
           if (this.outputs.byStream.has(outputStreamId) || this.usedOutputStreams.has(outputStreamId)) {
@@ -342,10 +293,7 @@ export class WebSocketSessionTransport implements SessionTransport {
           this.protocolFailure('tts.ended reported a sample count that does not match the streamed audio.');
           return;
         }
-        // For a single-part response the response is fully delivered. For a
-        // multi-part response the parent identity persists until the last part.
-        const partIndex = typeof hostEvent.payload.partIndex === 'number' ? hostEvent.payload.partIndex : undefined;
-        if (partIndex === undefined) this.latestResponseId = undefined;
+        this.latestResponseId = undefined;
       }
       if (
         hostEvent.type === 'session.state' &&
@@ -492,33 +440,33 @@ export class WebSocketSessionTransport implements SessionTransport {
       this.reconnectTimer = undefined;
     }
     this.queuedCommands.length = 0;
-    const pendingPlanning = this.pendingPlanningStart;
-    this.pendingPlanningStart = undefined;
-    pendingPlanning?.reject(new Error('Session planning was cancelled.'));
     activityLog.append({ level: 'info', source: 'transport', message: 'session socket closed intentionally' });
     const socket = this.socket;
     this.socket = undefined;
     socket?.close(1000, 'session ended');
   }
-  startSession(input: SessionStartRequest): void | Promise<PlanningStartResult | undefined> {
+  /** Pre-live open; planning state arrives as session.state events and the host
+   * never opens microphone capture until session.begin. */
+  openSession(input: SessionStartRequest): void {
     const payload = {
       sessionSeed: input.sessionSeed,
       reasoningMode: input.reasoningMode,
       ...(input.planning ? { planning: input.planning } : {}),
       settings: input.settings,
     };
-    if (!input.planning) {
-      this.sendCommand('session.start', payload);
-      return;
-    }
-    if (this.pendingPlanningStart) return Promise.reject(new Error('session planning is already in progress'));
-    return new Promise<PlanningStartResult>((resolve, reject) => {
-      this.pendingPlanningStart = { resolve, reject };
+    this.sendCommand('session.open', payload);
+  }
+  /** Explicit live transition: sends session.begin and resolves once the host
+   * acknowledges the audio engine (or rejects on failure). Retryable while pre-live. */
+  beginLive(streamId: number): Promise<void> {
+    if (this.pendingAudioStart) return Promise.reject(new Error('another live transition is already in progress'));
+    return new Promise<void>((resolve, reject) => {
+      this.pendingAudioStart = { streamId, resolve, reject };
       try {
-        this.sendCommand('session.start', payload);
+        this.sendCommand('session.begin', { streamId, sampleRate: 16_000, channels: 1, frameSamples: 320 });
       } catch (error) {
-        this.pendingPlanningStart = undefined;
-        reject(error instanceof Error ? error : new Error('session planning could not start'));
+        this.pendingAudioStart = undefined;
+        reject(error instanceof Error ? error : new Error('the live transition could not start'));
       }
     });
   }
@@ -542,6 +490,9 @@ export class WebSocketSessionTransport implements SessionTransport {
   }
   stopAudio(streamId: number): void {
     this.sendCommand('audio.stop', { streamId });
+  }
+  rollbackLive(): void {
+    this.sendCommand('session.rollback_begin', {});
   }
   acknowledgePersisted(event: TranscriptFinalEvent): void {
     this.sendCommand(
@@ -735,8 +686,6 @@ export class WebSocketSessionTransport implements SessionTransport {
   private notifyFailure(message: string): void {
     this.pendingAudioStart?.reject(new Error(message));
     this.pendingAudioStart = undefined;
-    this.pendingPlanningStart?.reject(new Error(message));
-    this.pendingPlanningStart = undefined;
     if (this.failureNotified || this.intentionalDisconnect) return;
     this.failureNotified = true;
     for (const listener of this.failureListeners) listener(message);
@@ -807,6 +756,9 @@ function isHostEventShape(value: unknown): boolean {
         !hasOnly(payload, ['phase', 'personaDigest'], ['audio', 'planning']) ||
         ![
           'idle',
+          'preparing',
+          'prelive',
+          'starting_live',
           'planning',
           'ready',
           'listening',
@@ -840,14 +792,22 @@ function isHostEventShape(value: unknown): boolean {
         return false;
       const planning = payload.planning as Record<string, unknown>;
       return (
-        hasOnly(planning, ['status'], ['topic', 'depth', 'progress', 'detail', 'notes']) &&
+        hasOnly(
+          planning,
+          ['status', 'attempt'],
+          ['topic', 'depth', 'stage', 'deadlineMs', 'reasonCode', 'detail', 'notes'],
+        ) &&
         ['skipped', 'planning', 'ready', 'failed', 'cancelled', 'continued'].includes(String(planning.status)) &&
+        integer(planning.attempt) &&
+        (planning.stage === undefined || ['starting', 'researching', 'finalizing'].includes(String(planning.stage))) &&
+        (planning.deadlineMs === undefined || integer(planning.deadlineMs)) &&
+        (planning.reasonCode === undefined ||
+          ['timeout', 'provider_unavailable', 'invalid_result', 'interrupted'].includes(String(planning.reasonCode))) &&
         (planning.topic === undefined ||
           (typeof planning.topic === 'string' &&
             planning.topic.length > 0 &&
             new TextEncoder().encode(planning.topic).length <= 2048)) &&
         (planning.depth === undefined || ['light', 'standard', 'deep'].includes(String(planning.depth))) &&
-        (planning.progress === undefined || (integer(planning.progress) && Number(planning.progress) <= 100)) &&
         (planning.detail === undefined || (typeof planning.detail === 'string' && planning.detail.length <= 512)) &&
         (planning.notes === undefined ||
           (typeof planning.notes === 'string' && new TextEncoder().encode(planning.notes).length <= 12_288))
@@ -915,6 +875,13 @@ function isHostEventShape(value: unknown): boolean {
         payload.text.length > 0 &&
         payload.text.length <= 4_096 &&
         partOk(payload)
+      );
+    case 'response.cancelled':
+      return (
+        exact(payload, ['turnId', 'responseId', 'reason']) &&
+        uuid('turnId') &&
+        uuid('responseId') &&
+        ['superseded', 'user', 'stopped'].includes(String(payload.reason))
       );
     case 'response.failed':
       return (
@@ -1023,41 +990,6 @@ function isHostEventShape(value: unknown): boolean {
         (payload.rewindMs === undefined || (integer(payload.rewindMs) && Number(payload.rewindMs) <= 1_000)) &&
         partOk(payload)
       );
-    case 'budget.mitigation': {
-      if (
-        !hasOnly(payload, ['turnId', 'responseId', 'kind', 'detail'], ['partIndex']) ||
-        !uuid('turnId') ||
-        !uuid('responseId') ||
-        !['stall_target', 'late_handoff_projected', 'gap_measured'].includes(String(payload.kind)) ||
-        (payload.partIndex !== undefined && (!integer(payload.partIndex) || Number(payload.partIndex) > 7))
-      )
-        return false;
-      if (typeof payload.detail !== 'object' || payload.detail === null || Array.isArray(payload.detail)) return false;
-      const detail = payload.detail as Record<string, unknown>;
-      if (
-        !exact(detail, ['estimates', 'trigger']) ||
-        typeof detail.trigger !== 'string' ||
-        detail.trigger.length === 0 ||
-        typeof detail.estimates !== 'object' ||
-        detail.estimates === null ||
-        Array.isArray(detail.estimates)
-      )
-        return false;
-      const estimates = detail.estimates as Record<string, unknown>;
-      return (
-        exact(estimates, [
-          'stallFirstDeltaMs',
-          'stallTextMs',
-          'bodyFirstPartMs',
-          'ttsTtfaMs',
-          'ttsRtf',
-          'wordsPerSecond',
-        ]) &&
-        Object.values(estimates).every(
-          (value) => typeof value === 'number' && Number.isFinite(value) && Number(value) >= 0,
-        )
-      );
-    }
     case 'failure':
       return (
         exact(payload, ['code', 'detail', 'correctiveAction', 'recoverable']) &&

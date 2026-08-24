@@ -97,8 +97,14 @@ export async function sessionViewStateFromTurns(
     ...initialSessionState,
     planning: planning
       ? {
-          status: planning.status,
-          progress: planning.progress ?? (planning.status === 'ready' ? 100 : 0),
+          // A stale persisted running attempt is normalized to a terminal
+          // interrupted failure; it is never resumed implicitly.
+          status: planning.status === 'planning' ? 'failed' : planning.status,
+          attempt: typeof planning.attempt === 'number' ? planning.attempt : 0,
+          ...(planning.stage ? { stage: planning.stage } : {}),
+          ...(typeof planning.deadlineMs === 'number' ? { deadlineMs: planning.deadlineMs } : {}),
+          ...(planning.reasonCode ? { reasonCode: planning.reasonCode } : {}),
+          ...(planning.status === 'planning' ? { reasonCode: 'interrupted' as const } : {}),
           ...(planning.topic ? { topic: planning.topic } : {}),
           ...(planning.depth ? { depth: planning.depth } : {}),
           ...(planning.detail ? { detail: planning.detail } : {}),

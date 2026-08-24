@@ -1,18 +1,46 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/tts-ended.json",
-  "title": "TtsEndedEvent",
-  "allOf": [
-    { "$ref": "../protocol-envelope.json" },
-    { "type": "object", "required": ["type", "payload"], "properties": {
-      "type": { "const": "tts.ended" },
-      "payload": { "type": "object", "required": ["responseId", "playbackId", "generatedSamples"], "properties": {
-        "responseId": { "type": "string", "format": "uuid" },
-        "playbackId": { "type": "string", "format": "uuid" },
-        "generatedSamples": { "type": "integer", "minimum": 0 },
-        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "partId": { "type": "string", "format": "uuid" }
-      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
-    } }
-  ]
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/tts-ended.json",
+ "title": "TtsEndedEvent",
+ "allOf": [
+  {
+   "$ref": "../protocol-envelope.json"
+  },
+  {
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ],
+   "properties": {
+    "type": {
+     "const": "tts.ended"
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "responseId",
+      "playbackId",
+      "generatedSamples"
+     ],
+     "properties": {
+      "responseId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "playbackId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "generatedSamples": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "dependentRequired": {},
+     "additionalProperties": false
+    }
+   }
+  }
+ ]
 }

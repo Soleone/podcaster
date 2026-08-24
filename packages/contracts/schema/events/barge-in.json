@@ -1,20 +1,59 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://podcaster.local/schema/events/barge-in.json",
-  "title": "BargeInEvent",
-  "allOf": [
-    { "$ref": "../protocol-envelope.json" },
-    { "type": "object", "required": ["type", "payload"], "properties": {
-      "type": { "enum": ["barge_in.provisional", "barge_in.confirmed", "barge_in.rejected", "barge_in.timed_out"] },
-      "payload": { "type": "object", "required": ["responseId", "outputEpoch", "resumable"], "properties": {
-        "responseId": { "type": "string", "format": "uuid" },
-        "outputEpoch": { "type": "integer", "minimum": 0 },
-        "resumable": { "type": "boolean" },
-        "rewindMs": { "type": "integer", "minimum": 0, "maximum": 1000 },
-        "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "partId": { "type": "string", "format": "uuid" },
-        "playbackId": { "type": "string", "format": "uuid" }
-      }, "dependentRequired": { "partId": ["partIndex"] }, "additionalProperties": false }
-    } }
-  ]
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://podcaster.local/schema/events/barge-in.json",
+ "title": "BargeInEvent",
+ "allOf": [
+  {
+   "$ref": "../protocol-envelope.json"
+  },
+  {
+   "type": "object",
+   "required": [
+    "type",
+    "payload"
+   ],
+   "properties": {
+    "type": {
+     "enum": [
+      "barge_in.provisional",
+      "barge_in.confirmed",
+      "barge_in.rejected",
+      "barge_in.timed_out"
+     ]
+    },
+    "payload": {
+     "type": "object",
+     "required": [
+      "responseId",
+      "outputEpoch",
+      "resumable"
+     ],
+     "properties": {
+      "responseId": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "outputEpoch": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "resumable": {
+       "type": "boolean"
+      },
+      "rewindMs": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 1000
+      },
+      "playbackId": {
+       "type": "string",
+       "format": "uuid"
+      }
+     },
+     "dependentRequired": {},
+     "additionalProperties": false
+    }
+   }
+  }
+ ]
 }

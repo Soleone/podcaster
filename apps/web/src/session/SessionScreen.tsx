@@ -31,7 +31,7 @@ import { Message, MessageContent, MessageHeader } from '../components/ui/message
 import { cn } from '../lib/utils';
 import { Spinner } from '../components/ui/spinner';
 import { Progress } from '../components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Tabs, TabsContent } from '../components/ui/tabs';
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -85,6 +85,9 @@ type SessionScreenProps = {
   onTogglePause: () => void;
   onStop: () => void;
   onCancelAssistant: () => void;
+  onCancelPlanning: () => void;
+  onRetryPlanning: () => void;
+  onBeginLive: () => Promise<void> | undefined;
   settingsOpen: boolean;
   recording: RecordingSessionViewState;
   onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
@@ -128,6 +131,9 @@ export function SessionScreen(props: SessionScreenProps) {
   }, [props.onCancelAssistant, props.state.dominant, props.settingsOpen]);
 
   const assistantActive = props.state.dominant === 'reasoning' || props.state.dominant === 'speaking';
+  // Pre-live phases (preparing / ready-to-go-live) have no audio engine or
+  // capture yet; the planning card owns the actions and the microphone stays off.
+  const prelive = props.state.dominant === 'planning' || props.state.dominant === 'ready';
   const readOnly = props.readOnly === true;
   const agentName = props.agentName.trim() || 'Assistant';
   const actionBusy = props.lifecycleAction !== undefined && props.lifecycleAction !== 'idle';
@@ -211,52 +217,54 @@ export function SessionScreen(props: SessionScreenProps) {
             </>
           ) : (
             <>
-              <ButtonGroup aria-label="Session controls" className="session-controls">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  disabled={actionBusy}
-                  aria-label={pauseLabel}
-                  title={pauseLabel}
-                  onClick={props.onTogglePause}
-                  aria-busy={pauseBusy}
-                >
-                  {pauseBusy ? (
-                    <Spinner aria-hidden="true" />
-                  ) : props.sessionPaused ? (
-                    <Play aria-hidden="true" />
-                  ) : (
-                    <Pause aria-hidden="true" />
-                  )}
-                </Button>
-                <ButtonGroupSeparator />
-                <ExportPopover
-                  sessionId={props.sessionId}
-                  buildExport={props.buildExport}
-                  disabled={!canExport}
-                  variant="secondary"
-                  size="icon"
-                  iconOnly
-                  onExportingChange={props.onExportingChange}
-                />
-                <ConfirmDeleteDialog
-                  deleting={props.deleting ?? false}
-                  onConfirm={async () => {
-                    await props.onDeleteRecording?.();
-                  }}
-                  trigger={
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      disabled={!canDelete}
-                      title="Delete recording"
-                      aria-label="Delete recording"
-                    >
-                      <Trash aria-hidden="true" />
-                    </Button>
-                  }
-                />
-              </ButtonGroup>
+              {!prelive ? (
+                <ButtonGroup aria-label="Session controls" className="session-controls">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={actionBusy}
+                    aria-label={pauseLabel}
+                    title={pauseLabel}
+                    onClick={props.onTogglePause}
+                    aria-busy={pauseBusy}
+                  >
+                    {pauseBusy ? (
+                      <Spinner aria-hidden="true" />
+                    ) : props.sessionPaused ? (
+                      <Play aria-hidden="true" />
+                    ) : (
+                      <Pause aria-hidden="true" />
+                    )}
+                  </Button>
+                  <ButtonGroupSeparator />
+                  <ExportPopover
+                    sessionId={props.sessionId}
+                    buildExport={props.buildExport}
+                    disabled={!canExport}
+                    variant="secondary"
+                    size="icon"
+                    iconOnly
+                    onExportingChange={props.onExportingChange}
+                  />
+                  <ConfirmDeleteDialog
+                    deleting={props.deleting ?? false}
+                    onConfirm={async () => {
+                      await props.onDeleteRecording?.();
+                    }}
+                    trigger={
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        disabled={!canDelete}
+                        title="Delete recording"
+                        aria-label="Delete recording"
+                      >
+                        <Trash aria-hidden="true" />
+                      </Button>
+                    }
+                  />
+                </ButtonGroup>
+              ) : null}
             </>
           )}
         </div>
@@ -298,8 +306,15 @@ export function SessionScreen(props: SessionScreenProps) {
           ) : null}
         </div>
       </Card>
-      {!readOnly ? <AudioEngineStatusStrip status={props.state.audioEngine} /> : null}
-      {props.state.planning.status !== 'skipped' ? <PlanningStatusCard planning={props.state.planning} /> : null}
+      {!readOnly && !prelive ? <AudioEngineStatusStrip status={props.state.audioEngine} /> : null}
+      {props.state.planning.status !== 'skipped' ? (
+        <PlanningStatusCard
+          planning={props.state.planning}
+          onCancelPlanning={props.onCancelPlanning}
+          onRetryPlanning={props.onRetryPlanning}
+          onBeginLive={props.onBeginLive}
+        />
+      ) : null}
       {props.state.agentActivity.length > 0 ? (
         <AgentActivityPanel groups={props.state.agentActivity} stableTurns={props.state.stableTurns} />
       ) : null}
@@ -402,7 +417,18 @@ export function SessionScreen(props: SessionScreenProps) {
   );
 }
 
-function PlanningStatusCard({ planning }: { planning: SessionViewState['planning'] }) {
+function PlanningStatusCard({
+  planning,
+  onCancelPlanning,
+  onRetryPlanning,
+  onBeginLive,
+}: {
+  planning: SessionViewState['planning'];
+  onCancelPlanning: () => void;
+  onRetryPlanning: () => void;
+  onBeginLive: () => Promise<void> | undefined;
+}) {
+  const [beginning, setBeginning] = useState(false);
   const active = planning.status === 'planning';
   const failed = planning.status === 'failed' || planning.status === 'cancelled';
   const label = active
@@ -414,7 +440,23 @@ function PlanningStatusCard({ planning }: { planning: SessionViewState['planning
         : planning.status === 'cancelled'
           ? 'Preparation cancelled'
           : 'Preparation needs attention';
-  const value = Math.max(0, Math.min(100, planning.progress));
+  const stageLabel =
+    planning.stage === 'researching'
+      ? 'Researching'
+      : planning.stage === 'finalizing'
+        ? 'Finalizing notes'
+        : 'Starting';
+  const begin = async () => {
+    setBeginning(true);
+    try {
+      await onBeginLive();
+    } catch {
+      // The host reports the failure through the session.state/failure events;
+      // the card stays pre-live and the Begin action can be retried.
+    } finally {
+      setBeginning(false);
+    }
+  };
   return (
     <Card size="sm" className={cn('mt-3', failed && 'border-destructive/50')} data-planning-status={planning.status}>
       <CardContent className="flex flex-col gap-2 py-3">
@@ -427,20 +469,21 @@ function PlanningStatusCard({ planning }: { planning: SessionViewState['planning
             <Check className="size-4 text-emerald-600" aria-hidden="true" />
           )}
           <span className="font-medium">{label}</span>
-          <span className="ml-auto tabular-nums text-muted-foreground">{value}%</span>
+          {planning.attempt > 1 ? (
+            <Badge variant="secondary" className="font-mono tabular-nums">
+              attempt {planning.attempt}
+            </Badge>
+          ) : null}
+          {active ? <span className="ml-auto tabular-nums text-muted-foreground">{stageLabel}</span> : null}
         </div>
-        {active ? (
-          <Progress
-            value={value}
-            aria-label="Preparation progress"
-            className="gap-0 [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-indicator]]:bg-primary"
-          />
-        ) : null}
         <p className="text-xs text-muted-foreground">
           {planning.detail ??
             (planning.topic
               ? `Topic: ${planning.topic}`
               : 'The live assistant will use the saved preparation when available.')}
+        </p>
+        <p className="text-xs font-medium text-muted-foreground" data-microphone-status="off">
+          Microphone off — the session starts listening only after you go live.
         </p>
         {planning.notes ? (
           <details className="text-xs">
@@ -448,6 +491,30 @@ function PlanningStatusCard({ planning }: { planning: SessionViewState['planning
             <p className="mt-2 whitespace-pre-wrap leading-relaxed text-muted-foreground">{planning.notes}</p>
           </details>
         ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {active ? (
+            <Button variant="outline" size="sm" onClick={onCancelPlanning}>
+              Cancel preparation
+            </Button>
+          ) : null}
+          {failed ? (
+            <Button variant="outline" size="sm" onClick={onRetryPlanning}>
+              Retry preparation
+            </Button>
+          ) : null}
+          <Button variant="secondary" size="sm" onClick={() => void begin()} disabled={beginning} aria-busy={beginning}>
+            {beginning ? (
+              <>
+                <Spinner aria-hidden="true" />
+                Going live…
+              </>
+            ) : active || planning.status === 'cancelled' || planning.status === 'failed' ? (
+              'Begin without preparation'
+            ) : (
+              'Begin live'
+            )}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
@@ -506,7 +573,7 @@ function AudioEngineStatusStrip({ status }: { status: SessionViewState['audioEng
   );
 }
 
-type ActivityLogTab = 'activity' | 'timing';
+type ActivityLogTab = 'activity';
 
 function ActivityLogPanel() {
   const [open, setOpen] = useState(false);
@@ -514,14 +581,10 @@ function ActivityLogPanel() {
   const [tab, setTab] = useState<ActivityLogTab>('activity');
   const [notice, setNotice] = useState('');
   useEffect(() => activityLog.subscribe(setEntries), []);
-  const isBudgetEntry = (entry: ActivityEntry) => entry.source === 'budget';
-  const activityEntries = entries.filter((entry) => !isBudgetEntry(entry));
-  const timingEntries = entries.filter(isBudgetEntry);
-  const activeEntries = tab === 'timing' ? timingEntries : activityEntries;
-  const activeFilter = tab === 'timing' ? isBudgetEntry : (entry: ActivityEntry) => !isBudgetEntry(entry);
+  const activeEntries = entries;
   const copyLog = () => {
     try {
-      void navigator.clipboard.writeText(activityLog.toText(activeFilter)).then(
+      void navigator.clipboard.writeText(activityLog.toText()).then(
         () => setNotice('Copied to clipboard'),
         () => setNotice('Copy failed'),
       );
@@ -555,10 +618,6 @@ function ActivityLogPanel() {
           </Button>
           {open ? (
             <div className="activity-log-actions flex flex-wrap items-center gap-2">
-              <TabsList aria-label="Activity log sections">
-                <TabsTrigger value="activity">Activity</TabsTrigger>
-                <TabsTrigger value="timing">Timing</TabsTrigger>
-              </TabsList>
               {notice ? (
                 <span className="activity-log-notice text-xs text-muted-foreground" role="status">
                   {notice}
@@ -575,7 +634,7 @@ function ActivityLogPanel() {
                   title="Clear"
                   aria-label="Clear entries"
                   onClick={() => {
-                    activityLog.clear(activeFilter);
+                    activityLog.clear();
                     setNotice('');
                   }}
                 >
@@ -593,10 +652,7 @@ function ActivityLogPanel() {
             className="activity-log-region border-t p-2"
           >
             <TabsContent value="activity">
-              <ActivityLogEntryList entries={activityEntries} emptyMessage="No activity logged yet." />
-            </TabsContent>
-            <TabsContent value="timing">
-              <ActivityLogEntryList entries={timingEntries} emptyMessage="No timing events logged yet." />
+              <ActivityLogEntryList entries={activeEntries} emptyMessage="No activity logged yet." />
             </TabsContent>
           </CardContent>
         ) : null}

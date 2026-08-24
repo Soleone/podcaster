@@ -168,6 +168,9 @@ export function StoppedSession(props: StoppedSessionProps) {
         onTogglePause={() => undefined}
         onStop={props.onBack}
         onCancelAssistant={() => undefined}
+        onCancelPlanning={() => undefined}
+        onRetryPlanning={() => undefined}
+        onBeginLive={() => undefined}
         settingsOpen={false}
         recording={recording}
         onToggleBubbleTrim={toggleTrim}

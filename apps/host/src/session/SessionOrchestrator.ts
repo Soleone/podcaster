@@ -29,8 +29,7 @@ import {
   type InterruptionIntentDecision,
 } from './InterruptionIntentClassifier.js';
 import { ReasoningSpeechAssembler } from './ReasoningSpeechAssembler.js';
-import { MultiPartResponse, type MultiPartResponseHost } from './MultiPartResponse.js';
-import type { RuntimeBudget } from './RuntimeBudget.js';
+import { ResearchPartAssembler, researchPartLimits } from './ResearchPartAssembler.js';
 import { log } from '../logger.js';
 
 export type SessionPhase =
@@ -125,8 +124,6 @@ export interface SessionOrchestratorOptions {
   /** Frozen, bounded preparation notes. They are context only and never spoken directly. */
   planningContext?: string;
   multiPartEnabled?: boolean;
-  /** Optional per-session latency budget; measurement-only, fail-soft everywhere. */
-  budget?: RuntimeBudget;
 }
 export interface SessionSnapshot {
   phase: SessionPhase;
@@ -223,7 +220,6 @@ export class SessionOrchestrator {
   private readonly context: ContextTurn[] = [];
   private readonly playback = new Map<string, PlaybackLedger>();
   private active: ActiveResponse | undefined;
-  private multiPart: MultiPartResponse | undefined;
   private provisional: ProvisionalState | undefined;
   private acceptancePendingTerminal: AcceptancePendingTerminal | undefined;
   private timedOutInterruptionEpoch: number | undefined;
@@ -247,7 +243,6 @@ export class SessionOrchestrator {
   private readonly researchPi: PiResearchClient | undefined;
   private planningContext: string;
   private readonly multiPartEnabled: boolean;
-  private readonly budget: RuntimeBudget | undefined;
 
   constructor(private readonly options: SessionOrchestratorOptions) {
     const parsed = parsePersona(options.personaSource ?? DEFAULT_PERSONA_MARKDOWN);
@@ -276,7 +271,6 @@ export class SessionOrchestrator {
     this.researchPi = options.researchPi;
     this.planningContext = truncateUtf8(options.planningContext?.trim() ?? '', 3_072);
     this.multiPartEnabled = Boolean(options.researchPi && options.multiPartEnabled);
-    this.budget = options.budget;
   }
 
   /** Late-arriving preparation notes join the bounded context for future turns. */
@@ -372,7 +366,7 @@ export class SessionOrchestrator {
     }
 
     if (this.multiPartEnabled && this.researchPi) {
-      await this.runMultiPartResponse(
+      await this.runLongResponse(
         { epoch: operationEpoch, turnId: turn.turnId, text: turn.text, posture: policy.posture },
         boundedContext,
       );
@@ -546,80 +540,130 @@ export class SessionOrchestrator {
   }
 
   /**
-   * Multi-part turn: delegate to the MultiPartResponse machine, registering it
-   * as the active response before its streaming loop starts. Enabled only when
-   * multiPartEnabled and a research client are configured; otherwise
-   * handleStableFinal keeps the single-part path unchanged.
+   * Tool-capable responses deliberately use the same response, progressive TTS
+   * stream, and playback ledger as concise turns.  The acknowledgement is
+   * deterministic so research begins immediately rather than waiting on a
+   * second LLM request.
    */
-  private async runMultiPartResponse(
+  private async runLongResponse(
     turn: { epoch: number; turnId: string; text: string; posture: PiPosture },
     boundedContext: string,
   ): Promise<void> {
-    const response = new MultiPartResponse(this.multiPartHost(), turn, boundedContext, this.researchPi!);
-    this.active = response.parentActive;
-    this.multiPart = response;
-    this.phase = 'reasoning';
-    this.emitState();
-    await response.run();
-  }
-
-  private multiPartHost(): MultiPartResponseHost {
-    return {
-      sessionId: this.options.sessionId,
-      pi: this.options.pi,
-      speech: this.options.speech,
-      idFactory: this.idFactory,
-      now: this.now,
-      scheduler: this.scheduler,
-      ...(this.budget ? { budget: this.budget } : {}),
-      emit: (type, payload) => this.emit(type, payload),
-      isCurrent: (response) => this.isCurrentMultiPart(response),
-      isUserSpeaking: () => this.userSpeaking,
-      hasProvisional: (responseId) => this.hasProvisional(responseId),
-      beginProvisionalBargeIn: (responseId) => this.beginProvisionalBargeIn(responseId),
-      enterPlaying: () => {
-        this.phase = 'playing';
-      },
-      openLedger: (playbackId, outputEpoch, generatedSamples) => {
-        this.playback.set(playbackId, { outputEpoch, generatedSamples, delivered: 0, terminal: false });
-      },
-      advanceLedger: (playbackId, outputEpoch, generatedSamples) => {
-        const ledger = this.playback.get(playbackId);
-        if (ledger && !ledger.terminal && ledger.outputEpoch === outputEpoch)
-          ledger.generatedSamples = Math.max(ledger.generatedSamples, generatedSamples);
-      },
-      setLedgerSamples: (playbackId, outputEpoch, generatedSamples) => {
-        const ledger = this.playback.get(playbackId);
-        if (!ledger || ledger.outputEpoch !== outputEpoch || ledger.terminal) return false;
-        ledger.generatedSamples = generatedSamples;
-        return true;
-      },
-      markLedgerTerminal: (playbackId) => {
-        const ledger = this.playback.get(playbackId);
-        if (ledger && !ledger.terminal) ledger.terminal = true;
-      },
-      addAssistantContext: (text) => this.addContext({ role: 'assistant', text }),
-      failResponse: (reasonCode) =>
-        this.fail(reasonCode, 'The response could not be completed successfully.', 'Continue listening.'),
-      detach: (response) => {
-        if (this.multiPart === response) this.multiPart = undefined;
-        if (this.active?.responseId === response.responseId) this.active = undefined;
-      },
-      settleListening: () => {
-        this.phase = 'listening';
-        this.emitState();
-      },
+    const active: ActiveResponse = {
+      responseId: this.idFactory(),
+      turnId: turn.turnId,
+      epoch: turn.epoch,
+      posture: turn.posture,
+      controller: new AbortController(),
+      cancelled: false,
+      reasoningPrefix: '',
+      generatedSamples: 0,
     };
-  }
-
-  private isCurrentMultiPart(response: MultiPartResponse): boolean {
-    return (
-      this.phase !== 'stopped' &&
-      this.multiPart === response &&
-      this.active === response.parentActive &&
-      !response.cancelled &&
-      !response.controller.signal.aborted
+    this.active = active;
+    this.phase = 'reasoning';
+    this.emit('reasoning.started', { turnId: active.turnId, responseId: active.responseId, posture: active.posture });
+    const acknowledgement = 'Let me think that through.';
+    const limits = researchPartLimits(active.posture);
+    const assembler = new ResearchPartAssembler(
+      limits.maxPartWords,
+      limits.maxPartChars,
+      limits.maxPartSentences,
+      limits.maxParts,
     );
+    let cumulative = acknowledgement;
+    let finalSeen = false;
+    try {
+      const stream = this.options.speech.begin({
+        sessionId: this.options.sessionId,
+        epoch: active.epoch,
+        responseId: active.responseId,
+        signal: active.controller.signal,
+        onGeneratedSamples: (total) => this.recordGeneratedSamples(active, total),
+      });
+      void stream.started.catch(() => undefined);
+      stream.started.then(
+        (meta) => {
+          if (!this.isCurrent(active)) return;
+          if (!Number.isSafeInteger(meta.sampleRate) || meta.sampleRate <= 0)
+            return this.failResponse(active, 'tts_failed');
+          active.playbackId = meta.playbackId;
+          this.playback.set(meta.playbackId, {
+            outputEpoch: active.epoch,
+            generatedSamples: Math.max(active.generatedSamples, meta.generatedSamples ?? 0),
+            delivered: 0,
+            terminal: false,
+          });
+          this.emit('tts.started', {
+            responseId: active.responseId,
+            playbackId: meta.playbackId,
+            sampleRate: meta.sampleRate,
+            ...(meta.backendId ? { backendId: meta.backendId } : {}),
+            ...(meta.modelId ? { modelId: meta.modelId } : {}),
+          });
+          this.setUnderlyingPhase(active, 'playing');
+          if (this.userSpeaking && !this.hasProvisional(active.responseId))
+            this.beginProvisionalBargeIn(active.responseId);
+          else if (this.hasProvisional(active.responseId)) this.options.speech.pause(active.responseId);
+          this.options.speech.release?.(active.responseId);
+        },
+        () => {
+          if (this.isCurrent(active)) this.failResponse(active, 'tts_failed');
+        },
+      );
+      // Ack first, then dispatch body immediately; every delta below replaces
+      // the cumulative checkpoint rather than reconstructing arrival order.
+      stream.append(acknowledgement);
+      active.reasoningPrefix = acknowledgement;
+      this.emit('reasoning.delta', { turnId: active.turnId, responseId: active.responseId, text: acknowledgement });
+      for await (const item of this.researchPi!.requestBody(
+        {
+          posture: active.posture,
+          transcript: truncateUtf8(turn.text, 16 * 1024),
+          boundedContext,
+          stallText: acknowledgement,
+          onToolActivity: (activity) => {
+            if (this.isCurrent(active))
+              this.emit('tool.activity', {
+                scope: 'turn',
+                turnId: active.turnId,
+                responseId: active.responseId,
+                ...activity,
+              });
+          },
+        },
+        active.controller.signal,
+      )) {
+        if (!this.isCurrent(active)) return;
+        if (item.type === 'error') return this.failResponse(active, 'reasoning_unavailable');
+        if (item.type === 'delta') {
+          for (const chunk of assembler.append(item.text)) {
+            stream.append(chunk.text);
+            cumulative = `${cumulative} ${chunk.text}`.trim();
+            active.reasoningPrefix = cumulative;
+            this.emit('reasoning.delta', { turnId: active.turnId, responseId: active.responseId, text: cumulative });
+          }
+        } else if (item.type === 'final') {
+          if (finalSeen) return this.failResponse(active, 'reasoning_invalid');
+          finalSeen = true;
+          for (const chunk of assembler.final(item.text).parts) {
+            stream.append(chunk.text);
+            cumulative = `${cumulative} ${chunk.text}`.trim();
+          }
+        }
+      }
+      if (!this.isCurrent(active) || !finalSeen) return this.failResponse(active, 'reasoning_invalid');
+      active.reasoningPrefix = cumulative;
+      active.assistantText = cumulative;
+      this.emit('reasoning.final', {
+        turnId: active.turnId,
+        responseId: active.responseId,
+        posture: active.posture,
+        text: cumulative,
+      });
+      stream.finish();
+    } catch {
+      if (this.isCurrent(active)) this.failResponse(active, 'reasoning_unavailable');
+    }
   }
 
   handleSpeechStart(): number {
@@ -717,12 +761,7 @@ export class SessionOrchestrator {
       ledger.terminal
     )
       return;
-    const multiPart = this.multiPart?.responseId === input.responseId ? this.multiPart : undefined;
-    if (multiPart) {
-      if (!multiPart.partByPlayback.has(input.playbackId)) return;
-    } else if (active.playbackId !== input.playbackId) {
-      return;
-    }
+    if (active.playbackId !== input.playbackId) return;
     if (
       ![input.outputEpoch, input.pausedSampleOffset, input.generatedSamples].every((value) =>
         this.validOffset(value),
@@ -779,9 +818,6 @@ export class SessionOrchestrator {
     if (input.generatedSamples > ledger.generatedSamples) return;
     if (input.playedSampleOffset > input.generatedSamples) return;
     ledger.delivered = Math.max(ledger.delivered, input.playedSampleOffset);
-    if (this.budget)
-      for (const finding of this.budget.observePlayback(input.playbackId, ledger.delivered, ledger.generatedSamples))
-        this.emit('budget.mitigation', finding);
   }
 
   playbackStopped(input: PlaybackStoppedEvent['payload']): void {
@@ -796,7 +832,6 @@ export class SessionOrchestrator {
     if (ledger.outputEpoch !== input.cancelledEpoch || input.finalPlayedSampleOffset > ledger.generatedSamples) return;
     ledger.delivered = Math.max(ledger.delivered, input.finalPlayedSampleOffset);
     ledger.terminal = true;
-    if (this.budget) this.budget.notePlaybackEnded(input.playbackId);
     const pending = this.acceptancePendingTerminal;
     if (
       pending &&
@@ -810,8 +845,6 @@ export class SessionOrchestrator {
     if (input.cancelledEpoch !== this.epoch) return;
     const active = this.active;
     if (!active || this.phase === 'stopped') return;
-    const multiPart = this.multiPart?.responseId === active.responseId ? this.multiPart : undefined;
-    if (multiPart && multiPart.notePlaybackStopped(input.playbackId)) return;
     if (active.playbackId !== input.playbackId) return;
     if (
       input.reason === 'completed' &&
@@ -1088,14 +1121,15 @@ export class SessionOrchestrator {
       this.cancelResponse(active);
       this.active = undefined;
     }
-    if (this.multiPart) {
-      this.budget?.abandonResponse(this.multiPart.responseId);
-      this.multiPart = undefined;
-    }
   }
   private cancelResponse(active: ActiveResponse): void {
     if (active.cancelled) return;
     active.cancelled = true;
+    this.emit('response.cancelled', {
+      turnId: active.turnId,
+      responseId: active.responseId,
+      reason: this.phase === 'stopped' ? 'stopped' : 'superseded',
+    });
     active.controller.abort();
     this.options.speech.cancel(active.responseId);
   }
