@@ -31,6 +31,7 @@ import { Message, MessageContent, MessageHeader } from '../components/ui/message
 import { cn } from '../lib/utils';
 import { Spinner } from '../components/ui/spinner';
 import { Progress } from '../components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -505,14 +506,22 @@ function AudioEngineStatusStrip({ status }: { status: SessionViewState['audioEng
   );
 }
 
+type ActivityLogTab = 'activity' | 'timing';
+
 function ActivityLogPanel() {
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<readonly ActivityEntry[]>(() => activityLog.entries());
+  const [tab, setTab] = useState<ActivityLogTab>('activity');
   const [notice, setNotice] = useState('');
   useEffect(() => activityLog.subscribe(setEntries), []);
+  const isBudgetEntry = (entry: ActivityEntry) => entry.source === 'budget';
+  const activityEntries = entries.filter((entry) => !isBudgetEntry(entry));
+  const timingEntries = entries.filter(isBudgetEntry);
+  const activeEntries = tab === 'timing' ? timingEntries : activityEntries;
+  const activeFilter = tab === 'timing' ? isBudgetEntry : (entry: ActivityEntry) => !isBudgetEntry(entry);
   const copyLog = () => {
     try {
-      void navigator.clipboard.writeText(activityLog.toText()).then(
+      void navigator.clipboard.writeText(activityLog.toText(activeFilter)).then(
         () => setNotice('Copied to clipboard'),
         () => setNotice('Copy failed'),
       );
@@ -522,94 +531,76 @@ function ActivityLogPanel() {
   };
   return (
     <Card size="sm" className="activity-log mt-6">
-      <CardHeader className="activity-log-header flex flex-row flex-wrap items-center justify-between gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="activity-log-toggle"
-          aria-expanded={open}
-          aria-controls="activity-log-region"
-          onClick={() => setOpen((value) => !value)}
-        >
-          <ChevronDown
-            data-icon="inline-start"
-            className={cn('transition-transform', open && 'rotate-180')}
-            aria-hidden="true"
-          />
-          Activity log
-          {entries.length > 0 ? (
-            <Badge variant="secondary" className="activity-log-count font-mono tabular-nums">
-              {entries.length}
-            </Badge>
-          ) : null}
-        </Button>
-        {open ? (
-          <div className="activity-log-actions flex items-center gap-2">
-            {notice ? (
-              <span className="activity-log-notice text-xs text-muted-foreground" role="status">
-                {notice}
-              </span>
+      <Tabs value={tab} onValueChange={(value) => setTab(value as ActivityLogTab)} className="contents">
+        <CardHeader className="activity-log-header flex flex-row flex-wrap items-center justify-between gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="activity-log-toggle"
+            aria-expanded={open}
+            aria-controls="activity-log-region"
+            onClick={() => setOpen((value) => !value)}
+          >
+            <ChevronDown
+              data-icon="inline-start"
+              className={cn('transition-transform', open && 'rotate-180')}
+              aria-hidden="true"
+            />
+            Activity log
+            {activeEntries.length > 0 ? (
+              <Badge variant="secondary" className="activity-log-count font-mono tabular-nums">
+                {activeEntries.length}
+              </Badge>
             ) : null}
-            <ButtonGroup aria-label="Activity log actions">
-              <Button variant="outline" size="icon" title="Copy" aria-label="Copy entries" onClick={copyLog}>
-                <Copy aria-hidden="true" />
-              </Button>
-              <ButtonGroupSeparator />
-              <Button
-                variant="outline"
-                size="icon"
-                title="Clear"
-                aria-label="Clear entries"
-                onClick={() => {
-                  activityLog.clear();
-                  setNotice('');
-                }}
-              >
-                <Trash aria-hidden="true" />
-              </Button>
-            </ButtonGroup>
-          </div>
-        ) : null}
-      </CardHeader>
-      {open ? (
-        <CardContent
-          id="activity-log-region"
-          role="region"
-          aria-label="Activity log entries"
-          className="activity-log-region border-t p-2"
-        >
-          {entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No activity logged yet.</p>
-          ) : (
-            <ul className="activity-log-list m-0 flex max-h-64 list-none flex-col overflow-y-auto p-0">
-              {[...entries].reverse().map((entry, index) => (
-                <li
-                  key={`${entry.ts}-${index}`}
-                  className="activity-log-entry grid items-baseline gap-x-2 rounded-md px-2 py-1 text-xs leading-snug [overflow-wrap:anywhere] hover:bg-muted/50"
+          </Button>
+          {open ? (
+            <div className="activity-log-actions flex flex-wrap items-center gap-2">
+              <TabsList aria-label="Activity log sections">
+                <TabsTrigger value="activity">Activity</TabsTrigger>
+                <TabsTrigger value="timing">Timing</TabsTrigger>
+              </TabsList>
+              {notice ? (
+                <span className="activity-log-notice text-xs text-muted-foreground" role="status">
+                  {notice}
+                </span>
+              ) : null}
+              <ButtonGroup aria-label="Activity log actions">
+                <Button variant="outline" size="icon" title="Copy" aria-label="Copy entries" onClick={copyLog}>
+                  <Copy aria-hidden="true" />
+                </Button>
+                <ButtonGroupSeparator />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  title="Clear"
+                  aria-label="Clear entries"
+                  onClick={() => {
+                    activityLog.clear(activeFilter);
+                    setNotice('');
+                  }}
                 >
-                  <time
-                    className="log-entry-time font-mono text-[0.7rem] tabular-nums text-muted-foreground"
-                    dateTime={new Date(entry.ts).toISOString()}
-                  >
-                    {formatLogTime(entry.ts)}
-                  </time>
-                  <Badge
-                    className="log-level justify-self-start"
-                    variant={entry.level === 'error' ? 'destructive' : entry.level === 'warn' ? 'outline' : 'secondary'}
-                  >
-                    {entry.level}
-                  </Badge>
-                  <span className="log-entry-source truncate text-muted-foreground">{entry.source}</span>
-                  <span className="log-entry-message min-w-0">
-                    {entry.message}
-                    {entry.detail ? ` — ${entry.detail}` : ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      ) : null}
+                  <Trash aria-hidden="true" />
+                </Button>
+              </ButtonGroup>
+            </div>
+          ) : null}
+        </CardHeader>
+        {open ? (
+          <CardContent
+            id="activity-log-region"
+            role="region"
+            aria-label="Activity log entries"
+            className="activity-log-region border-t p-2"
+          >
+            <TabsContent value="activity">
+              <ActivityLogEntryList entries={activityEntries} emptyMessage="No activity logged yet." />
+            </TabsContent>
+            <TabsContent value="timing">
+              <ActivityLogEntryList entries={timingEntries} emptyMessage="No timing events logged yet." />
+            </TabsContent>
+          </CardContent>
+        ) : null}
+      </Tabs>
     </Card>
   );
 }
@@ -716,6 +707,37 @@ function AgentActivityPanel({
   );
 }
 
+function ActivityLogEntryList({ entries, emptyMessage }: { entries: readonly ActivityEntry[]; emptyMessage: string }) {
+  if (entries.length === 0) return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
+  return (
+    <ul className="activity-log-list m-0 flex max-h-64 list-none flex-col overflow-y-auto p-0">
+      {[...entries].reverse().map((entry, index) => (
+        <li
+          key={`${entry.ts}-${index}`}
+          className="activity-log-entry grid items-baseline gap-x-2 rounded-md px-2 py-1 text-xs leading-snug [overflow-wrap:anywhere] hover:bg-muted/50"
+        >
+          <time
+            className="log-entry-time font-mono text-[0.7rem] tabular-nums text-muted-foreground"
+            dateTime={new Date(entry.ts).toISOString()}
+          >
+            {formatLogTime(entry.ts)}
+          </time>
+          <Badge
+            className="log-level justify-self-start"
+            variant={entry.level === 'error' ? 'destructive' : entry.level === 'warn' ? 'outline' : 'secondary'}
+          >
+            {entry.level}
+          </Badge>
+          <span className="log-entry-source truncate text-muted-foreground">{entry.source}</span>
+          <span className="log-entry-message min-w-0">
+            {entry.message}
+            {entry.detail ? ` — ${entry.detail}` : ''}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 function formatElapsed(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;

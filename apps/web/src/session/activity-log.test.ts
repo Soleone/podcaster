@@ -46,6 +46,30 @@ describe('activity log', () => {
     expect(activityLog.entries().at(-1)?.message).toBe('third');
   });
 
+  it('filters toText and clear by predicate while keeping no-arg behavior unchanged', () => {
+    activityLog.append({ level: 'info', source: 'transport', message: 'session socket opened' });
+    activityLog.append({ level: 'warn', source: 'budget', message: 'measured handoff gap' });
+    const onlyBudget = (entry: ActivityEntry) => entry.source === 'budget';
+    expect(activityLog.toText(onlyBudget)).toContain('budget: measured handoff gap');
+    expect(activityLog.toText(onlyBudget)).not.toContain('transport');
+    expect(activityLog.toText()).toContain('session socket opened');
+    activityLog.clear(onlyBudget);
+    expect(activityLog.entries()).toHaveLength(1);
+    expect(activityLog.entries()[0]!.source).toBe('transport');
+    activityLog.clear();
+    expect(activityLog.entries()).toHaveLength(0);
+  });
+
+  it('leaves entries untouched and skips notification when a filtered clear matches nothing', () => {
+    activityLog.append({ level: 'info', source: 'transport', message: 'session socket opened' });
+    const seen: ActivityEntry[][] = [];
+    const unsubscribe = activityLog.subscribe((entries) => seen.push(entries));
+    activityLog.clear((entry) => entry.source === 'budget');
+    unsubscribe();
+    expect(seen).toHaveLength(1); // immediate snapshot only; no clear emission
+    expect(activityLog.entries()).toHaveLength(1);
+  });
+
   it('formats toText and toJSON deterministically', () => {
     activityLog.append({
       level: 'error',

@@ -10,6 +10,7 @@ const originalWebSocket = globalThis.WebSocket;
 const contractsRoot = resolve(import.meta.dirname, '../../../../packages/contracts');
 const hostFixtureCases = [
   ['barge-in', 'barge-in'],
+  ['budget-mitigation', 'budget-mitigation'],
   ['failure', 'failure'],
   ['interruption-decision', 'interruption-decision'],
   ['policy-decision', 'policy-decision'],
@@ -1129,6 +1130,67 @@ describe('WebSocketSessionTransport protocol failure diagnostics', () => {
     );
     expect(socket.closed).toBe(4000);
     expect(socket.failureMessages).toEqual([expect.stringContaining('vad.speech_start')]);
+  });
+
+  it('validates and forwards budget.mitigation events to event listeners', async () => {
+    const socket = new EventSocket();
+    const transport = await wiredTransport(socket);
+    const received: HostEvent[] = [];
+    transport.onEvent((event) => {
+      received.push(event);
+    });
+    emitText(
+      socket,
+      hostEvent('budget.mitigation', {
+        turnId: turnUuid,
+        responseId: responseA,
+        kind: 'gap_measured',
+        partIndex: 1,
+        detail: {
+          estimates: {
+            stallFirstDeltaMs: 1500,
+            stallTextMs: 4000,
+            bodyFirstPartMs: 8000,
+            ttsTtfaMs: 1000,
+            ttsRtf: 0.3,
+            wordsPerSecond: 2.5,
+          },
+          trigger: 'handoff gap 420ms > 150ms',
+        },
+      }),
+    );
+    expectNoProtocolFailure(socket);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      type: 'budget.mitigation',
+      payload: expect.objectContaining({ kind: 'gap_measured', turnId: turnUuid, responseId: responseA }),
+    });
+  });
+
+  it('rejects a budget.mitigation event with an unknown kind as a protocol failure', async () => {
+    const socket = new EventSocket();
+    await wiredTransport(socket);
+    emitText(
+      socket,
+      hostEvent('budget.mitigation', {
+        turnId: turnUuid,
+        responseId: responseA,
+        kind: 'bridge',
+        detail: {
+          estimates: {
+            stallFirstDeltaMs: 1500,
+            stallTextMs: 4000,
+            bodyFirstPartMs: 8000,
+            ttsTtfaMs: 1000,
+            ttsRtf: 0.3,
+            wordsPerSecond: 2.5,
+          },
+          trigger: 'bridge inserted',
+        },
+      }),
+    );
+    expect(socket.closed).toBe(4000);
+    expect(socket.failureMessages).toEqual([expect.stringContaining('budget.mitigation')]);
   });
 
   it('never lets a throwing close() escape onmessage and still notifies the failure', async () => {

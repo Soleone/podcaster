@@ -1023,6 +1023,41 @@ function isHostEventShape(value: unknown): boolean {
         (payload.rewindMs === undefined || (integer(payload.rewindMs) && Number(payload.rewindMs) <= 1_000)) &&
         partOk(payload)
       );
+    case 'budget.mitigation': {
+      if (
+        !hasOnly(payload, ['turnId', 'responseId', 'kind', 'detail'], ['partIndex']) ||
+        !uuid('turnId') ||
+        !uuid('responseId') ||
+        !['stall_target', 'late_handoff_projected', 'gap_measured'].includes(String(payload.kind)) ||
+        (payload.partIndex !== undefined && (!integer(payload.partIndex) || Number(payload.partIndex) > 7))
+      )
+        return false;
+      if (typeof payload.detail !== 'object' || payload.detail === null || Array.isArray(payload.detail)) return false;
+      const detail = payload.detail as Record<string, unknown>;
+      if (
+        !exact(detail, ['estimates', 'trigger']) ||
+        typeof detail.trigger !== 'string' ||
+        detail.trigger.length === 0 ||
+        typeof detail.estimates !== 'object' ||
+        detail.estimates === null ||
+        Array.isArray(detail.estimates)
+      )
+        return false;
+      const estimates = detail.estimates as Record<string, unknown>;
+      return (
+        exact(estimates, [
+          'stallFirstDeltaMs',
+          'stallTextMs',
+          'bodyFirstPartMs',
+          'ttsTtfaMs',
+          'ttsRtf',
+          'wordsPerSecond',
+        ]) &&
+        Object.values(estimates).every(
+          (value) => typeof value === 'number' && Number.isFinite(value) && Number(value) >= 0,
+        )
+      );
+    }
     case 'failure':
       return (
         exact(payload, ['code', 'detail', 'correctiveAction', 'recoverable']) &&

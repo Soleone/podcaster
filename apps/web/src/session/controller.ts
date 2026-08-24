@@ -1,4 +1,4 @@
-import type { HostEvent } from '@app/contracts';
+import type { BudgetMitigationEvent, HostEvent } from '@app/contracts';
 import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
 import type { PlaybackPauseCheckpoint, StableTurnWriter } from '../storage/stable-turn-writer';
 import { activityLog } from './activity-log';
@@ -160,6 +160,12 @@ export class SessionController {
         return;
     }
     this.seenEvents.add(event.eventId);
+    if (event.type === 'budget.mitigation') {
+      // Dev-facing timing telemetry only: keep it out of stable storage and
+      // session state reduction.
+      this.recordBudgetEvent(event);
+      return;
+    }
     const storage = await this.options.writer.apply(event);
     if (!storage.ok) {
       if (event.type === 'transcript.final' && !this.stopped)
@@ -616,6 +622,23 @@ export class SessionController {
     });
     void this.options.writer.apply(event);
     this.setState(reduceSessionState(this.state, event));
+  }
+
+  private recordBudgetEvent(event: BudgetMitigationEvent): void {
+    const { turnId, responseId, kind, partIndex, detail } = event.payload;
+    const where = `turn=${turnId} response=${responseId}${typeof partIndex === 'number' ? ` part=${partIndex}` : ''}`;
+    const message =
+      kind === 'gap_measured'
+        ? `measured handoff gap: ${detail.trigger} (${where})`
+        : kind === 'late_handoff_projected'
+          ? `late handoff projected (${where})`
+          : `stall target set (${where})`;
+    activityLog.append({
+      level: kind === 'stall_target' ? 'info' : 'warn',
+      source: 'budget',
+      message,
+      detail: JSON.stringify(detail),
+    });
   }
 
   private matchesProvisionalResolution(event: HostEvent): boolean {

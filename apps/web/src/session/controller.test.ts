@@ -4,6 +4,7 @@ import type { HostEvent } from '@app/contracts';
 import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
 import { StableTurnWriter } from '../storage/stable-turn-writer';
 import { SessionController, type ControlledPlayback } from './controller';
+import { activityLog } from './activity-log';
 import { FakeSessionTransport } from './fake-transport';
 import { initialSessionState } from './state';
 
@@ -858,5 +859,60 @@ describe('SessionController', () => {
       degradedMessage: 'Could not save the stopped state.',
     });
     failed.writer.close();
+  });
+
+  it('records budget.mitigation events in the activity log with kind-based levels', async () => {
+    const { controller, transport, writer } = await setup();
+    const estimates = {
+      stallFirstDeltaMs: 1500,
+      stallTextMs: 4000,
+      bodyFirstPartMs: 8000,
+      ttsTtfaMs: 1000,
+      ttsRtf: 0.3,
+      wordsPerSecond: 2.5,
+    };
+    const before = activityLog.entries().length;
+    await transport.emit(
+      event('session', 0, 'budget.mitigation', {
+        turnId: 'turn',
+        responseId: 'response',
+        kind: 'stall_target',
+        detail: { estimates, trigger: 'target=27 words; penalty=0ms' },
+      }),
+    );
+    await transport.emit(
+      event('session', 0, 'budget.mitigation', {
+        turnId: 'turn',
+        responseId: 'response',
+        kind: 'late_handoff_projected',
+        partIndex: 1,
+        detail: { estimates, trigger: 'nextEta 800ms > remaining 600ms - 250ms' },
+      }),
+    );
+    await transport.emit(
+      event('session', 0, 'budget.mitigation', {
+        turnId: 'turn',
+        responseId: 'response',
+        kind: 'gap_measured',
+        partIndex: 1,
+        detail: { estimates, trigger: 'handoff gap 420ms > 150ms' },
+      }),
+    );
+    const budgetEntries = activityLog
+      .entries()
+      .slice(before)
+      .filter((entry) => entry.source === 'budget');
+    expect(budgetEntries.map((entry) => entry.level)).toEqual(['info', 'warn', 'warn']);
+    expect(budgetEntries[0]!.message).toContain('turn=turn');
+    expect(budgetEntries[0]!.message).toContain('response=response');
+    expect(budgetEntries[1]!.message).toContain('part=1');
+    expect(budgetEntries[2]!.message).toContain('handoff gap 420ms > 150ms');
+    expect(JSON.parse(budgetEntries[2]!.detail ?? '')).toMatchObject({
+      trigger: 'handoff gap 420ms > 150ms',
+      estimates,
+    });
+    expect(controller.snapshot().conversationItems).toEqual([]);
+    writer.close();
+    activityLog.clear();
   });
 });

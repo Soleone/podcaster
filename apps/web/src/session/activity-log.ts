@@ -1,4 +1,5 @@
 export type LogLevel = 'info' | 'warn' | 'error';
+export type ActivityEntryFilter = (entry: ActivityEntry) => boolean;
 export interface ActivityEntry {
   ts: number;
   level: LogLevel;
@@ -22,8 +23,15 @@ export class ActivityLog {
     this.emit();
   }
 
-  clear(): void {
+  clear(filter?: ActivityEntryFilter): void {
     if (this.buffer.length === 0) return;
+    if (filter) {
+      const remaining = this.buffer.filter((entry) => !filter(entry));
+      if (remaining.length === this.buffer.length) return;
+      this.buffer = remaining;
+      this.emit();
+      return;
+    }
     this.buffer = [];
     this.emit();
   }
@@ -38,8 +46,9 @@ export class ActivityLog {
     return this.buffer;
   }
 
-  toText(): string {
-    return this.buffer
+  toText(filter?: ActivityEntryFilter): string {
+    const entries = filter ? this.buffer.filter(filter) : this.buffer;
+    return entries
       .map((entry) => {
         const time = new Date(entry.ts).toISOString();
         return `[${time}] ${entry.level.toUpperCase()} ${entry.source}: ${entry.message}${entry.detail ? ` — ${entry.detail}` : ''}`;
