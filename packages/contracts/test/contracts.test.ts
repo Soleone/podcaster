@@ -41,6 +41,7 @@ const cases = [
   ['protocol-envelope.json', 'core-event', 'protocol-envelope'],
   ['events/core-events.json', 'core-event', 'core-events'],
   ['events/barge-in.json', 'barge-in', 'barge-in'],
+  ['events/budget-mitigation.json', 'budget-mitigation', 'budget-mitigation'],
   ['events/browser-command.json', 'browser-command', 'browser-command'],
   ['events/failure.json', 'failure', 'failure'],
   ['events/host-event.json', 'host-event', 'host-event'],
@@ -76,6 +77,7 @@ const cases = [
 
 const hostEventSchemaPaths = new Set([
   'events/barge-in.json',
+  'events/budget-mitigation.json',
   'events/failure.json',
   'events/host-event.json',
   'events/interruption-decision.json',

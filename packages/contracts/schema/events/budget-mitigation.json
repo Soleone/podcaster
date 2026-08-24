@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://podcaster.local/schema/events/budget-mitigation.json",
+  "title": "BudgetMitigationEvent",
+  "allOf": [
+    { "$ref": "../protocol-envelope.json" },
+    {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "budget.mitigation" },
+        "payload": {
+          "type": "object",
+          "required": ["turnId", "responseId", "kind", "detail"],
+          "properties": {
+            "turnId": { "type": "string", "format": "uuid" },
+            "responseId": { "type": "string", "format": "uuid" },
+            "kind": { "enum": ["stall_target", "late_handoff_projected", "gap_measured"] },
+            "partIndex": { "type": "integer", "minimum": 0, "maximum": 7 },
+            "detail": {
+              "type": "object",
+              "required": ["estimates", "trigger"],
+              "properties": {
+                "estimates": {
+                  "type": "object",
+                  "required": [
+                    "stallFirstDeltaMs",
+                    "stallTextMs",
+                    "bodyFirstPartMs",
+                    "ttsTtfaMs",
+                    "ttsRtf",
+                    "wordsPerSecond"
+                  ],
+                  "properties": {
+                    "stallFirstDeltaMs": { "type": "number", "minimum": 0 },
+                    "stallTextMs": { "type": "number", "minimum": 0 },
+                    "bodyFirstPartMs": { "type": "number", "minimum": 0 },
+                    "ttsTtfaMs": { "type": "number", "minimum": 0 },
+                    "ttsRtf": { "type": "number", "minimum": 0 },
+                    "wordsPerSecond": { "type": "number", "minimum": 0 }
+                  },
+                  "additionalProperties": false
+                },
+                "trigger": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

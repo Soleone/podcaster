@@ -18,6 +18,7 @@ import type { WebSocket, RawData } from 'ws';
 import type { PiClient } from '../pi/PiClient.js';
 import type { PiResearchClient, ResearchToolActivity } from '../pi/PiResearchClient.js';
 import { SessionOrchestrator } from '../session/SessionOrchestrator.js';
+import { RuntimeBudget } from '../session/RuntimeBudget.js';
 import { PiInterruptionIntentClassifier } from '../session/InterruptionIntentClassifier.js';
 import {
   AudioClient,
@@ -397,6 +398,7 @@ export class BrowserSession {
       researchPi: this.researchPi,
       ...(this.planningNotes ? { planningContext: this.planningNotes } : {}),
       multiPartEnabled: this.options.multiPartEnabled,
+      ...(this.options.multiPartEnabled ? { budget: new RuntimeBudget() } : {}),
       transcriptOnly: reasoningMode === 'transcript_only',
       interruptionClassifier: new PiInterruptionIntentClassifier(this.classifierPi),
       emit: (value) => this.send(value),

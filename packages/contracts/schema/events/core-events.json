@@ -62,7 +62,8 @@
       "tts.cancelled",
       "vad.speech_start",
       "vad.speech_end",
-      "sidecar.failure"
+      "sidecar.failure",
+      "budget.mitigation"
      ]
     }
    }

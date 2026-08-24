@@ -3,10 +3,12 @@ import type { PiResearchClient } from '../pi/PiResearchClient.js';
 import { log } from '../logger.js';
 import { ReasoningSpeechAssembler } from './ReasoningSpeechAssembler.js';
 import { ResearchPartAssembler, researchPartLimits } from './ResearchPartAssembler.js';
+import { D2_RECHECK_MS, D2_STALL_MARGIN_MS, type RuntimeBudget } from './RuntimeBudget.js';
 import type {
   ActiveResponse,
   HostEventPayload,
   HostEventType,
+  Scheduler,
   SpeechOutputPort,
   SpeechOutputStream,
   SpeechSynthesisStart,
@@ -21,6 +23,10 @@ export interface MultiPartPart {
   generatedSamples: number;
   terminal: boolean;
   started: boolean;
+  /** Latency-budget instrumentation only; never drives pipeline behavior. */
+  firstAppendAtMs?: number;
+  sampleRate?: number;
+  modelKey?: string;
 }
 
 /**
@@ -34,6 +40,10 @@ export interface MultiPartResponseHost {
   readonly pi: PiClient;
   readonly speech: Pick<SpeechOutputPort, 'begin' | 'pause' | 'release' | 'cancel'>;
   readonly idFactory: () => string;
+  readonly now: () => number;
+  readonly scheduler: Scheduler;
+  /** Optional per-session latency budget; every use is fail-soft and measurement-only. */
+  readonly budget?: RuntimeBudget;
   emit<T extends HostEventType>(type: T, payload: HostEventPayload<T>): void;
   /** True while this response is still the registered multi-part machine of a live session. */
   isCurrent(response: MultiPartResponse): boolean;
@@ -85,6 +95,10 @@ export class MultiPartResponse {
   cancelled = false;
   private researchDone = false;
   private readonly transcript: string;
+  private bodyStartedAtMs: number | undefined;
+  private bodyFirstReleased = false;
+  private stallHandoffFired = false;
+  private stallHandoffTimer: (() => void) | undefined;
 
   constructor(
     private readonly host: MultiPartResponseHost,
@@ -122,7 +136,9 @@ export class MultiPartResponse {
         started: false,
       };
       this.parts.push(stall);
-      const stallStartedAt = Date.now();
+      const stallInstruction = this.stallInstruction();
+      const stallStartedAt = this.now();
+      let stallFirstDeltaAtMs: number | undefined;
       log('session', `part started stall 0 ${this.responseId}`);
       this.host.emit('response.part_started', {
         turnId: this.turnId,
@@ -169,14 +185,21 @@ export class MultiPartResponse {
           transcript: this.transcript,
           boundedContext: this.boundedContext,
           maxWords: 45,
-          instruction: PI_STALL_INSTRUCTION,
+          instruction: stallInstruction,
         },
         this.controller.signal,
       )) {
         if (!this.isCurrent()) return;
         if (event.type === 'final') stallFinalText = event.text;
         else if (event.type === 'delta') {
-          for (const chunk of stallAssembler.append(event.text)) stallStream.append(chunk.text);
+          if (stallFirstDeltaAtMs === undefined) {
+            stallFirstDeltaAtMs = this.now();
+            this.host.budget?.observeStallFirstDelta(Math.max(0, stallFirstDeltaAtMs - stallStartedAt));
+          }
+          for (const chunk of stallAssembler.append(event.text)) {
+            this.noteFirstAppend(stall);
+            stallStream.append(chunk.text);
+          }
           const preview = stallAssembler.canonicalPrefix;
           if (preview) emitStallPreview(preview);
         } else if (event.type === 'error') {
@@ -190,7 +213,10 @@ export class MultiPartResponse {
         try {
           const finalized = stallAssembler.final(stallFinalText ?? '');
           stallText = finalized.result.canonical;
-          if (finalized.tail) stallStream.append(finalized.tail.text);
+          if (finalized.tail) {
+            this.noteFirstAppend(stall);
+            stallStream.append(finalized.tail.text);
+          }
           if (!stallText || stallText.split(/\s+/u).filter(Boolean).length > 45) stallText = undefined;
           if (this.posture === 'question' && (stallText?.match(/\?/gu) ?? []).length > 1) stallText = undefined;
           if (stallText && /^(?:```|\{|\[|assistant\s*:|system\s*:|<\/?(?:script|iframe)\b)/iu.test(stallText))
@@ -219,8 +245,16 @@ export class MultiPartResponse {
         partIndex: 0,
         text: stallText,
       });
+      this.host.budget?.observeStallText(Math.max(0, this.now() - stallStartedAt));
+      this.host.budget?.registerPart({
+        responseId: this.responseId,
+        turnId: this.turnId,
+        partIndex: 0,
+        ...(stall.firstAppendAtMs !== undefined ? { openedAtMs: stall.firstAppendAtMs } : {}),
+        words: this.wordCount(stallText),
+      });
       stallStream.finish();
-      log('session', `part final stall 0 ${this.responseId} ${stallText.length}chars ${Date.now() - stallStartedAt}ms`);
+      log('session', `part final stall 0 ${this.responseId} ${stallText.length}chars ${this.now() - stallStartedAt}ms`);
       this.host.emit('response.part_final', {
         turnId: this.turnId,
         responseId: this.responseId,
@@ -230,6 +264,9 @@ export class MultiPartResponse {
       if (!this.isCurrent()) return;
 
       // ---- Body parts from the research Pi child ----
+      this.bodyStartedAtMs = this.now();
+      this.checkStallHandoff();
+      this.armStallHandoffRecheck();
       const bodyLimits = researchPartLimits(this.posture);
       const bodyAssembler = new ResearchPartAssembler(
         bodyLimits.maxPartWords,
@@ -296,6 +333,7 @@ export class MultiPartResponse {
   notePlaybackStopped(playbackId: string): boolean {
     const part = this.partByPlayback.get(playbackId);
     if (!part || part.terminal) return false;
+    if (part.partIndex === 0) this.clearStallHandoffTimer();
     part.terminal = true;
     this.completeMultiPartIfReady();
     return true;
@@ -305,10 +343,84 @@ export class MultiPartResponse {
     return this.host.isCurrent(this);
   }
 
+  private now(): number {
+    return this.host.now();
+  }
+
+  private wordCount(text: string): number {
+    return text.split(/\s+/u).filter(Boolean).length;
+  }
+
+  private noteFirstAppend(part: MultiPartPart): void {
+    if (part.firstAppendAtMs === undefined) part.firstAppendAtMs = this.now();
+  }
+
+  /**
+   * D1 adaptive stall sizing: append a target-word hint to the unchanged
+   * stall instruction. Fail-soft — any budget trouble falls back to the bare
+   * instruction; the 45-word hard cap and byte bound are enforced elsewhere
+   * and stay untouched here.
+   */
+  private stallInstruction(): string {
+    const budget = this.host.budget;
+    if (!budget) return PI_STALL_INSTRUCTION;
+    try {
+      const hint = budget.stallTargetHint();
+      this.host.emit('budget.mitigation', budget.stallTargetFinding(this.turnId, this.responseId));
+      return `${PI_STALL_INSTRUCTION}\n${hint}`;
+    } catch {
+      return PI_STALL_INSTRUCTION;
+    }
+  }
+
+  /** D2 measurement-only check: is the body part 1 ETA cutting it too close to the stall end? */
+  private checkStallHandoff(): void {
+    const budget = this.host.budget;
+    if (!budget || this.stallHandoffFired || this.bodyStartedAtMs === undefined) return;
+    const stall = this.parts[0];
+    if (!stall?.playbackId) return;
+    const remainingMs = budget.playbackRemainingMs(stall.playbackId);
+    if (remainingMs === undefined) return;
+    const elapsedMs = Math.max(0, this.now() - this.bodyStartedAtMs);
+    if (!budget.stallHandoffAtRisk(remainingMs, elapsedMs)) return;
+    this.stallHandoffFired = true;
+    this.clearStallHandoffTimer();
+    const estimates = budget.estimatesSnapshot();
+    const bodyEtaMs = budget.bodyEtaMs(elapsedMs);
+    this.host.emit('budget.mitigation', {
+      turnId: this.turnId,
+      responseId: this.responseId,
+      kind: 'late_handoff_projected',
+      partIndex: 1,
+      detail: {
+        estimates,
+        trigger: `bodyEta ${Math.round(bodyEtaMs)}ms + ttsTtfa ${Math.round(estimates.ttsTtfaMs)}ms > stallRemaining ${Math.round(remainingMs)}ms - ${D2_STALL_MARGIN_MS}ms`,
+      },
+    });
+  }
+
+  private armStallHandoffRecheck(): void {
+    if (!this.host.budget) return;
+    const tick = (): void => {
+      this.stallHandoffTimer = undefined;
+      if (!this.isCurrent() || this.stallHandoffFired || this.bodyFirstReleased) return;
+      this.checkStallHandoff();
+      if (!this.stallHandoffFired && this.isCurrent() && !this.bodyFirstReleased)
+        this.stallHandoffTimer = this.host.scheduler.schedule(D2_RECHECK_MS, tick);
+    };
+    this.stallHandoffTimer = this.host.scheduler.schedule(D2_RECHECK_MS, tick);
+  }
+
+  private clearStallHandoffTimer(): void {
+    this.stallHandoffTimer?.();
+    this.stallHandoffTimer = undefined;
+  }
+
   private recordPartSamples(part: MultiPartPart, total: number): void {
     if (!validOffset(total) || total < part.generatedSamples || this.cancelled) return;
     part.generatedSamples = total;
     if (!part.playbackId) return;
+    this.host.budget?.notePlaybackSamples(part.playbackId, total);
     this.host.advanceLedger(part.playbackId, this.epoch, total);
   }
 
@@ -326,7 +438,21 @@ export class MultiPartResponse {
     }
     part.playbackId = meta.playbackId;
     part.started = true;
+    part.sampleRate = meta.sampleRate;
+    part.modelKey = `${meta.backendId ?? 'unknown'}/${meta.modelId ?? 'default'}`;
     this.partByPlayback.set(meta.playbackId, part);
+    if (this.host.budget) {
+      if (part.firstAppendAtMs !== undefined)
+        this.host.budget.observeTtsTtfa(Math.max(0, this.now() - part.firstAppendAtMs), part.modelKey);
+      this.host.budget.attachPlayback({
+        responseId: this.responseId,
+        turnId: this.turnId,
+        partIndex: part.partIndex,
+        playbackId: meta.playbackId,
+        sampleRate: meta.sampleRate,
+        generatedSamples: part.generatedSamples,
+      });
+    }
     this.host.openLedger(meta.playbackId, this.epoch, Math.max(part.generatedSamples, meta.generatedSamples ?? 0));
     this.host.emit('tts.started', {
       responseId: this.responseId,
@@ -356,6 +482,15 @@ export class MultiPartResponse {
             return;
           }
           if (!this.host.setLedgerSamples(meta.playbackId, this.epoch, completed.generatedSamples)) return;
+          if (this.host.budget) {
+            this.host.budget.notePlaybackSamples(meta.playbackId, completed.generatedSamples);
+            const audioSeconds = part.sampleRate ? completed.generatedSamples / part.sampleRate : 0;
+            if (part.firstAppendAtMs !== undefined && audioSeconds > 0)
+              this.host.budget.observeTtsRtf(
+                Math.max(0, this.now() - part.firstAppendAtMs) / 1000 / audioSeconds,
+                part.modelKey,
+              );
+          }
           this.host.emit('tts.ended', {
             responseId: this.responseId,
             playbackId: meta.playbackId,
@@ -383,7 +518,27 @@ export class MultiPartResponse {
       started: false,
     };
     this.parts.push(part);
-    const partStartedAt = Date.now();
+    if (!this.bodyFirstReleased) {
+      this.bodyFirstReleased = true;
+      if (this.bodyStartedAtMs !== undefined)
+        this.host.budget?.observeBodyFirstPart(Math.max(0, this.now() - this.bodyStartedAtMs));
+    }
+    if (this.host.budget) {
+      this.host.budget.registerPart({
+        responseId: this.responseId,
+        turnId: this.turnId,
+        partIndex: chunk.partIndex,
+        openedAtMs: this.now(),
+        words: this.wordCount(chunk.text),
+      });
+      for (const finding of this.host.budget.handoffCheckOnRelease({
+        responseId: this.responseId,
+        turnId: this.turnId,
+        partIndex: chunk.partIndex,
+      }))
+        this.host.emit('budget.mitigation', finding);
+    }
+    const partStartedAt = this.now();
     log('session', `part started body ${chunk.partIndex} ${this.responseId}`);
     this.host.emit('response.part_started', {
       turnId: this.turnId,
@@ -415,6 +570,7 @@ export class MultiPartResponse {
         if (this.isCurrent()) this.failMultiPart(part.partIndex, 'tts_failed');
       },
     );
+    this.noteFirstAppend(part);
     stream.append(chunk.text);
     part.assistantText = chunk.text;
     this.host.emit('reasoning.delta', {
@@ -433,7 +589,7 @@ export class MultiPartResponse {
     stream.finish();
     log(
       'session',
-      `part final body ${chunk.partIndex} ${this.responseId} ${chunk.text.length}chars ${Date.now() - partStartedAt}ms`,
+      `part final body ${chunk.partIndex} ${this.responseId} ${chunk.text.length}chars ${this.now() - partStartedAt}ms`,
     );
     this.host.emit('response.part_final', {
       turnId: this.turnId,
@@ -451,6 +607,8 @@ export class MultiPartResponse {
   private finishMultiPart(addContext: boolean): void {
     if (this.cancelled) return;
     this.cancelled = true;
+    this.clearStallHandoffTimer();
+    this.host.budget?.endTurn(this.responseId);
     const parentText = this.parts
       .map((part) => part.assistantText)
       .filter(Boolean)
@@ -471,6 +629,8 @@ export class MultiPartResponse {
   private cancelMultiPart(): void {
     if (this.cancelled) return;
     this.cancelled = true;
+    this.clearStallHandoffTimer();
+    this.host.budget?.endTurn(this.responseId);
     this.controller.abort();
     this.host.speech.cancel(this.responseId);
     for (const part of this.parts) {

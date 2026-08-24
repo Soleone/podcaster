@@ -10,9 +10,10 @@ export type BenchmarkSummaryDistribution = { "p50": number; "p95": number; "p99"
 export type BenchmarkSummary = { "counts": { "total": number; "passed": number; "failed": number; "cancelled": number; }; "speechStartToFirstPartialMs": BenchmarkSummaryDistribution | null; "endpointToFinalMs": BenchmarkSummaryDistribution | null; "ttsTimeToFirstAudioMs": BenchmarkSummaryDistribution | null; "rtf": BenchmarkSummaryDistribution | null; "wer": number | null; "cer": number | null; "partialRevisionCount": number; "partialChurnCharacters": number; "underruns": number; "droppedFrames": number; "peakVramBytes": number | null; "steadyVramBytes": number | null; "failures": Array<{ "sourceId": string; "code": string; "stage": string; "message": string; }>; "soak": { "durationSeconds": number; "passed": boolean; "severeFailures": number; "underruns": number; "droppedFrames": number; "expectedFrames"?: number; "consumedFrames"?: number; "expectedChunks"?: number; "consumedChunks"?: number; "deadlineOverruns"?: number; "deadlineLatenessP95Ms"?: number; "deadlineLatenessMaxMs"?: number; "timingConformance"?: boolean; "resetCount"?: number; "workerLeaks"?: number; "expectedSamples"?: number; "consumedSamples"?: number; "underrunEpisodes"?: number; "missedSamples"?: number; }; "totalAudioDurationSeconds"?: number; "totalSamples"?: number; "droppedOutputChunks"?: number; "peakRssBytes"?: number | null; "synthesisWindowWholeProcessPeakRssBytes"?: number | null; "prepareSeconds"?: number; "cold"?: { "sourceId": string; "ttsTimeToFirstAudioMs": number; "processingSeconds": number; "rtf": number; "audioDurationSeconds": number; "totalSamples": number; "peakRssBytes": number | null; "peakVramBytes": number | null; } | null; };
 export type BargeInEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out"; "monotonicMs": number; "payload": { "responseId": string; "outputEpoch": number; "resumable": boolean; "rewindMs"?: number; "partIndex"?: number; "partId"?: string; "playbackId"?: string; }; };
 export type BrowserCommand = ({ "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": string; "monotonicMs": number; "payload": Record<string, unknown>; }) & ({ "type": "session.start"; "payload": { "sessionSeed": string; "reasoningMode": "full" | "transcript_only"; "planning"?: { "enabled"?: true; "topic": string; "depth": "light" | "standard" | "deep"; "notes"?: string; "reuse"?: boolean; }; "settings": { "version": 1; "persona": string; "pi"?: { "model": string; "thinkingLevel": "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; }; "voice": { "catalogId": string; "voiceId": string; "backendId"?: string; "modelId"?: string; "speedModifier"?: number; "tonePrompt"?: string; "language"?: "Chinese" | "English" | "Japanese" | "Korean" | "German" | "French" | "Russian" | "Portuguese" | "Spanish" | "Italian"; }; }; }; } | { "type": "planning.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "planning.retry"; "payload": {  }; } | { "type": "audio.start"; "payload": { "streamId": number; "sampleRate": 16000; "channels": 1; "frameSamples": 320; }; } | { "type": "audio.stop"; "payload": { "streamId": number; }; } | { "type": "turn.cancel"; "payload": { "reason": "user" | "stop"; }; } | { "type": "barge_in.confirm" | "barge_in.reject"; "payload": { "responseId": string; "outputEpoch": number; }; } | { "type": "turn.persisted"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; }; } | { "type": "turn.persistence_failed"; "payload": { "turnId": string; "finalEventId": string; "persistedEpoch": number; "reasonCode": "quota" | "unavailable" | "aborted"; }; } | { "type": "session.stop"; "payload": { "reason": "user" | "expired" | "disconnect"; }; } | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent);
-export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "planning.cancel" | "planning.retry" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.paused" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "interruption.decision" | "reasoning.started" | "reasoning.delta" | "reasoning.final" | "response.part_final" | "response.part_started" | "tts.started" | "tts.ended" | "response.failed" | "tool.activity" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure"; "monotonicMs": number; "payload": Record<string, unknown>; };
+export type BudgetMitigationEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "budget.mitigation"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "kind": "stall_target" | "late_handoff_projected" | "gap_measured"; "partIndex"?: number; "detail": { "estimates": { "stallFirstDeltaMs": number; "stallTextMs": number; "bodyFirstPartMs": number; "ttsTtfaMs": number; "ttsRtf": number; "wordsPerSecond": number; }; "trigger": string; }; }; };
+export type CoreEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "session.start" | "planning.cancel" | "planning.retry" | "audio.start" | "audio.stop" | "turn.cancel" | "barge_in.confirm" | "barge_in.reject" | "turn.persisted" | "turn.persistence_failed" | "playback.progress" | "playback.paused" | "playback.stopped" | "session.stop" | "readiness.check" | "readiness.snapshot" | "session.state" | "transcript.partial" | "transcript.final" | "policy.decision" | "barge_in.provisional" | "barge_in.confirmed" | "barge_in.rejected" | "barge_in.timed_out" | "interruption.decision" | "reasoning.started" | "reasoning.delta" | "reasoning.final" | "response.part_final" | "response.part_started" | "tts.started" | "tts.ended" | "response.failed" | "tool.activity" | "failure" | "stream.open" | "stream.opened" | "stream.reset" | "stream.close" | "stream.closed" | "stt.bind_epoch" | "stt.partial" | "stt.final" | "tts.request" | "tts.cancel" | "tts.cancelled" | "vad.speech_start" | "vad.speech_end" | "sidecar.failure" | "budget.mitigation"; "monotonicMs": number; "payload": Record<string, unknown>; };
 export type FailureEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "failure"; "monotonicMs": number; "payload": { "code": string; "detail": string; "correctiveAction": string; "recoverable": boolean; }; };
-export type HostEvent = SessionStateEvent | VadSpeechStartEvent | VadSpeechEndEvent | TranscriptPartialEvent | TranscriptFinalEvent | PolicyDecisionEvent | BargeInEvent | InterruptionDecisionEvent | ReasoningStartedEvent | ReasoningDeltaEvent | ReasoningFinalEvent | ResponsePartStartedEvent | ResponsePartFinalEvent | ResponseFailedEvent | TtsStartedEvent | TtsEndedEvent | ToolActivityEvent | FailureEvent;
+export type HostEvent = SessionStateEvent | VadSpeechStartEvent | VadSpeechEndEvent | TranscriptPartialEvent | TranscriptFinalEvent | PolicyDecisionEvent | BargeInEvent | InterruptionDecisionEvent | ReasoningStartedEvent | ReasoningDeltaEvent | ReasoningFinalEvent | ResponsePartStartedEvent | ResponsePartFinalEvent | ResponseFailedEvent | TtsStartedEvent | TtsEndedEvent | ToolActivityEvent | FailureEvent | BudgetMitigationEvent;
 export type InterruptionDecisionEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "interruption.decision"; "monotonicMs": number; "payload": { "turnId": string; "responseId": string; "playbackId": string; "outputEpoch": number; "action": "resume" | "accept"; "intent": "non_substantive" | "continue_previous" | "new_request" | "correction" | "topic_change" | "stop_previous"; "confidence": "low" | "medium" | "high"; "disposition": "resume_noise" | "resume_fragment" | "resume_requested" | "accept_takeover"; "pausedSampleOffset": number; "rewindMs"?: number; "partIndex"?: number; "partId"?: string; }; };
 export type PlaybackPausedEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.paused"; "monotonicMs": number; "payload": { "responseId": string; "playbackId": string; "outputEpoch": number; "pausedSampleOffset": number; "generatedSamples": number; "partIndex"?: number; "partId"?: string; }; };
 export type PlaybackProgressEvent = { "protocolVersion": 1; "sessionId": string; "epoch": number; "eventId": string; "type": "playback.progress"; "monotonicMs": number; "payload": { "playbackId": string; "outputEpoch": number; "playedSampleOffset": number; "generatedSamples": number; }; };
@@ -98,7 +99,8 @@ export const CORE_EVENT_TYPES = [
   "tts.cancelled",
   "vad.speech_start",
   "vad.speech_end",
-  "sidecar.failure"
+  "sidecar.failure",
+  "budget.mitigation"
 ] as const;
 export type CoreEventType = (typeof CORE_EVENT_TYPES)[number];
 
@@ -2055,6 +2057,112 @@ export const CONTRACT_SCHEMAS = {
       }
     ]
   },
+  "events/budget-mitigation.json": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://podcaster.local/schema/events/budget-mitigation.json",
+    "title": "BudgetMitigationEvent",
+    "allOf": [
+      {
+        "$ref": "../protocol-envelope.json"
+      },
+      {
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "const": "budget.mitigation"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "turnId",
+              "responseId",
+              "kind",
+              "detail"
+            ],
+            "properties": {
+              "turnId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "responseId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "enum": [
+                  "stall_target",
+                  "late_handoff_projected",
+                  "gap_measured"
+                ]
+              },
+              "partIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "detail": {
+                "type": "object",
+                "required": [
+                  "estimates",
+                  "trigger"
+                ],
+                "properties": {
+                  "estimates": {
+                    "type": "object",
+                    "required": [
+                      "stallFirstDeltaMs",
+                      "stallTextMs",
+                      "bodyFirstPartMs",
+                      "ttsTtfaMs",
+                      "ttsRtf",
+                      "wordsPerSecond"
+                    ],
+                    "properties": {
+                      "stallFirstDeltaMs": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "stallTextMs": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "bodyFirstPartMs": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "ttsTtfaMs": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "ttsRtf": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "wordsPerSecond": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "trigger": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
   "events/core-events.json": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://podcaster.local/schema/events/core-events.json",
@@ -2119,7 +2227,8 @@ export const CONTRACT_SCHEMAS = {
               "tts.cancelled",
               "vad.speech_start",
               "vad.speech_end",
-              "sidecar.failure"
+              "sidecar.failure",
+              "budget.mitigation"
             ]
           }
         }
@@ -2233,6 +2342,9 @@ export const CONTRACT_SCHEMAS = {
       },
       {
         "$ref": "./failure.json"
+      },
+      {
+        "$ref": "./budget-mitigation.json"
       }
     ]
   },
@@ -5093,4 +5205,4 @@ export const CONTRACT_SCHEMAS = {
   }
 } as const;
 export type CanonicalContractPath = keyof typeof CONTRACT_SCHEMAS;
-export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "CoreEvent" | "FailureEvent" | "HostEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningDeltaEvent" | "ReasoningFinalEvent" | "ReasoningStartedEvent" | "ResponseFailedEvent" | "ResponsePartFinalEvent" | "ResponsePartStartedEvent" | "SessionStateEvent" | "SidecarMessage" | "ToolActivityEvent" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "VadSpeechEndEvent" | "VadSpeechStartEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope" | "VoiceEnrollment";
+export type ContractModelName = "BenchmarkEvent" | "BenchmarkItem" | "BenchmarkRating" | "BenchmarkRun" | "BenchmarkSummary" | "BargeInEvent" | "BrowserCommand" | "BudgetMitigationEvent" | "CoreEvent" | "FailureEvent" | "HostEvent" | "InterruptionDecisionEvent" | "PlaybackPausedEvent" | "PlaybackProgressEvent" | "PlaybackStoppedEvent" | "PolicyDecisionEvent" | "ReasoningDeltaEvent" | "ReasoningFinalEvent" | "ReasoningStartedEvent" | "ResponseFailedEvent" | "ResponsePartFinalEvent" | "ResponsePartStartedEvent" | "SessionStateEvent" | "SidecarMessage" | "ToolActivityEvent" | "TranscriptFinalEvent" | "TranscriptPartialEvent" | "TtsEndedEvent" | "TtsStartedEvent" | "VadSpeechEndEvent" | "VadSpeechStartEvent" | "HistoryExport" | "Persona" | "ProtocolEnvelope" | "VoiceEnrollment";

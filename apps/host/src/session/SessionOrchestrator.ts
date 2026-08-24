@@ -30,6 +30,7 @@ import {
 } from './InterruptionIntentClassifier.js';
 import { ReasoningSpeechAssembler } from './ReasoningSpeechAssembler.js';
 import { MultiPartResponse, type MultiPartResponseHost } from './MultiPartResponse.js';
+import type { RuntimeBudget } from './RuntimeBudget.js';
 import { log } from '../logger.js';
 
 export type SessionPhase =
@@ -124,6 +125,8 @@ export interface SessionOrchestratorOptions {
   /** Frozen, bounded preparation notes. They are context only and never spoken directly. */
   planningContext?: string;
   multiPartEnabled?: boolean;
+  /** Optional per-session latency budget; measurement-only, fail-soft everywhere. */
+  budget?: RuntimeBudget;
 }
 export interface SessionSnapshot {
   phase: SessionPhase;
@@ -244,6 +247,7 @@ export class SessionOrchestrator {
   private readonly researchPi: PiResearchClient | undefined;
   private planningContext: string;
   private readonly multiPartEnabled: boolean;
+  private readonly budget: RuntimeBudget | undefined;
 
   constructor(private readonly options: SessionOrchestratorOptions) {
     const parsed = parsePersona(options.personaSource ?? DEFAULT_PERSONA_MARKDOWN);
@@ -272,6 +276,7 @@ export class SessionOrchestrator {
     this.researchPi = options.researchPi;
     this.planningContext = truncateUtf8(options.planningContext?.trim() ?? '', 3_072);
     this.multiPartEnabled = Boolean(options.researchPi && options.multiPartEnabled);
+    this.budget = options.budget;
   }
 
   /** Late-arriving preparation notes join the bounded context for future turns. */
@@ -564,6 +569,9 @@ export class SessionOrchestrator {
       pi: this.options.pi,
       speech: this.options.speech,
       idFactory: this.idFactory,
+      now: this.now,
+      scheduler: this.scheduler,
+      ...(this.budget ? { budget: this.budget } : {}),
       emit: (type, payload) => this.emit(type, payload),
       isCurrent: (response) => this.isCurrentMultiPart(response),
       isUserSpeaking: () => this.userSpeaking,
@@ -771,6 +779,9 @@ export class SessionOrchestrator {
     if (input.generatedSamples > ledger.generatedSamples) return;
     if (input.playedSampleOffset > input.generatedSamples) return;
     ledger.delivered = Math.max(ledger.delivered, input.playedSampleOffset);
+    if (this.budget)
+      for (const finding of this.budget.observePlayback(input.playbackId, ledger.delivered, ledger.generatedSamples))
+        this.emit('budget.mitigation', finding);
   }
 
   playbackStopped(input: PlaybackStoppedEvent['payload']): void {
@@ -785,6 +796,7 @@ export class SessionOrchestrator {
     if (ledger.outputEpoch !== input.cancelledEpoch || input.finalPlayedSampleOffset > ledger.generatedSamples) return;
     ledger.delivered = Math.max(ledger.delivered, input.finalPlayedSampleOffset);
     ledger.terminal = true;
+    if (this.budget) this.budget.notePlaybackEnded(input.playbackId);
     const pending = this.acceptancePendingTerminal;
     if (
       pending &&
@@ -1076,7 +1088,10 @@ export class SessionOrchestrator {
       this.cancelResponse(active);
       this.active = undefined;
     }
-    if (this.multiPart) this.multiPart = undefined;
+    if (this.multiPart) {
+      this.budget?.abandonResponse(this.multiPart.responseId);
+      this.multiPart = undefined;
+    }
   }
   private cancelResponse(active: ActiveResponse): void {
     if (active.cancelled) return;
