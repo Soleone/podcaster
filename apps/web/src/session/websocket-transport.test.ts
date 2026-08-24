@@ -24,6 +24,7 @@ const hostFixtureCases = [
   ['transcript-partial', 'transcript-partial'],
   ['tts-ended', 'tts-ended'],
   ['tts-started', 'tts-started'],
+  ['tool-activity', 'tool-activity'],
   ['vad-speech-end', 'vad-speech-end'],
   ['vad-speech-start', 'vad-speech-start'],
 ] as const;
@@ -47,6 +48,42 @@ describe('browser HostEvent validator parity', () => {
     const value = hostFixture('invalid', 'host-event');
     expect(CONTRACT_VALIDATORS.HostEvent(value)).toBe(false);
     expect(isStrictHostEvent(value)).toBe(false);
+  });
+  it('accepts planning-scope tool activity without turn identity in both validators', () => {
+    const base = hostFixture('valid', 'tool-activity') as Record<string, unknown>;
+    const value = {
+      ...base,
+      payload: { scope: 'planning', toolCallId: 'tool-9', toolName: 'web_search', status: 'started' },
+    };
+    expect(CONTRACT_VALIDATORS.HostEvent(value)).toBe(true);
+    expect(isStrictHostEvent(value)).toBe(true);
+  });
+  it('rejects tool activity with oversized or extra payload fields in both validators', () => {
+    const base = hostFixture('valid', 'tool-activity') as Record<string, unknown>;
+    const oversized = {
+      ...base,
+      payload: {
+        scope: 'planning',
+        toolCallId: 'tool-9',
+        toolName: 'web_search',
+        status: 'started',
+        summary: 'x'.repeat(161),
+      },
+    };
+    expect(CONTRACT_VALIDATORS.HostEvent(oversized)).toBe(false);
+    expect(isStrictHostEvent(oversized)).toBe(false);
+    const withArgs = {
+      ...base,
+      payload: {
+        scope: 'planning',
+        toolCallId: 'tool-9',
+        toolName: 'web_search',
+        status: 'started',
+        args: { query: 'raw' },
+      },
+    };
+    expect(CONTRACT_VALIDATORS.HostEvent(withArgs)).toBe(false);
+    expect(isStrictHostEvent(withArgs)).toBe(false);
   });
 });
 afterEach(() => {

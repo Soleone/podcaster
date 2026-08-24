@@ -37,9 +37,11 @@ search for a particular topic ran.
    only once activity exists. Entries are grouped by preparation pass and by
    turn (labeled with the user's own utterance when known), bounded to the
    most recent 16 groups and 24 calls per group, and render status, tool
-   name, summary, and duration. Activity is presentation state only: it is
-   never spoken, never injected into model context, and never persisted as
-   turn data.
+   name, summary, and duration. The browser's strict transport validator
+   accepts the event shape in parity with the canonical schema; unknown
+   events would otherwise fail the session socket. Activity is presentation
+   state only: it is never spoken, never injected into model context, and
+   never persisted as turn data.
 
 ## Consequences
 
@@ -49,4 +51,6 @@ summary is derived from tool arguments, search queries chosen by the model are
 visible in the browser; that content is already grounded in the user's own
 conversation, is display-only, and stays out of prompts and exports. Tools
 without a recognized hint field appear without a summary rather than exposing
-arbitrary arguments.
+arbitrary arguments. Every new host event must be added to the browser's
+hand-rolled transport validator as well as the canonical contracts, or the
+session socket rejects it.

@@ -1034,6 +1034,34 @@ function isHostEventShape(value: unknown): boolean {
         payload.correctiveAction.length > 0 &&
         typeof payload.recoverable === 'boolean'
       );
+    case 'tool.activity': {
+      if (
+        !hasOnly(
+          payload,
+          ['scope', 'toolCallId', 'toolName', 'status'],
+          ['turnId', 'responseId', 'summary', 'durationMs'],
+        ) ||
+        !['planning', 'turn'].includes(String(payload.scope)) ||
+        typeof payload.toolCallId !== 'string' ||
+        payload.toolCallId.length === 0 ||
+        new TextEncoder().encode(payload.toolCallId).length > 128 ||
+        typeof payload.toolName !== 'string' ||
+        payload.toolName.length === 0 ||
+        new TextEncoder().encode(payload.toolName).length > 64 ||
+        !['started', 'ended', 'failed'].includes(String(payload.status))
+      )
+        return false;
+      if (
+        payload.summary !== undefined &&
+        (typeof payload.summary !== 'string' || new TextEncoder().encode(payload.summary).length > 160)
+      )
+        return false;
+      if (payload.durationMs !== undefined && !integer(payload.durationMs)) return false;
+      if (payload.turnId !== undefined && !uuid('turnId')) return false;
+      if (payload.responseId !== undefined && !uuid('responseId')) return false;
+      if (payload.scope === 'turn' && (payload.turnId === undefined || payload.responseId === undefined)) return false;
+      return true;
+    }
     default:
       return false;
   }

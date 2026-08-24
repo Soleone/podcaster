@@ -95,7 +95,7 @@ const TOOL_ACTIVITY_CALL_ID_MAX_BYTES = 128;
 const TOOL_ACTIVITY_SUMMARY_MAX_CHARS = 120;
 // Display hints only. Search and fetch tools keep their query/URL here; other
 // tools surface without a summary rather than exposing arbitrary arguments.
-const TOOL_SUMMARY_KEYS = ['query', 'url', 'prompt', 'pattern', 'path', 'command'] as const;
+const TOOL_SUMMARY_KEYS = ['query', 'queries', 'url', 'urls', 'prompt', 'pattern', 'path', 'command'] as const;
 
 function truncateUtf8(value: string, maxBytes: number): string {
   const bytes = Buffer.from(value, 'utf8');
