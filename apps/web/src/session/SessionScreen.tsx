@@ -89,6 +89,8 @@ type SessionScreenProps = {
   onToggleBubbleTrim: (targetId: RecordingTrimTargetId, trimmed: boolean) => Promise<boolean>;
   buildExport: (onProgress?: ExportOnProgress) => Promise<Blob | null>;
   readOnly?: boolean;
+  /** Shown as the header play button on read-only views; resumes or continues the session. */
+  onResume?: () => void;
   onExportingChange?: (exporting: boolean) => void;
   onDeleteRecording?: () => Promise<void>;
   exporting?: boolean;
@@ -128,9 +130,8 @@ export function SessionScreen(props: SessionScreenProps) {
   const readOnly = props.readOnly === true;
   const agentName = props.agentName.trim() || 'Assistant';
   const actionBusy = props.lifecycleAction !== undefined && props.lifecycleAction !== 'idle';
-  const canExport =
-    !readOnly && !actionBusy && props.recording.includedCount > 0 && !props.exporting && !props.deleting;
-  const canDelete = !readOnly && !actionBusy && props.recording.totalCount > 0 && !props.deleting && !props.exporting;
+  const canExport = !actionBusy && props.recording.includedCount > 0 && !props.exporting && !props.deleting;
+  const canDelete = !actionBusy && props.recording.totalCount > 0 && !props.deleting && !props.exporting;
   const pauseLabel =
     props.lifecycleAction === 'pausing'
       ? 'Pausing…'
@@ -161,10 +162,52 @@ export function SessionScreen(props: SessionScreenProps) {
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {readOnly ? (
-            <Button variant="outline" size="sm" onClick={props.onStop}>
-              <ArrowLeft data-icon="inline-start" aria-hidden="true" />
-              All sessions
-            </Button>
+            <>
+              <Button variant="outline" size="sm" onClick={props.onStop}>
+                <ArrowLeft data-icon="inline-start" aria-hidden="true" />
+                All sessions
+              </Button>
+              {props.onResume ? (
+                <ButtonGroup aria-label="Session controls" className="session-controls">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label={props.sessionPaused ? 'Resume session' : 'Continue session'}
+                    title={props.sessionPaused ? 'Resume session' : 'Continue session'}
+                    onClick={props.onResume}
+                  >
+                    <Play aria-hidden="true" />
+                  </Button>
+                  <ButtonGroupSeparator />
+                  <ExportPopover
+                    sessionId={props.sessionId}
+                    buildExport={props.buildExport}
+                    disabled={!canExport}
+                    variant="secondary"
+                    size="icon"
+                    iconOnly
+                    onExportingChange={props.onExportingChange}
+                  />
+                  <ConfirmDeleteDialog
+                    deleting={props.deleting ?? false}
+                    onConfirm={async () => {
+                      await props.onDeleteRecording?.();
+                    }}
+                    trigger={
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        disabled={!canDelete}
+                        title="Delete recording"
+                        aria-label="Delete recording"
+                      >
+                        <Trash aria-hidden="true" />
+                      </Button>
+                    }
+                  />
+                </ButtonGroup>
+              ) : null}
+            </>
           ) : (
             <>
               <ButtonGroup aria-label="Session controls" className="session-controls">

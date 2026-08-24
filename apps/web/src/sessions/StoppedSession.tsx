@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Mic2, Trash } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { Alert, AlertDescription } from '../components/ui/alert';
-import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog';
-import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Spinner } from '../components/ui/spinner';
-import { ExportPopover } from '../components/ExportPopover';
 import type { ExportOnProgress } from '../recording/splice';
 import { SessionScreen } from '../session/SessionScreen';
 import type { SessionViewState } from '../session/state';
@@ -176,51 +173,20 @@ export function StoppedSession(props: StoppedSessionProps) {
         onToggleBubbleTrim={toggleTrim}
         buildExport={buildExport}
         readOnly
+        onResume={props.onContinue}
+        onDeleteRecording={deleteRecording}
+        deleting={deleting}
       />
-      <Card className="mt-6" role="group" aria-label="Session actions">
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary">
-                {session.state === 'paused' ? 'Paused' : session.state === 'active' ? 'Interrupted' : 'Ended'}
-              </Badge>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button className="min-h-11" onClick={props.onContinue}>
-                <Mic2 data-icon="inline-start" aria-hidden="true" />
-                {session.state === 'paused' ? 'Resume session' : 'Continue session'}
-              </Button>
-              <ExportPopover
-                sessionId={props.sessionId}
-                buildExport={buildExport}
-                disabled={recording.includedCount === 0}
-                label="Export recording"
-                variant="secondary"
-              />
-              <ConfirmDeleteDialog
-                deleting={deleting}
-                onConfirm={deleteRecording}
-                trigger={
-                  <Button variant="outline" disabled={deleting || recording.totalCount === 0}>
-                    <Trash data-icon="inline-start" aria-hidden="true" />
-                    Delete recording
-                  </Button>
-                }
-              />
-            </div>
-          </div>
-          {recordingError ? (
-            <Alert variant="destructive">
-              <AlertDescription>{recordingError}</AlertDescription>
-            </Alert>
-          ) : null}
-          {notice ? (
-            <p className="text-sm text-muted-foreground" role="status">
-              {notice}
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
+      {recordingError ? (
+        <Alert variant="destructive" className="mt-4">
+          <AlertDescription>{recordingError}</AlertDescription>
+        </Alert>
+      ) : null}
+      {notice ? (
+        <p className="mt-4 text-sm text-muted-foreground" role="status">
+          {notice}
+        </p>
+      ) : null}
     </main>
   );
 }
