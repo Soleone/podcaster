@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostEvent } from '@app/contracts';
 import type { PlaybackProgress, PlaybackStopReason, PlaybackTerminal } from '../audio/playback-ledger';
 import { StableTurnWriter } from '../storage/stable-turn-writer';
-import { SessionController, type ControlledPlayback } from './controller';
+import { SessionController, type ControlledPlayback, type SessionControllerOptions } from './controller';
 import { activityLog } from './activity-log';
 import { FakeSessionTransport } from './fake-transport';
 import { initialSessionState } from './state';
+import type { JsonValue } from '../lib/json-values';
 
 let sequence = 0;
 const databases: string[] = [];
@@ -14,8 +15,9 @@ const event = <T extends HostEvent['type']>(
   sessionId: string,
   epoch: number,
   type: T,
-  payload: Record<string, unknown>,
+  payload: Record<string, JsonValue>,
 ): HostEvent =>
+  // SAFETY: test fixtures construct protocol envelopes with the requested discriminant and payload.
   ({
     protocolVersion: 1,
     eventId: `event-${++sequence}`,
@@ -71,7 +73,7 @@ async function setup(epoch = 0, schedule?: (delay: number, callback: () => void)
   const transport = new FakeSessionTransport();
   await transport.connect('capability');
   const players: FakePlayback[] = [];
-  const controller = new SessionController({
+  const controllerOptions: SessionControllerOptions = {
     sessionId: 'session',
     transport,
     writer,
@@ -81,8 +83,9 @@ async function setup(epoch = 0, schedule?: (delay: number, callback: () => void)
       players.push(player);
       return player;
     },
-    ...(schedule ? { schedule } : {}),
-  });
+  };
+  if (schedule) controllerOptions.schedule = schedule;
+  const controller = new SessionController(controllerOptions);
   return { controller, players, transport, writer };
 }
 

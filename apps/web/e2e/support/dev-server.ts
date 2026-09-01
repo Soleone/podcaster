@@ -50,7 +50,7 @@ export async function startDevServer(options: { fakeServices?: boolean } = {}): 
       () => finish(new Error(`dev startup timeout after ${STARTUP_TIMEOUT_MS}ms`)),
       STARTUP_TIMEOUT_MS,
     );
-    const onStderr = (chunk: unknown) => {
+    const onStderr = (chunk: Buffer) => {
       stderr = `${stderr}${String(chunk)}`.slice(-MAX_STARTUP_STDERR);
     };
     const onLine = (line: string) => {

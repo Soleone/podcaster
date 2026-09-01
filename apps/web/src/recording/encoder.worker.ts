@@ -20,7 +20,8 @@ export interface EncodeFailure {
   error: string;
 }
 
-const workerScope = globalThis as unknown as {
+// SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+const workerScope = globalThis as {
   onmessage: ((event: MessageEvent<EncodeRequest>) => void) | null;
   postMessage(message: EncodeResponse | EncodeFailure | EncodeProgress, transfer?: Transferable[]): void;
 };

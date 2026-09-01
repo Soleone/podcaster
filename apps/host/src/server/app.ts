@@ -6,13 +6,14 @@ import websocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
 import type { SidecarProcess, SidecarRuntimeSnapshot } from '../sidecar/process.js';
 import { sidecarSnapshot } from '../sidecar/process.js';
-import { createPiClient, PI_PROBE_DEADLINE_MS, type PiClient } from '../pi/PiClient.js';
-import { createPiResearchClient, type PiResearchClient } from '../pi/PiResearchClient.js';
+import { createPiClient, PI_PROBE_DEADLINE_MS, type PiClient, type PiClientOptions } from '../pi/PiClient.js';
+import { createPiResearchClient, type PiResearchClient, type PiResearchClientOptions } from '../pi/PiResearchClient.js';
 import { PI_CHECKING, PiReadinessProbe } from '../pi/readiness-probe.js';
 import { CLASSIFIER_SYSTEM_PROMPT } from '../session/InterruptionIntentClassifier.js';
 import { BrowserSession } from './BrowserSession.js';
 import { encodeWav } from '../sidecar/wav.js';
 import { synthesizeVoicePreview } from '../sidecar/voice-preview.js';
+import { readRecord, readString, type JsonValue } from '../sidecar/json-values.js';
 import { enrollCustomVoiceInSidecar, removeCustomVoiceFromSidecar } from '../sidecar/voice-enrollment.js';
 import {
   CUSTOM_VOICE_SAMPLE_RATE,
@@ -88,17 +89,15 @@ function cookieValue(header: string | undefined): string | undefined {
     .find((x) => x.startsWith(`${COOKIE}=`))
     ?.slice(COOKIE.length + 1);
 }
-function parseTtsModel(value: unknown): TtsModelSelection | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const model = value as { backendId?: unknown; modelId?: unknown };
-  if (
-    typeof model.backendId !== 'string' ||
-    model.backendId.length === 0 ||
-    typeof model.modelId !== 'string' ||
-    model.modelId.length === 0
-  )
-    return undefined;
-  return { backendId: model.backendId, modelId: model.modelId };
+function parseTtsModel(value: Record<string, JsonValue> | undefined): TtsModelSelection | undefined {
+  if (!value) return undefined;
+  const backendId = readString(value, 'backendId');
+  const modelId = readString(value, 'modelId');
+  if (!backendId || !modelId) return undefined;
+  return { backendId, modelId };
+}
+function parsedJsonRecord(value: JsonValue): Record<string, JsonValue> | undefined {
+  return readRecord({ value }, 'value');
 }
 function sameTtsModel(left: TtsModelSelection, right: TtsModelSelection): boolean {
   return left.backendId === right.backendId && left.modelId === right.modelId;
@@ -117,25 +116,28 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       createPiClient({ model: piSettings.model, thinkingLevel: 'off', probeDeadlineMs: PI_PROBE_DEADLINE_MS }));
   const createResponseClient =
     options.createResponseClient ??
-    ((personaAppend: string, piSettings?: PiSettings) =>
-      createPiClient({
-        personaAppend,
-        ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}),
-      }));
+    ((personaAppend: string, piSettings?: PiSettings) => {
+      const clientOptions: PiClientOptions = { personaAppend };
+      if (piSettings)
+        Object.assign(clientOptions, { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel });
+      return createPiClient(clientOptions);
+    });
   const createResearchClient =
     options.createResearchClient ??
-    ((personaAppend: string, piSettings?: PiSettings) =>
-      createPiResearchClient({
-        personaAppend,
-        ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}),
-      }));
+    ((personaAppend: string, piSettings?: PiSettings) => {
+      const clientOptions: PiResearchClientOptions = { personaAppend };
+      if (piSettings)
+        Object.assign(clientOptions, { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel });
+      return createPiResearchClient(clientOptions);
+    });
   const createClassifierClient =
     options.createClassifierClient ??
-    ((piSettings?: PiSettings) =>
-      createPiClient({
-        systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
-        ...(piSettings ? { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel } : {}),
-      }));
+    ((piSettings?: PiSettings) => {
+      const clientOptions: PiClientOptions = { systemPrompt: CLASSIFIER_SYSTEM_PROMPT };
+      if (piSettings)
+        Object.assign(clientOptions, { model: piSettings.model, thinkingLevel: piSettings.thinkingLevel });
+      return createPiClient(clientOptions);
+    });
   const sessions = new Map<string, Session>();
   const now = options.now ?? Date.now;
   const piProbe = new PiReadinessProbe({ createClient: createProbeClient, now });
@@ -261,8 +263,9 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
   });
   const authenticate = (request: FastifyRequest): Session | undefined => {
     const id = cookieValue(request.headers.cookie);
-    const capability = request.headers['x-podcaster-capability'];
-    if (!id || typeof capability !== 'string') return;
+    const capabilityHeader = request.headers['x-podcaster-capability'];
+    const capability = Array.isArray(capabilityHeader) ? undefined : capabilityHeader;
+    if (!id || !capability) return;
     const session = sessions.get(id);
     if (!session || session.expiresAt <= now() || !sameSecret(session.capability, capability)) return;
     return session;
@@ -272,15 +275,18 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     // The browser owns microphone permission; the server cannot observe it, so the
     // readiness screen reports the client's granted state instead of always showing
     // a perpetual needs-action warning for voice input.
-    const body = (
-      request.body && typeof request.body === 'object' && !Array.isArray(request.body) ? request.body : {}
-    ) as { microphoneGranted?: unknown; ttsModel?: unknown; selectedModel?: unknown; pi?: unknown };
-    if (!isValidPiSettings(body.pi)) return reply.code(422).send({ error: 'invalid_pi_settings' });
-    const piSettings: PiSettings = { model: body.pi.model, thinkingLevel: body.pi.thinkingLevel };
-    const microphoneGranted = body.microphoneGranted === true;
+    // SAFETY: Fastify's JSON body parser produces only JSON values.
+    const body = parsedJsonRecord(request.body as JsonValue);
+    const decodedPi = body && readRecord(body, 'pi');
+    // SAFETY: isValidPiSettings narrows the decoded `pi` record to PiSettings.
+    if (!isValidPiSettings(decodedPi)) return reply.code(422).send({ error: 'invalid_pi_settings' });
+    const piSettings: PiSettings = decodedPi;
+    const microphoneGranted = body?.microphoneGranted === true;
     const [snapshot, pi] = await Promise.all([snapshotSidecar(), probePi(piSettings)]);
     const requestedModel =
-      parseTtsModel(body.ttsModel ?? body.selectedModel) ?? snapshot?.activeTtsModel ?? DEFAULT_TTS_MODEL;
+      parseTtsModel(body && (readRecord(body, 'ttsModel') ?? readRecord(body, 'selectedModel'))) ??
+      snapshot?.activeTtsModel ??
+      DEFAULT_TTS_MODEL;
     const descriptor = snapshot?.ttsModels?.find((model) => sameTtsModel(model, requestedModel));
     const selectedCatalog =
       descriptor?.status === 'ready'
@@ -447,8 +453,8 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       sidecar: audioOperational ? 'ready' : snapshot?.status === 'starting' || activeReady ? 'starting' : 'unavailable',
       reasoning: pi === PI_CHECKING ? 'checking' : pi.status,
       services: { audio: audioService, pi: piService },
-      ...(responseCatalog ? { voiceCatalog: responseCatalog } : {}),
-      ...(snapshot?.ttsModels ? { ttsModels: snapshot.ttsModels } : {}),
+      voiceCatalog: responseCatalog,
+      ttsModels: snapshot?.ttsModels,
       activeTtsModel: requestedModel,
     };
   });
@@ -474,6 +480,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     },
     async (request, reply) => {
       if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
+      // SAFETY: Fastify validated this request body against the route schema.
       const {
         voiceId,
         catalogId,
@@ -532,16 +539,19 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
       request.raw.once('aborted', onAborted);
       try {
         const { pcm16, sampleRate } = await voicePreview(
-          {
-            catalogId: selectedCatalog.catalogId,
-            voiceId,
-            speedModifier,
-            ...(normalizedTonePrompt ? { tonePrompt: normalizedTonePrompt } : {}),
-            ...(language ? { language } : {}),
-            backendId,
-            modelId,
-            phrases: randomVoicePreviewPhrases(),
-          },
+          (() => {
+            const previewInput: Parameters<NonNullable<BuildOptions['voicePreview']>>[0] = {
+              catalogId: selectedCatalog.catalogId,
+              voiceId,
+              speedModifier,
+              backendId,
+              modelId,
+              phrases: randomVoicePreviewPhrases(),
+            };
+            if (normalizedTonePrompt) previewInput.tonePrompt = normalizedTonePrompt;
+            if (language) previewInput.language = language;
+            return previewInput;
+          })(),
           controller.signal,
         );
         const wav = encodeWav(pcm16, sampleRate);
@@ -582,6 +592,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     async (request, reply) => {
       if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
       if (voiceEnrollmentInFlight) return reply.code(429).send({ error: 'voice_enrollment_in_flight' });
+      // SAFETY: Fastify validated this request body against the route schema.
       const body = request.body as {
         voiceId: string;
         name: string;
@@ -645,6 +656,7 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
     async (request, reply) => {
       if (!authenticate(request)) return reply.code(401).send({ error: 'unauthorized' });
       if (voiceEnrollmentInFlight) return reply.code(429).send({ error: 'voice_enrollment_in_flight' });
+      // SAFETY: Fastify validated route params against the route schema.
       const { voiceId } = request.params as { voiceId: string };
       voiceEnrollmentInFlight = true;
       try {
@@ -786,9 +798,9 @@ export async function buildApp(options: BuildOptions): Promise<FastifyInstance> 
         socket.close(1008, 'invalid authentication');
         return;
       }
-      const cap =
-        typeof value === 'object' && value !== null ? (value as { capability?: unknown }).capability : undefined;
-      if (!session || session.expiresAt <= now() || typeof cap !== 'string' || !sameSecret(cap, session.capability)) {
+      // SAFETY: parsed JSON is inspected only for the optional capability field.
+      const cap = (value as { capability?: unknown } | null)?.capability;
+      if (!session || session.expiresAt <= now() || String(cap) !== cap || !sameSecret(cap, session.capability)) {
         socket.close(1008, 'invalid authentication');
         return;
       }

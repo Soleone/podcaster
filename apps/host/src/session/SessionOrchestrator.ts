@@ -421,13 +421,14 @@ export class SessionOrchestrator {
             delivered: 0,
             terminal: false,
           });
-          this.emit('tts.started', {
+          const started: HostEventPayload<'tts.started'> = {
             responseId: active.responseId,
             playbackId: meta.playbackId,
             sampleRate: meta.sampleRate,
-            ...(meta.backendId ? { backendId: meta.backendId } : {}),
-            ...(meta.modelId ? { modelId: meta.modelId } : {}),
-          });
+          };
+          if (meta.backendId) started.backendId = meta.backendId;
+          if (meta.modelId) started.modelId = meta.modelId;
+          this.emit('tts.started', started);
           this.setUnderlyingPhase(active, 'playing');
           // Speech can begin while Pi is still warming up. In that race there
           // was no provisional barge-in at speech_start, so create one
@@ -593,13 +594,14 @@ export class SessionOrchestrator {
             delivered: 0,
             terminal: false,
           });
-          this.emit('tts.started', {
+          const started: HostEventPayload<'tts.started'> = {
             responseId: active.responseId,
             playbackId: meta.playbackId,
             sampleRate: meta.sampleRate,
-            ...(meta.backendId ? { backendId: meta.backendId } : {}),
-            ...(meta.modelId ? { modelId: meta.modelId } : {}),
-          });
+          };
+          if (meta.backendId) started.backendId = meta.backendId;
+          if (meta.modelId) started.modelId = meta.modelId;
+          this.emit('tts.started', started);
           this.setUnderlyingPhase(active, 'playing');
           if (this.userSpeaking && !this.hasProvisional(active.responseId))
             this.beginProvisionalBargeIn(active.responseId);
@@ -734,8 +736,8 @@ export class SessionOrchestrator {
       pausedAtMs,
       deadlineAtMs: pausedAtMs + this.provisionalTimeoutMs,
       cancelTimer: () => {},
-      ...(ledger ? { generatedSamples: ledger.generatedSamples } : {}),
     };
+    if (ledger) provisional.generatedSamples = ledger.generatedSamples;
     this.provisional = provisional;
     // While speech is active, wait for VAD's speech_end before starting the
     // bounded recovery timer. This avoids spending the recovery window while
@@ -998,7 +1000,7 @@ export class SessionOrchestrator {
           ? 'resume_fragment'
           : 'resume_noise';
     const rewindMs = accept ? 0 : this.rewindMsFor(provisional);
-    this.emit('interruption.decision', {
+    const interruptionDecision: HostEventPayload<'interruption.decision'> = {
       turnId: turn.turnId,
       responseId: provisional.responseId,
       playbackId,
@@ -1014,8 +1016,9 @@ export class SessionOrchestrator {
       confidence: decision.confidence,
       disposition,
       pausedSampleOffset: provisional.pausedSampleOffset,
-      ...(rewindMs > 0 ? { rewindMs } : {}),
-    });
+    };
+    if (rewindMs > 0) interruptionDecision.rewindMs = rewindMs;
+    this.emit('interruption.decision', interruptionDecision);
     if (!accept) {
       provisional.echoRecovered = true;
       this.resolveProvisional('rejected', rewindMs);
@@ -1073,12 +1076,13 @@ export class SessionOrchestrator {
       this.advanceEpochAndCancel();
       this.phase = 'listening';
     }
-    this.emit(type === 'rejected' ? 'barge_in.rejected' : 'barge_in.timed_out', {
+    const bargeResult: HostEventPayload<'barge_in.rejected' | 'barge_in.timed_out'> = {
       responseId: provisional.responseId,
       outputEpoch: provisional.outputEpoch,
       resumable: safe,
-      ...(rewindMs > 0 ? { rewindMs } : {}),
-    });
+    };
+    if (rewindMs > 0) bargeResult.rewindMs = rewindMs;
+    this.emit(type === 'rejected' ? 'barge_in.rejected' : 'barge_in.timed_out', bargeResult);
     this.emitState();
     return true;
   }
@@ -1224,6 +1228,7 @@ ${truncateUtf8(this.planningContext, Math.min(3_072, this.maxContextBytes))}
     this.emit('session.state', { phase, personaDigest: this.personaDigest });
   }
   private emit<T extends HostEventType>(type: T, payload: HostEventPayload<T>): void {
+    // SAFETY: `payload` is selected from HostEvent's discriminated union by `type`.
     this.emitFn({
       protocolVersion: 1,
       sessionId: this.options.sessionId,

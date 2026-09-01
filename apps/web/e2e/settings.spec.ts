@@ -1,10 +1,11 @@
 import { expect, test } from './support/dev-server';
 import { installFakeMicrophone } from './support/fake-browser-services';
+import type { JsonObject } from '../src/lib/json-values';
 
 async function openSettings(page: import('@playwright/test').Page, origin: string): Promise<void> {
   await page.route('**/api/readiness', async (route) => {
     const response = await route.fetch();
-    const snapshot = (await response.json()) as Record<string, unknown>;
+    const snapshot: JsonObject = await response.json();
     delete snapshot.voiceCatalog;
     delete snapshot.ttsModels;
     delete snapshot.activeTtsModel;

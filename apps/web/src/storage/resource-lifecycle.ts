@@ -1,3 +1,7 @@
+export interface ResourceOwner<T> {
+  acquire(): ResourceLease<T>;
+}
+
 export interface ResourceLease<T> {
   readonly promise: Promise<T>;
   isActive(): boolean;
@@ -11,10 +15,7 @@ export interface ResourceLease<T> {
  * React StrictMode's setup/cleanup/setup sequence without retaining a handle
  * after an actual unmount.
  */
-export function createResourceOwner<T>(
-  open: () => Promise<T>,
-  close: (resource: T) => void,
-): { acquire(): ResourceLease<T> } {
+export function createResourceOwner<T>(open: () => Promise<T>, close: (resource: T) => void): ResourceOwner<T> {
   let pending: Promise<T> | undefined;
   let resource: T | undefined;
   let leaseCount = 0;

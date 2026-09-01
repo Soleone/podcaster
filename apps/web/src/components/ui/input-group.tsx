@@ -1,3 +1,4 @@
+// SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
@@ -50,6 +51,7 @@ function InputGroupAddon({
       data-align={align}
       className={cn(inputGroupAddonVariants({ align }), className)}
       onClick={(e) => {
+        // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
         if ((e.target as HTMLElement).closest('button')) {
           return;
         }

@@ -1,6 +1,7 @@
 import { expect, test } from './support/dev-server';
 import type { Page } from '@playwright/test';
 import { installFakeMicrophone } from './support/fake-browser-services';
+import type { JsonObject } from '../src/lib/json-values';
 
 // QW-8 backend-toggle UI coverage. The readiness and preview endpoints are
 // routed so the switch path is deterministic: two verified TTS models (Kokoro
@@ -122,12 +123,13 @@ test('switching the TTS backend reconciles voice and speed controls and previews
   origin,
 }) => {
   await installFakeMicrophone(page);
-  const previewRequests: Array<Record<string, unknown>> = [];
+  const previewRequests: JsonObject[] = [];
   await page.route('**/api/readiness', async (route) => {
     await route.fulfill({ json: readinessSnapshot() });
   });
   await page.route('**/api/voice-preview', async (route) => {
-    previewRequests.push(route.request().postDataJSON() as Record<string, unknown>);
+    const request: JsonObject = route.request().postDataJSON();
+    previewRequests.push(request);
     await route.fulfill({ contentType: 'audio/wav', body: silentWav() });
   });
   await openSettings(page, origin);

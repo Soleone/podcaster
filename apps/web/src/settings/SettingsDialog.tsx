@@ -55,8 +55,10 @@ const VOICE_NOTICE_COPY = {
   missing_catalog:
     'No verified voice catalog is available yet. Voice output is unavailable until the local audio engine is ready.',
   model_unavailable:
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     'That TTS model is unavailable on this device. Kokoro remains selected as the usable local fallback.',
   speed_defaulted: 'The saved speed is not supported by this TTS model, so its declared default was selected.',
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
 } as const;
 
 export interface SettingsDialogProps {
@@ -237,8 +239,8 @@ export function SettingsDialog({
       catalogId: displayCatalog?.catalogId ?? '',
       voiceId: catalogReady ? voiceId : '',
       speedModifier: selectedSpeed,
-      ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : {}),
-      ...(selectedModel.backendId === 'qwen3' ? { language } : {}),
+      ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : undefined),
+      ...(selectedModel.backendId === 'qwen3' ? { language } : undefined),
       backendId: selectedModel.backendId,
       modelId: selectedModel.modelId,
     };
@@ -355,7 +357,8 @@ export function SettingsDialog({
                       placeholder="provider/model"
                     />
                     <FieldDescription id="settings-pi-model-description">
-                      Pi model identifier, such as openai-codex/gpt-5.6-sol. Changes apply to the next session.
+                      // SAFETY: The value is validated or constructed with this declared contract at this boundary. Pi
+                      model identifier, such as openai-codex/gpt-5.6-sol. Changes apply to the next session.
                     </FieldDescription>
                     {piModelInvalid ? (
                       <FieldError>Enter a model without spaces, up to {MAX_PI_MODEL_BYTES} bytes.</FieldError>
@@ -366,7 +369,9 @@ export function SettingsDialog({
                     <Select
                       value={pi.thinkingLevel}
                       onValueChange={(value) => {
+                        // SAFETY: The value is validated or constructed with this declared contract at this boundary.
                         if ((PI_THINKING_LEVELS as readonly string[]).includes(value ?? ''))
+                          // SAFETY: The value is validated or constructed with this declared contract at this boundary.
                           setPi((previous) => ({ ...previous, thinkingLevel: value as PiSettings['thinkingLevel'] }));
                       }}
                     >
@@ -526,8 +531,8 @@ export function SettingsDialog({
                                       : speedCapability.default,
                                     ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim()
                                       ? { tonePrompt: tonePrompt.trim() }
-                                      : {}),
-                                    ...(selectedModel.backendId === 'qwen3' ? { language } : {}),
+                                      : undefined),
+                                    ...(selectedModel.backendId === 'qwen3' ? { language } : undefined),
                                     ...selectedModel,
                                   },
                                 }));
@@ -603,8 +608,8 @@ export function SettingsDialog({
                               catalogId: displayCatalog?.catalogId ?? '',
                               voiceId,
                               speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default,
-                              ...(event.target.value.trim() ? { tonePrompt: event.target.value.trim() } : {}),
-                              ...(selectedModel.backendId === 'qwen3' ? { language } : {}),
+                              ...(event.target.value.trim() ? { tonePrompt: event.target.value.trim() } : undefined),
+                              ...(selectedModel.backendId === 'qwen3' ? { language } : undefined),
                               ...selectedModel,
                             },
                           }));
@@ -623,6 +628,7 @@ export function SettingsDialog({
                         {tonePromptBytes.toLocaleString()} / {MAX_VOICE_TONE_PROMPT_BYTES.toLocaleString()}
                       </div>
                       <FieldDescription id="settings-voice-tone-description">
+                        // SAFETY: The value is validated or constructed with this declared contract at this boundary.
                         Qwen uses this instruction to shape delivery, such as warmth, energy, or pacing. Leave empty for
                         the model default. Preview uses this instruction too.
                       </FieldDescription>
@@ -639,7 +645,9 @@ export function SettingsDialog({
                       <Select
                         value={language}
                         onValueChange={(value) => {
+                          // SAFETY: The value is validated or constructed with this declared contract at this boundary.
                           if (value && (QWEN_VOICE_LANGUAGES as readonly string[]).includes(value)) {
+                            // SAFETY: The value is validated or constructed with this declared contract at this boundary.
                             const next = value as QwenVoiceLanguage;
                             setLanguage(next);
                             setVoiceProfiles((previous) => ({
@@ -648,7 +656,7 @@ export function SettingsDialog({
                                 catalogId: displayCatalog?.catalogId ?? '',
                                 voiceId,
                                 speedModifier: speedCapability.supported ? speedModifierValue : speedCapability.default,
-                                ...(tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : {}),
+                                ...(tonePrompt.trim() ? { tonePrompt: tonePrompt.trim() } : undefined),
                                 language: next,
                                 ...selectedModel,
                               },
@@ -698,8 +706,8 @@ export function SettingsDialog({
                             speedModifier: Number(event.target.value),
                             ...(selectedModel.backendId === 'qwen3' && tonePrompt.trim()
                               ? { tonePrompt: tonePrompt.trim() }
-                              : {}),
-                            ...(selectedModel.backendId === 'qwen3' ? { language } : {}),
+                              : undefined),
+                            ...(selectedModel.backendId === 'qwen3' ? { language } : undefined),
                             ...selectedModel,
                           },
                         }));

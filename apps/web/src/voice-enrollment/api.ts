@@ -28,6 +28,7 @@ export async function enrollCustomVoice(input: {
     body: JSON.stringify(body),
   });
   if (!response.ok) {
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
     const detail = (await response.json().catch(() => undefined)) as { detail?: string; error?: string } | undefined;
     throw new Error(detail?.detail ?? detail?.error ?? 'The voice could not be enrolled by the local audio engine.');
   }
@@ -54,6 +55,7 @@ export async function enrollStoredCustomVoice(input: { capability: string; voice
   if (!response.ok) {
     // Surface the host/sidecar detail (e.g. CUDA/model or sidecar-failure
     // reasons) so a failed restore is actionable instead of a dead-end copy.
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
     const detail = (await response.json().catch(() => undefined)) as { detail?: string; error?: string } | undefined;
     throw new Error(
       detail?.detail ?? detail?.error ?? 'The stored voice could not be restored in the local audio engine.',

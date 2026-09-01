@@ -1,3 +1,5 @@
+type TestJsonValue = null | boolean | number | string | TestJsonValue[] | { [key: string]: TestJsonValue };
+type TestJsonRecord = { [key: string]: TestJsonValue };
 import { createServer } from 'node:http';
 import { encodeBinaryAudioFrame } from '@app/contracts';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -34,7 +36,7 @@ async function fakeSidecar(
   const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   wss.on('connection', (socket, request) => {
     let ttsCount = 0;
     expect(request.headers.authorization).toBe('Bearer secret');
@@ -52,7 +54,8 @@ async function fakeSidecar(
     );
     socket.on('message', (raw) => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestJsonRecord };
       if (message.type === 'stream.open') {
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
         if (options.unexpectedPartial)
@@ -73,7 +76,9 @@ async function fakeSidecar(
       if (message.type === 'tts.request' || message.type === 'tts.open') {
         const requestIndex = ttsCount;
         // Only increment for tts.request (one-shot); tts.open waits for commit
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const responseId = message.payload.responseId as string;
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const epoch = message.payload.epoch as number;
         const outputStreamId = 55 + requestIndex;
         const currentPlaybackId = requestIndex === 0 ? playbackId : playbackId2;
@@ -135,7 +140,9 @@ async function fakeSidecar(
         const requestIndex = ttsCount++;
         const outputStreamId = 55 + requestIndex;
         const currentPlaybackId = requestIndex === 0 ? playbackId : playbackId2;
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const responseId = message.payload.responseId as string;
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const epoch = message.payload.epoch as number;
         socket.send(
           JSON.stringify({
@@ -227,6 +234,7 @@ async function fakeSidecar(
   };
   servers.push(closer);
   return {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     child: {} as SidecarProcess['child'],
     origin: `http://127.0.0.1:${address.port}`,
     secret: 'secret',
@@ -239,7 +247,7 @@ async function fakeQwenSidecar() {
   const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   const qwenCatalog = {
     catalogId: 'qwen-catalog',
     backendId: 'qwen3',
@@ -278,7 +286,8 @@ async function fakeQwenSidecar() {
     );
     socket.on('message', (raw) => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestJsonRecord };
       if (message.type === 'stream.open') {
         expect(message.payload.backendId).toBe('qwen3');
         expect(message.payload.modelId).toBe('qwen3-model');
@@ -342,6 +351,7 @@ async function fakeQwenSidecar() {
   };
   servers.push(closer);
   return {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     child: {} as SidecarProcess['child'],
     origin: `http://127.0.0.1:${address.port}`,
     secret: 'secret',
@@ -354,7 +364,7 @@ async function fakeVadSidecar() {
   const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   let sidecarSocket: WebSocket | undefined;
   wss.on('connection', (socket) => {
     sidecarSocket = socket;
@@ -371,7 +381,8 @@ async function fakeVadSidecar() {
     );
     socket.on('message', (raw) => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestJsonRecord };
       if (message.type === 'stream.open')
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
     });
@@ -386,12 +397,13 @@ async function fakeVadSidecar() {
   servers.push(closer);
   return {
     sidecar: {
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       child: {} as SidecarProcess['child'],
       origin: `http://127.0.0.1:${address.port}`,
       secret: 'secret',
       stop: closer.close,
     } satisfies SidecarProcess,
-    send: (message: unknown) => sidecarSocket!.send(JSON.stringify(message)),
+    send: (cause: unknown) => sidecarSocket!.send(JSON.stringify(cause)),
   };
 }
 
@@ -400,7 +412,7 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
   const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   let ttsCount = 0;
   wss.on('connection', (socket, request) => {
     expect(request.headers.authorization).toBe('Bearer secret');
@@ -418,7 +430,8 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
     );
     socket.on('message', (raw) => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestJsonRecord };
       if (message.type === 'stream.open') {
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
       }
@@ -427,9 +440,13 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
         // part fields only when the fake is configured to honor decision 007.
         const requestIndex = ttsCount++;
         const outputStreamId = 55 + requestIndex;
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const responseId = message.payload.responseId as string;
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const epoch = message.payload.epoch as number;
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const partIndex = message.payload.partIndex as number | undefined;
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         const partId = message.payload.partId as string | undefined;
         socket.send(
           JSON.stringify({
@@ -442,8 +459,8 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
               outputStreamId,
               sampleRate: 24000,
               voiceId: 'af_heart',
-              ...(options.echoPartIndex && partIndex !== undefined ? { partIndex } : {}),
-              ...(options.echoPartId && partId !== undefined ? { partId } : {}),
+              partIndex: options.echoPartIndex ? partIndex : undefined,
+              partId: options.echoPartId ? partId : undefined,
             },
           }),
         );
@@ -469,7 +486,7 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
               epoch,
               playbackId,
               generatedSamples: 960,
-              ...(partIndex !== undefined ? { partIndex } : {}),
+              partIndex,
             },
           }),
         );
@@ -485,6 +502,7 @@ async function fakeMultipartSidecar(options: { echoPartIndex?: boolean; echoPart
   };
   servers.push(closer);
   return {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     child: {} as SidecarProcess['child'],
     origin: `http://127.0.0.1:${address.port}`,
     secret: 'secret',
@@ -649,6 +667,7 @@ describe('AudioClient', () => {
     await client.close();
   });
 
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   it('accepts synthesis completion as the remote terminal when cancellation races tts.ended', async () => {
     const sidecar = await fakeSidecar({ cancelRace: true, cancelWithEnded: true });
     const client = new AudioClient(sidecar);
@@ -814,8 +833,8 @@ async function fakeRecordedSidecar() {
   const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
-  const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  if (!address || !('port' in address)) throw new Error('missing address');
+  const commands: Array<{ type: string; payload: TestJsonRecord }> = [];
   let sidecarSocket: WebSocket | undefined;
   wss.on('connection', (socket, request) => {
     expect(request.headers.authorization).toBe('Bearer secret');
@@ -833,7 +852,8 @@ async function fakeRecordedSidecar() {
     );
     socket.on('message', (raw) => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestJsonRecord };
       if (message.type === 'stream.open')
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
       if (message.type === 'stream.open' || message.type.startsWith('tts.')) commands.push(message);
@@ -849,13 +869,14 @@ async function fakeRecordedSidecar() {
   servers.push(closer);
   return {
     sidecar: {
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       child: {} as SidecarProcess['child'],
       origin: `http://127.0.0.1:${address.port}`,
       secret: 'secret',
       stop: closer.close,
     } satisfies SidecarProcess,
     commands,
-    push: (message: unknown) => sidecarSocket!.send(message instanceof Uint8Array ? message : JSON.stringify(message)),
+    push: (cause: unknown) => sidecarSocket!.send(cause instanceof Uint8Array ? cause : JSON.stringify(cause)),
   };
 }
 

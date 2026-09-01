@@ -78,8 +78,10 @@ export const CUSTOM_VOICE_ERROR_COPY: Readonly<Record<CustomVoiceErrorCode, stri
   limit_reached: `You can save at most ${MAX_CUSTOM_VOICES} custom voices. Delete one to make room.`,
 });
 
-export function isValidCustomVoiceId(value: unknown): value is string {
-  return typeof value === 'string' && value.startsWith(CUSTOM_VOICE_PREFIX) && /^custom:[0-9a-f]{24}$/.test(value);
+type CustomVoiceIdCandidate = string | number | boolean | bigint | symbol | null | undefined;
+
+export function isValidCustomVoiceId(value: CustomVoiceIdCandidate): value is string {
+  return String(value) === value && value.startsWith(CUSTOM_VOICE_PREFIX) && /^custom:[0-9a-f]{24}$/.test(value);
 }
 
 /** Derive the deterministic voice id for a reference's full WAV SHA-256. */

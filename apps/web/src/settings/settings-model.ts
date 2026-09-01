@@ -97,10 +97,15 @@ function validSpeed(speed: number, catalog: VoiceCatalog | undefined): boolean {
  * stale voice IDs use the backend default, changed catalog IDs rebase, and an
  * unsupported speed uses that backend's declared default.
  */
+export interface ReconciledVoice {
+  voice: VoicePreference;
+  notice?: VoiceNoticeReason;
+}
+
 export function reconcileVoice(
   preference: VoicePreference | undefined,
   catalog: VoiceCatalog | undefined,
-): { voice: VoicePreference; notice?: VoiceNoticeReason } {
+): ReconciledVoice {
   if (!catalog) {
     if (preference && Number.isFinite(preference.speedModifier))
       return { voice: preference, notice: 'missing_catalog' };
@@ -129,8 +134,8 @@ export function reconcileVoice(
         catalogId: catalog.catalogId,
         voiceId: preference.voiceId,
         speedModifier: speed,
-        ...(preference.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}),
-        ...(preference.language ? { language: preference.language } : {}),
+        ...(preference.tonePrompt ? { tonePrompt: preference.tonePrompt } : undefined),
+        ...(preference.language ? { language: preference.language } : undefined),
       },
       notice: speedNotice ?? 'rebase',
     };
@@ -140,8 +145,8 @@ export function reconcileVoice(
       catalogId: catalog.catalogId,
       voiceId: catalog.defaultVoiceId,
       speedModifier: speed,
-      ...(preference?.tonePrompt ? { tonePrompt: preference.tonePrompt } : {}),
-      ...(preference?.language ? { language: preference.language } : {}),
+      ...(preference?.tonePrompt ? { tonePrompt: preference.tonePrompt } : undefined),
+      ...(preference?.language ? { language: preference.language } : undefined),
     },
     notice: speedNotice ?? 'defaulted',
   };

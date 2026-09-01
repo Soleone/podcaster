@@ -29,26 +29,26 @@ export interface ServiceStatusPopoverProps {
   onEnableMicrophone?: (() => void | Promise<void>) | undefined;
 }
 
-const stateTone: Record<
+const stateTone = {
+  ready: { dot: 'bg-emerald-500', icon: Check, badge: 'default', animate: false },
+  starting: { dot: 'bg-amber-500', icon: RefreshCw, badge: 'secondary', animate: true },
+  degraded: { dot: 'bg-amber-500', icon: AlertTriangle, badge: 'secondary', animate: false },
+  unavailable: { dot: 'bg-destructive', icon: CircleAlert, badge: 'destructive', animate: false },
+  login_required: { dot: 'bg-destructive', icon: CircleAlert, badge: 'destructive', animate: false },
+  rate_limited: { dot: 'bg-amber-500', icon: AlertTriangle, badge: 'secondary', animate: false },
+  incompatible: { dot: 'bg-destructive', icon: CircleAlert, badge: 'destructive', animate: false },
+} satisfies Record<
   ServiceState,
   { dot: string; icon: typeof Check; badge: 'default' | 'secondary' | 'destructive'; animate?: boolean }
-> = {
-  ready: { dot: 'bg-emerald-500', icon: Check, badge: 'default' },
-  starting: { dot: 'bg-amber-500', icon: RefreshCw, badge: 'secondary', animate: true },
-  degraded: { dot: 'bg-amber-500', icon: AlertTriangle, badge: 'secondary' },
-  unavailable: { dot: 'bg-destructive', icon: CircleAlert, badge: 'destructive' },
-  login_required: { dot: 'bg-destructive', icon: CircleAlert, badge: 'destructive' },
-  rate_limited: { dot: 'bg-amber-500', icon: AlertTriangle, badge: 'secondary' },
-  incompatible: { dot: 'bg-destructive', icon: CircleAlert, badge: 'destructive' },
-};
+>;
 
-const checkTone: Record<ServiceCheckState, string> = {
+const checkTone = {
   ready: 'bg-emerald-500',
   starting: 'bg-amber-500 animate-pulse',
   warming: 'bg-amber-500 animate-pulse',
   needs_action: 'bg-amber-500',
   unavailable: 'bg-destructive',
-};
+} satisfies Record<ServiceCheckState, string>;
 
 function StatusLed({ state, className }: { state: ServiceState; className?: string }) {
   const tone = stateTone[state];

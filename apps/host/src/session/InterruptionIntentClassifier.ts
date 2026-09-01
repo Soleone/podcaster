@@ -1,4 +1,5 @@
 import { createPiClient, type PiClient } from '../pi/PiClient.js';
+import { asObjectValue, isJsonString, type JsonValue } from '../pi/pi-process.js';
 
 export type InterruptionIntent =
   | 'non_substantive'
@@ -42,31 +43,36 @@ export const CLASSIFIER_SYSTEM_PROMPT = `You are a speech-intent classifier for 
 Return ONLY compact JSON with exactly these keys and no other text or code-fence: action,intent,confidence,reason.
 action is \"resume\" or \"accept\". intent is one of: non_substantive, continue_previous, new_request, correction, topic_change, stop_previous.\nconfidence is one of: low, medium, high.\nUse resume only for fragments, acknowledgements, noise, or explicit requests to carry on. Use accept for a clear new request, correction, topic change, or stop.\nNegation or rejection of the paused answer (no, not, don't, wrong, different, something else, \"not those\") is a correction - accept it even when the speech is disfluent. Bare redirections like \"Fantasy setting\" are topic changes. Bias only genuinely ambiguous speech without a takeover cue to resume.`;
 export function parseInterruptionDecision(value: string): InterruptionIntentDecision | undefined {
-  let parsed: unknown;
+  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(value);
+    // SAFETY: JSON.parse returns values representable by JsonValue.
+    parsed = JSON.parse(value) as JsonValue;
   } catch {
     return;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
-  const record = parsed as Record<string, unknown>;
-  if (Object.keys(record).sort().join(',') !== 'action,confidence,intent,reason') return;
+  const record = asObjectValue(parsed);
+  if (!record || Object.keys(record).sort().join(',') !== 'action,confidence,intent,reason') return;
+  const action = record.action;
+  const intent = record.intent;
+  const confidence = record.confidence;
+  const reason = record.reason;
   if (
-    (record.action !== 'resume' && record.action !== 'accept') ||
-    !intents.has(record.intent as InterruptionIntent) ||
-    !confidences.has(record.confidence as InterruptionConfidence) ||
-    typeof record.reason !== 'string' ||
-    record.reason.length < 1 ||
-    record.reason.length > 120
+    (action !== 'resume' && action !== 'accept') ||
+    !isJsonString(intent) ||
+    // SAFETY: membership is checked against the complete InterruptionIntent set.
+    !intents.has(intent as InterruptionIntent) ||
+    !isJsonString(confidence) ||
+    // SAFETY: membership is checked against the complete InterruptionConfidence set.
+    !confidences.has(confidence as InterruptionConfidence) ||
+    !isJsonString(reason) ||
+    reason.length < 1 ||
+    reason.length > 120
   )
     return;
-  if (record.action === 'resume' && !['non_substantive', 'continue_previous'].includes(String(record.intent))) return;
-  if (
-    record.action === 'accept' &&
-    !['new_request', 'correction', 'topic_change', 'stop_previous'].includes(String(record.intent))
-  )
-    return;
-  return record as unknown as InterruptionIntentDecision;
+  if (action === 'resume' && !['non_substantive', 'continue_previous'].includes(intent)) return;
+  if (action === 'accept' && !['new_request', 'correction', 'topic_change', 'stop_previous'].includes(intent)) return;
+  // SAFETY: the set-membership checks above establish these two literal unions.
+  return { action, intent: intent as InterruptionIntent, confidence: confidence as InterruptionConfidence, reason };
 }
 
 export class PiInterruptionIntentClassifier implements InterruptionIntentClassifier {

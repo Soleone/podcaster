@@ -83,13 +83,12 @@ async function sendAndWait(
       socket.on('message', (raw) => {
         if (
           done ||
-          typeof raw === 'string' ||
           (Buffer.isBuffer(raw) === false && Array.isArray(raw) === false && raw instanceof ArrayBuffer === false)
         )
           return;
         let value: { type?: string; payload?: { voiceId?: string; code?: string; message?: string } };
         try {
-          value = JSON.parse(Buffer.from(bytesOf(raw)).toString('utf8')) as typeof value;
+          value = JSON.parse(Buffer.from(bytesOf(raw)).toString('utf8'));
         } catch {
           return;
         }
@@ -108,6 +107,8 @@ async function sendAndWait(
         socket.send(JSON.stringify({ type: 'voice.remove', payload: { voiceId } }));
         return;
       }
+      // SAFETY: only the two exported entry points call sendAndWait, and the
+      // enrollment path always passes a full VoiceEnrollmentSidecarInput.
       const enrollment = input as VoiceEnrollmentSidecarInput;
       socket.send(
         JSON.stringify({

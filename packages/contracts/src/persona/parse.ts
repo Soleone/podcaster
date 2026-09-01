@@ -17,6 +17,37 @@ const ALLOWED_KEYS = new Set([
   'experiences',
 ]);
 
+/** A value the YAML core schema can produce at the front-matter boundary. */
+type RawValue = string | number | boolean | null | RawValue[] | { [key: string]: RawValue };
+
+/** The seven front-matter keys the persona contract accepts, before validation. */
+type FrontMatter = {
+  version?: RawValue;
+  name?: RawValue;
+  invitation_only?: RawValue;
+  posture_weights?: RawValue;
+  challenge_enabled?: RawValue;
+  interests?: RawValue;
+  experiences?: RawValue;
+};
+
+/** Validated posture weights after front-matter decoding. */
+type PostureWeights = { riff: number; question: number; challenge: number };
+
+/**
+ * The subset of the yaml AST inspected for aliases and custom tags: parsed
+ * nodes have optional anchor/tag; pairs carry key/value; collections carry
+ * items. `value` is left as `unknown` because a scalar's raw value is not a
+ * walkable member (the walker re-checks before descending).
+ */
+interface YamlAstMember {
+  anchor?: string;
+  tag?: string;
+  key?: YamlAstMember | null;
+  value?: unknown;
+  items?: readonly YamlAstMember[] | null;
+}
+
 function lineAt(source: string, offset: number): number {
   return source.slice(0, Math.max(0, offset)).split('\n').length;
 }
@@ -32,10 +63,10 @@ function diagnostic(
   return { severity, code, message, line: lineAt(source, start), range: { start, end: Math.max(start, end) } };
 }
 
-function canonicalize(value: unknown): string {
+function canonicalize(value: RawValue): string {
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  if (value !== null && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>)
+  if (isMapping(value)) {
+    return `{${Object.entries(value)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, item]) => `${JSON.stringify(key)}:${canonicalize(item)}`)
       .join(',')}}`;
@@ -56,14 +87,14 @@ function hasUnpairedSurrogate(value: string): boolean {
 }
 
 function decode(input: string | Uint8Array): string | undefined {
-  if (typeof input === 'string') {
-    return hasUnpairedSurrogate(input) ? undefined : input;
+  if (ArrayBuffer.isView(input)) {
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(input);
+    } catch {
+      return undefined;
+    }
   }
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(input);
-  } catch {
-    return undefined;
-  }
+  return hasUnpairedSurrogate(input) ? undefined : input;
 }
 
 function offsetOfKey(source: string, key: string): number {
@@ -71,31 +102,78 @@ function offsetOfKey(source: string, key: string): number {
   return match?.index ?? 0;
 }
 
-function inspectYamlNode(node: unknown, seen: Set<unknown>): 'unsupported_alias' | 'unsupported_tag' | undefined {
-  if (!node || typeof node !== 'object' || seen.has(node)) return;
+function inspectYamlNode(
+  node: YamlAstMember | null,
+  seen: Set<unknown>,
+): 'unsupported_alias' | 'unsupported_tag' | undefined {
+  if (!node || seen.has(node)) return;
   seen.add(node);
   if (isAlias(node)) return 'unsupported_alias';
-  const record = node as Record<string, unknown>;
-  if (typeof record.anchor === 'string') return 'unsupported_alias';
-  if (typeof record.tag === 'string') return 'unsupported_tag';
-  for (const key of ['contents', 'key', 'value'] as const) {
-    const found = inspectYamlNode(record[key], seen);
+  if (node.anchor !== undefined) return 'unsupported_alias';
+  if (node.tag !== undefined) return 'unsupported_tag';
+  const keyChild = node.key;
+  if (keyChild !== null && keyChild !== undefined) {
+    const found = inspectYamlNode(keyChild, seen);
     if (found) return found;
   }
-  if (Array.isArray(record.items))
-    for (const item of record.items) {
+  const valueChild = node.value;
+  if (valueChild !== null && valueChild !== undefined && Object(valueChild) === valueChild) {
+    // SAFETY: only a pair's `value` slot holds a walkable AST member; a scalar
+    // raw value is plain data and fails the object check above.
+    const found = inspectYamlNode(valueChild as YamlAstMember, seen);
+    if (found) return found;
+  }
+  if (node.items !== null && node.items !== undefined) {
+    for (const item of node.items) {
       const found = inspectYamlNode(item, seen);
       if (found) return found;
     }
+  }
   return;
 }
 
-function integerInRange(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 100;
+function isStringValue(value: RawValue | undefined): value is string {
+  return value !== undefined && value !== null && String(value) === value;
 }
-function plainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+
+function isBooleanValue(value: RawValue | undefined): value is boolean {
+  return value === true || value === false;
 }
+
+function isIntegerValue(value: RawValue | undefined): value is number {
+  return Number.isInteger(value);
+}
+
+function integerInRange(value: RawValue | undefined): value is number {
+  return isIntegerValue(value) && value >= 0 && value <= 100;
+}
+
+/** True when `value` is a plain mapping (YAML `!!map`, JSON object). */
+function isMapping(value: RawValue | undefined): value is { [key: string]: RawValue } {
+  return (
+    value !== undefined &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.prototype.toString.call(value) === '[object Object]'
+  );
+}
+
+function decodePostureWeights(value: RawValue | undefined): PostureWeights | undefined {
+  if (!isMapping(value)) return undefined;
+  if (Object.keys(value).some((key) => !['riff', 'question', 'challenge'].includes(key))) return undefined;
+  const riff = value.riff;
+  const question = value.question;
+  const challenge = value.challenge;
+  if (!integerInRange(riff) || !integerInRange(question) || !integerInRange(challenge)) return undefined;
+  return { riff, question, challenge };
+}
+
+function decodeStringArray(value: RawValue | undefined): string[] | undefined {
+  if (value === undefined || !Array.isArray(value)) return undefined;
+  if (!value.every(isStringValue)) return undefined;
+  return value.slice();
+}
+
 function codePointLength(value: string): number {
   return Array.from(value).length;
 }
@@ -128,7 +206,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
   }
 
   const lines = source.split('\n');
-  let frontMatter: Record<string, unknown> = {};
+  let frontMatter: FrontMatter = {};
   let body = source;
   if (lines[0]?.trim() === '---') {
     const closing = lines.slice(1).findIndex((line) => line.trim() === '---');
@@ -145,7 +223,9 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
           diagnostic(source, 'error', 'yaml_syntax', issue.message, position + 4, (issue.pos?.[1] ?? position + 1) + 4),
         );
       }
-      const unsupported = inspectYamlNode(document.contents, new Set());
+      // SAFETY: YAML document contents are the AST members described by the
+      // local adapter; their public types use `unknown` for scalar values.
+      const unsupported = inspectYamlNode(document.contents as YamlAstMember | null, new Set());
       if (unsupported)
         errors.push(
           diagnostic(
@@ -158,10 +238,15 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
           ),
         );
       if (!document.errors.length && !unsupported) {
-        const parsed = document.toJS({ maxAliasCount: 0 }) as unknown;
-        if (!plainObject(parsed))
+        // SAFETY: the yaml runtime types `toJS` as `any`; the guard below
+        // re-checks that the value is a non-null, non-array plain mapping,
+        // which is exactly what FrontMatter models.
+        const parsed = document.toJS({ maxAliasCount: 0 }) as FrontMatter | null;
+        if (parsed === null || Array.isArray(parsed) || !isMapping(parsed)) {
           errors.push(diagnostic(source, 'error', 'invalid_value', 'Front matter must be a mapping.'));
-        else frontMatter = parsed;
+        } else {
+          frontMatter = parsed;
+        }
       }
     }
   }
@@ -177,14 +262,14 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
   const version = frontMatter.version ?? DEFAULT_PERSONA_FIELDS.version;
   const name = frontMatter.name ?? DEFAULT_PERSONA_FIELDS.name;
   const invitationOnly = frontMatter.invitation_only ?? DEFAULT_PERSONA_FIELDS.invitation_only;
-  const weights = frontMatter.posture_weights ?? DEFAULT_PERSONA_FIELDS.posture_weights;
   const challengeEnabled = frontMatter.challenge_enabled ?? DEFAULT_PERSONA_FIELDS.challenge_enabled;
-  const interests = frontMatter.interests ?? DEFAULT_PERSONA_FIELDS.interests;
-  const experiences = frontMatter.experiences ?? DEFAULT_PERSONA_FIELDS.experiences;
+  const weights = decodePostureWeights(frontMatter.posture_weights ?? DEFAULT_PERSONA_FIELDS.posture_weights);
+  const interests = decodeStringArray(frontMatter.interests ?? DEFAULT_PERSONA_FIELDS.interests);
+  const experiences = decodeStringArray(frontMatter.experiences ?? DEFAULT_PERSONA_FIELDS.experiences);
 
   if (version !== 1)
     errors.push(diagnostic(source, 'error', 'invalid_value', 'version must be 1.', offsetOfKey(source, 'version')));
-  if (typeof name !== 'string' || codePointLength(name) > 80)
+  if (!isStringValue(name) || codePointLength(name) > 80)
     errors.push(
       diagnostic(
         source,
@@ -194,7 +279,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
         offsetOfKey(source, 'name'),
       ),
     );
-  if (typeof invitationOnly !== 'boolean')
+  if (!isBooleanValue(invitationOnly))
     errors.push(
       diagnostic(
         source,
@@ -204,7 +289,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
         offsetOfKey(source, 'invitation_only'),
       ),
     );
-  if (typeof challengeEnabled !== 'boolean')
+  if (!isBooleanValue(challengeEnabled))
     errors.push(
       diagnostic(
         source,
@@ -214,13 +299,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
         offsetOfKey(source, 'challenge_enabled'),
       ),
     );
-  if (
-    !plainObject(weights) ||
-    Object.keys(weights).some((key) => !['riff', 'question', 'challenge'].includes(key)) ||
-    !integerInRange(weights.riff) ||
-    !integerInRange(weights.question) ||
-    !integerInRange(weights.challenge)
-  ) {
+  if (weights === undefined) {
     errors.push(
       diagnostic(
         source,
@@ -241,11 +320,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
       ),
     );
   }
-  if (
-    !Array.isArray(interests) ||
-    interests.length > 20 ||
-    interests.some((item) => typeof item !== 'string' || codePointLength(item) > 80)
-  )
+  if (interests === undefined || interests.length > 20 || interests.some((item) => codePointLength(item) > 80))
     errors.push(
       diagnostic(
         source,
@@ -255,11 +330,7 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
         offsetOfKey(source, 'interests'),
       ),
     );
-  if (
-    !Array.isArray(experiences) ||
-    experiences.length > 20 ||
-    experiences.some((item) => typeof item !== 'string' || codePointLength(item) > 200)
-  )
+  if (experiences === undefined || experiences.length > 20 || experiences.some((item) => codePointLength(item) > 200))
     errors.push(
       diagnostic(
         source,
@@ -281,9 +352,9 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
         'Persona body is long and may be truncated in bounded reasoning context.',
       ),
     );
-  if (plainObject(weights) && integerInRange(weights.challenge) && weights.challenge === 0)
+  if (weights !== undefined && weights.challenge === 0)
     warnings.push(diagnostic(source, 'warning', 'challenge_weight_zero', 'Challenge posture has zero weight.'));
-  if (challengeEnabled === false && plainObject(weights) && integerInRange(weights.challenge) && weights.challenge > 0)
+  if (challengeEnabled === false && weights !== undefined && weights.challenge > 0)
     warnings.push(
       diagnostic(
         source,
@@ -296,16 +367,12 @@ export function parsePersona(input: string | Uint8Array): PersonaParseResult {
   if (errors.length) return { ok: false, errors, warnings };
   const interpretation: PersonaInterpretation = {
     version: 1,
-    name: name as string,
-    invitation_only: invitationOnly as boolean,
-    posture_weights: {
-      riff: (weights as Record<string, number>).riff!,
-      question: (weights as Record<string, number>).question!,
-      challenge: (weights as Record<string, number>).challenge!,
-    },
-    challenge_enabled: challengeEnabled as boolean,
-    interests: [...(interests as string[])],
-    experiences: [...(experiences as string[])],
+    name: isStringValue(name) ? name : DEFAULT_PERSONA_FIELDS.name,
+    invitation_only: isBooleanValue(invitationOnly) ? invitationOnly : DEFAULT_PERSONA_FIELDS.invitation_only,
+    posture_weights: weights ?? DEFAULT_PERSONA_FIELDS.posture_weights,
+    challenge_enabled: isBooleanValue(challengeEnabled) ? challengeEnabled : DEFAULT_PERSONA_FIELDS.challenge_enabled,
+    interests: interests ?? [...DEFAULT_PERSONA_FIELDS.interests],
+    experiences: experiences ?? [...(DEFAULT_PERSONA_FIELDS.experiences ?? [])],
     body,
   };
   if (!CONTRACT_VALIDATORS.Persona(interpretation))

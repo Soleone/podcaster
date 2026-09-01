@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import type { JsonObject } from '../../src/lib/json-values';
 
 export interface FakeBrowserOptions {
   decodeDelayMs?: number;
@@ -7,6 +8,10 @@ export interface FakeBrowserOptions {
 export async function installFakeMicrophone(page: Page, options: FakeBrowserOptions = {}): Promise<void> {
   await page.addInitScript((initOptions: FakeBrowserOptions) => {
     type Listener = () => void;
+    interface FakeBrowserWindow extends Window {
+      __podcasterFakeWorkletNode?: FakeAudioWorkletNode;
+      getUserMediaCalls: number;
+    }
     class FakeTrack {
       private readonly listeners = new Map<string, Listener[]>();
       stop(): void {}
@@ -27,6 +32,19 @@ export async function installFakeMicrophone(page: Page, options: FakeBrowserOpti
         return this.channel;
       }
     }
+    class FakeAudioBufferSource {
+      buffer: FakeAudioBuffer | null = null;
+      onended: (() => void) | null = null;
+      constructor(private readonly context: FakeAudioContext) {}
+      connect(): void {}
+      start(startTime = 0): void {
+        queueMicrotask(() => {
+          this.context.currentTime = Math.max(this.context.currentTime, startTime + (this.buffer?.duration ?? 0));
+          this.onended?.();
+        });
+      }
+      stop(): void {}
+    }
     class FakeAudioContext {
       currentTime = 0;
       readonly sampleRate = 48_000;
@@ -35,27 +53,14 @@ export async function installFakeMicrophone(page: Page, options: FakeBrowserOpti
       createGain() {
         return { gain: { value: 1 }, connect() {}, disconnect() {} };
       }
-      createMediaStreamSource(_stream: unknown) {
+      createMediaStreamSource(_stream: MediaStream) {
         return { connect() {}, disconnect() {} };
       }
       createBuffer(_channels: number, length: number, sampleRate: number) {
         return new FakeAudioBuffer(length, sampleRate);
       }
-      createBufferSource() {
-        const context = this;
-        return {
-          buffer: null as FakeAudioBuffer | null,
-          onended: null as (() => void) | null,
-          connect() {},
-          start(startTime = 0) {
-            const source = this;
-            queueMicrotask(() => {
-              context.currentTime = Math.max(context.currentTime, startTime + (source.buffer?.duration ?? 0));
-              source.onended?.();
-            });
-          },
-          stop() {},
-        };
+      createBufferSource(): FakeAudioBufferSource {
+        return new FakeAudioBufferSource(this);
       }
       async suspend(): Promise<void> {}
       async resume(): Promise<void> {}
@@ -70,22 +75,30 @@ export async function installFakeMicrophone(page: Page, options: FakeBrowserOpti
         return new FakeAudioBuffer(16_000, 16_000);
       }
     }
+    interface MessagePortLike {
+      onmessage: ((event: MessageEvent<Float32Array>) => void) | null;
+    }
     class FakeAudioWorkletNode {
-      readonly port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } = { onmessage: null };
-      constructor(_context: unknown, _name: string) {
-        (window as unknown as { __podcasterFakeWorkletNode?: FakeAudioWorkletNode }).__podcasterFakeWorkletNode = this;
-        queueMicrotask(() => this.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>));
+      readonly port: MessagePortLike = { onmessage: null };
+      constructor(_context: BaseAudioContext, _name: string) {
+        // SAFETY: this init script adds only the declared test-only window properties.
+        // SAFETY: this init script adds only the declared test-only window properties.
+        const fakeWindow = window as FakeBrowserWindow;
+        fakeWindow.__podcasterFakeWorkletNode = this;
+        queueMicrotask(() => this.port.onmessage?.(new MessageEvent('message', { data: new Float32Array(961) })));
       }
       connect(): void {}
       disconnect(): void {}
     }
 
-    (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls = 0;
+    // SAFETY: this init script adds only the declared test-only window properties.
+    const fakeWindow = window as FakeBrowserWindow;
+    fakeWindow.getUserMediaCalls = 0;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
         getUserMedia: async () => {
-          (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls++;
+          fakeWindow.getUserMediaCalls++;
           const track = new FakeTrack();
           return { getTracks: () => [track] };
         },
@@ -105,11 +118,11 @@ export async function enterFakeSession(page: Page, origin: string, options: Fake
   await page.waitForFunction(() => Boolean(window.__podcasterTest));
 }
 
-export async function emit(page: Page, type: string, payload: Record<string, unknown>): Promise<void> {
+export async function emit(page: Page, type: string, payload: JsonObject): Promise<void> {
   await page.evaluate(
     async ([eventType, eventPayload]) => {
       await window.__podcasterTest!.emit(eventType, eventPayload);
     },
-    [type, payload] as const,
+    [type, payload],
   );
 }

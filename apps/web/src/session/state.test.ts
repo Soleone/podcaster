@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { canSafelyResume, initialSessionState, reduceSessionState } from './state';
 import type { StableEvent } from '../storage/stable-turn-writer';
+import type { JsonValue } from '../lib/json-values';
 
 let sequence = 0;
-const event = <T extends StableEvent['type']>(type: T, payload: Record<string, unknown> = {}, epoch = 0): StableEvent =>
+const event = <T extends StableEvent['type']>(
+  type: T,
+  payload: Record<string, JsonValue> = {},
+  epoch = 0,
+): StableEvent =>
+  // SAFETY: test fixtures construct protocol envelopes with the requested discriminant and payload.
   ({
     protocolVersion: 1,
     eventId: `e-${++sequence}`,
@@ -191,8 +197,9 @@ describe('session presentation state', () => {
       confirmed: false,
     };
     expect(canSafelyResume(all)).toBe(true);
+    // SAFETY: Object.keys is taken from the locally constructed complete boolean input.
     for (const key of Object.keys(all) as Array<keyof typeof all>) {
-      const unsafe = { ...all, [key]: typeof all[key] === 'boolean' ? !all[key] : all[key] };
+      const unsafe = { ...all, [key]: !all[key] };
       expect(canSafelyResume(unsafe)).toBe(false);
     }
   });
@@ -423,7 +430,7 @@ describe('session presentation state', () => {
   });
 
   describe('agent tool activity visibility', () => {
-    const started = (over: Record<string, unknown> = {}, epoch = 0) =>
+    const started = (over: Partial<Extract<StableEvent, { type: 'tool.activity' }>['payload']> = {}, epoch = 0) =>
       event(
         'tool.activity',
         {

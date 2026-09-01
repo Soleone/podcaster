@@ -46,7 +46,7 @@ import type { RecordingSessionViewState, RecordingTrimTargetId } from '../record
 import type { AgentActivityGroup, SessionViewState } from './state';
 import './session.css';
 
-const headings: Record<SessionViewState['dominant'], string> = {
+const headings = {
   idle: 'Session stopped',
   planning: 'Preparing your session',
   ready: 'Ready to go live',
@@ -60,7 +60,7 @@ const headings: Record<SessionViewState['dominant'], string> = {
   stopping: 'Stopping response…',
   degraded: 'Session needs attention',
 };
-const stateIcons: Record<SessionViewState['dominant'], LucideIcon | undefined> = {
+const stateIcons = {
   idle: CircleStop,
   planning: Brain,
   ready: Check,
@@ -594,7 +594,14 @@ function ActivityLogPanel() {
   };
   return (
     <Card size="sm" className="activity-log mt-6">
-      <Tabs value={tab} onValueChange={(value) => setTab(value as ActivityLogTab)} className="contents">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          // SAFETY: Tabs values are supplied by this component's ActivityLogTab triggers.
+          setTab(value as ActivityLogTab);
+        }}
+        className="contents"
+      >
         <CardHeader className="activity-log-header flex flex-row flex-wrap items-center justify-between gap-2">
           <Button
             variant="ghost"

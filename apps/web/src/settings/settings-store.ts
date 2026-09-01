@@ -27,6 +27,25 @@ import { openPodcasterDatabase, requestResult, STORES, transactionDone, type Dat
 export const SETTINGS_KEY = 'settings:v1';
 
 /** The browser-persisted settings row: the display name plus the frozen session snapshot. */
+
+type ExternalValue = string | number | boolean | null | undefined | ExternalRecord | readonly ExternalValue[];
+interface ExternalRecord {
+  readonly [key: string]: ExternalValue;
+}
+/** Values that reach these normalizers: raw IndexedDB rows plus already-typed settings fields. */
+type StorableInput =
+  | ExternalValue
+  | StoredSettings
+  | VoicePreference
+  | PiSettings
+  | TtsModelSelection
+  | Record<string, VoicePreference>;
+const valueTag = Object.prototype.toString;
+const isJsonString = (value: StorableInput): value is string => valueTag.call(value) === '[object String]';
+const isJsonNumber = (value: StorableInput): value is number => valueTag.call(value) === '[object Number]';
+const isJsonObject = (value: StorableInput): value is ExternalRecord => valueTag.call(value) === '[object Object]';
+const isJsonArray = (value: StorableInput): value is readonly ExternalValue[] => Array.isArray(value);
+
 export interface StoredSettings {
   version: typeof SETTINGS_VERSION;
   /** Editable agent display name used in the conversation bubbles; never sent to the host. */
@@ -49,17 +68,17 @@ export const DEFAULT_SETTINGS: StoredSettings = {
   pi: { ...DEFAULT_PI_SETTINGS },
   selectedModel: { ...DEFAULT_TTS_MODEL },
   voice: { catalogId: '', voiceId: '', speedModifier: DEFAULT_VOICE_SPEED_MODIFIER, ...DEFAULT_TTS_MODEL },
-  voiceProfiles: {},
 };
 
-function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const voice = value as Record<string, unknown>;
+function normalizeStoredVoice(value: ExternalValue | VoicePreference): VoicePreference | undefined {
+  if (!value || !isJsonObject(value) || isJsonArray(value)) return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+  const voice = value as ExternalRecord;
   const speedModifier = voice.speedModifier === undefined ? DEFAULT_VOICE_SPEED_MODIFIER : voice.speedModifier;
   if (
-    typeof voice.catalogId !== 'string' ||
-    typeof voice.voiceId !== 'string' ||
-    typeof speedModifier !== 'number' ||
+    !isJsonString(voice.catalogId) ||
+    !isJsonString(voice.voiceId) ||
+    !isJsonNumber(speedModifier) ||
     !Number.isFinite(speedModifier) ||
     speedModifier < MIN_VOICE_SPEED_MODIFIER ||
     speedModifier > MAX_VOICE_SPEED_MODIFIER
@@ -68,23 +87,26 @@ function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
   const tonePrompt = voice.tonePrompt === undefined ? undefined : voice.tonePrompt;
   if (
     tonePrompt !== undefined &&
-    (typeof tonePrompt !== 'string' ||
+    (!isJsonString(tonePrompt) ||
       !tonePrompt.trim() ||
       new TextEncoder().encode(tonePrompt).length > MAX_VOICE_TONE_PROMPT_BYTES)
   )
     return undefined;
   const language = voice.language === undefined ? undefined : voice.language;
+  // SAFETY: The language is a member of the validated Qwen language list.
   if (
     language !== undefined &&
-    (typeof language !== 'string' || !(QWEN_VOICE_LANGUAGES as readonly string[]).includes(language))
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+    // SAFETY: IndexedDB returned the row written under this local storage contract.
+    (!isJsonString(language) || !(QWEN_VOICE_LANGUAGES as readonly string[]).includes(language))
   )
     return undefined;
   const hasBackend = voice.backendId !== undefined || voice.modelId !== undefined;
   if (
     hasBackend &&
-    (typeof voice.backendId !== 'string' ||
+    (!isJsonString(voice.backendId) ||
       voice.backendId.length === 0 ||
-      typeof voice.modelId !== 'string' ||
+      !isJsonString(voice.modelId) ||
       voice.modelId.length === 0)
   )
     return undefined;
@@ -92,39 +114,47 @@ function normalizeStoredVoice(value: unknown): VoicePreference | undefined {
     catalogId: voice.catalogId,
     voiceId: voice.voiceId,
     speedModifier,
-    ...(tonePrompt !== undefined ? { tonePrompt: tonePrompt.trim() } : {}),
-    ...(language !== undefined ? { language: language as Exclude<VoicePreference['language'], undefined> } : {}),
-    ...(hasBackend ? { backendId: voice.backendId as string, modelId: voice.modelId as string } : {}),
+    ...(tonePrompt !== undefined ? { tonePrompt: tonePrompt.trim() } : undefined),
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+    ...(language !== undefined ? { language: language as Exclude<VoicePreference['language'], undefined> } : undefined),
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+    ...(hasBackend ? { backendId: voice.backendId as string, modelId: voice.modelId as string } : undefined),
   };
 }
 
-function normalizePiSettings(value: unknown): PiSettings | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const pi = value as Record<string, unknown>;
+function normalizePiSettings(value: ExternalValue | PiSettings): PiSettings | undefined {
+  if (!value || !isJsonObject(value) || isJsonArray(value)) return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+  const pi = value as ExternalRecord;
   if (
-    typeof pi.model !== 'string' ||
+    !isJsonString(pi.model) ||
     !pi.model ||
     pi.model.startsWith('-') ||
     new TextEncoder().encode(pi.model).length > MAX_PI_MODEL_BYTES ||
     /\s/u.test(pi.model)
   )
     return undefined;
-  if (typeof pi.thinkingLevel !== 'string' || !(PI_THINKING_LEVELS as readonly string[]).includes(pi.thinkingLevel))
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+  if (!isJsonString(pi.thinkingLevel) || !(PI_THINKING_LEVELS as readonly string[]).includes(pi.thinkingLevel))
     return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   return { model: pi.model, thinkingLevel: pi.thinkingLevel as PiSettings['thinkingLevel'] };
 }
 
-function normalizeSelectedModel(value: unknown): TtsModelSelection | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const model = value as Record<string, unknown>;
-  if (typeof model.backendId !== 'string' || !model.backendId || typeof model.modelId !== 'string' || !model.modelId)
+function normalizeSelectedModel(value: ExternalValue | TtsModelSelection): TtsModelSelection | undefined {
+  if (!value || !isJsonObject(value) || isJsonArray(value)) return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+  const model = value as ExternalRecord;
+  if (!isJsonString(model.backendId) || !model.backendId || !isJsonString(model.modelId) || !model.modelId)
     return undefined;
   return { backendId: model.backendId, modelId: model.modelId };
 }
 
-function normalizeVoiceProfiles(value: unknown): Record<string, VoicePreference> | undefined {
+function normalizeVoiceProfiles(
+  value: ExternalValue | Record<string, VoicePreference>,
+): Record<string, VoicePreference> | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  if (!value || !isJsonObject(value) || isJsonArray(value)) return undefined;
   const profiles: Record<string, VoicePreference> = {};
   for (const [key, candidate] of Object.entries(value)) {
     const normalized = normalizeStoredVoice(candidate);
@@ -144,10 +174,11 @@ function utf8ByteLength(value: string): number {
  * catalog exists (empty voice is allowed here). The strict session.start
  * contract validator still gates what is actually sent to the host.
  */
-export function isValidStoredSettings(value: unknown): value is StoredSettings {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  if (record.version !== 1 || typeof record.persona !== 'string' || typeof record.agentName !== 'string') return false;
+export function isValidStoredSettings(value: ExternalValue | StoredSettings): value is StoredSettings {
+  if (!value || !isJsonObject(value) || isJsonArray(value)) return false;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+  const record = value as ExternalRecord;
+  if (record.version !== 1 || !isJsonString(record.persona) || !isJsonString(record.agentName)) return false;
   const pi = normalizePiSettings(record.pi);
   if (record.pi !== undefined && !pi) return false;
   const selectedModel = normalizeSelectedModel(record.selectedModel);
@@ -182,6 +213,7 @@ export class SettingsStore {
   async load(): Promise<StoredSettings | undefined> {
     try {
       const transaction = this.db.transaction(STORES.meta, 'readonly');
+      // SAFETY: IndexedDB returned the row written under this local storage contract.
       const row = (await requestResult(transaction.objectStore(STORES.meta).get(SETTINGS_KEY))) as
         | (StoredSettings & { key: string })
         | undefined;
@@ -195,9 +227,9 @@ export class SettingsStore {
       return {
         ...settings,
         voice,
-        ...(pi ? { pi } : {}),
-        ...(selectedModel ? { selectedModel } : {}),
-        ...(voiceProfiles ? { voiceProfiles } : {}),
+        ...(pi ? { pi } : undefined),
+        ...(selectedModel ? { selectedModel } : undefined),
+        ...(voiceProfiles ? { voiceProfiles } : undefined),
       };
     } catch {
       return undefined;

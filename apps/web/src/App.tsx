@@ -61,35 +61,37 @@ type LifecycleAction = 'idle' | 'pausing' | 'resuming' | 'ending';
 
 function planningSnapshotForStart(planning: SessionPlanningRequest | undefined): SessionPlanningSnapshot {
   if (!planning) return { status: 'skipped', attempt: 0 };
-  return {
+  const snapshot: SessionPlanningSnapshot = {
     status: planning.reuse ? 'ready' : 'planning',
     attempt: 1,
     topic: planning.topic,
     depth: planning.depth,
-    ...(planning.notes ? { notes: planning.notes } : {}),
   };
+  if (planning.notes) snapshot.notes = planning.notes;
+  return snapshot;
 }
 function planningForResume(planning: SessionPlanningSnapshot | undefined): SessionPlanningRequest | undefined {
-  // Only a terminal ready plan is reusable on resume. A stale persisted
-  // running attempt is normalized away (never resumed implicitly) so no
-  // research pass restarts or injects notes after the session comes back.
   if (!planning || planning.status !== 'ready' || !planning.topic || !planning.depth) return undefined;
-  return {
-    topic: planning.topic,
-    depth: planning.depth,
-    ...(planning.notes ? { notes: planning.notes } : {}),
-    reuse: true,
-  };
+  const request: SessionPlanningRequest = { topic: planning.topic, depth: planning.depth, reuse: true };
+  if (planning.notes) request.notes = planning.notes;
+  return request;
 }
 function planningViewForStart(planning: SessionPlanningRequest | undefined): SessionViewState['planning'] {
   if (!planning) return { status: 'skipped', attempt: 0 };
-  return {
+  const view: NonNullable<SessionViewState['planning']> = {
     status: planning.reuse ? 'ready' : 'planning',
     attempt: 1,
     topic: planning.topic,
     depth: planning.depth,
-    ...(planning.notes ? { notes: planning.notes } : {}),
   };
+  if (planning.notes) view.notes = planning.notes;
+  return view;
+}
+
+function appendActivityIssue(level: 'error' | 'warn', message: string, detail?: string): void {
+  const entry: Parameters<typeof activityLog.append>[0] = { level, source: 'app', message };
+  if (detail) entry.detail = detail;
+  activityLog.append(entry);
 }
 
 declare global {
@@ -249,7 +251,7 @@ export function App() {
       planning: SessionPlanningRequest | undefined,
       activate: () => Promise<void>,
     ): Promise<void> => {
-      const runtime = await createLiveSessionRuntime({
+      const runtimeOptions: Parameters<typeof createLiveSessionRuntime>[0] = {
         sessionId: id,
         capability: cap,
         writer: opened,
@@ -257,7 +259,6 @@ export function App() {
         seed,
         reasoningMode,
         settings,
-        ...(planning ? { planning } : {}),
         activate,
         fake: fakeServices,
         callbacks: {
@@ -270,7 +271,9 @@ export function App() {
             void fetchRecordingSummaries(id);
           },
         },
-      });
+      };
+      if (planning) runtimeOptions.planning = planning;
+      const runtime = await createLiveSessionRuntime(runtimeOptions);
       runtimeRef.current = runtime;
       capabilityRef.current = cap;
       setCapability(cap);
@@ -355,12 +358,11 @@ export function App() {
             runtimeRef.current = undefined;
             await candidate.pauseSession(target);
             configureSessionClock(await candidate.getSession(target));
-            activityLog.append({
-              level: 'error',
-              source: 'app',
-              message: 'active session could not be resumed; it is paused locally',
-              ...(error instanceof Error ? { detail: error.message } : {}),
-            });
+            appendActivityIssue(
+              'error',
+              'active session could not be resumed; it is paused locally',
+              error instanceof Error ? error.message : undefined,
+            );
           } finally {
             if (!cancelled) setResuming(false);
           }
@@ -508,12 +510,11 @@ export function App() {
       const afterFailure = await opened.getSession(id);
       const rolledBack = afterFailure?.state === 'active' ? await opened.pauseSession(id) : { ok: true };
       if (!rolledBack.ok) {
-        activityLog.append({
-          level: 'error',
-          source: 'app',
-          message: 'session start failed and could not checkpoint the session',
-          ...(rolledBack.degradedReason ? { detail: rolledBack.degradedReason } : {}),
-        });
+        appendActivityIssue(
+          'error',
+          'session start failed and could not checkpoint the session',
+          rolledBack.degradedReason ? rolledBack.degradedReason : undefined,
+        );
         setView((previous) =>
           previous
             ? {
@@ -579,24 +580,18 @@ export function App() {
       await runtimeRef.current?.stop();
     } catch (error) {
       ended = false;
-      activityLog.append({
-        level: 'warn',
-        source: 'app',
-        message: 'live session cleanup failed',
-        ...(error instanceof Error ? { detail: error.message } : {}),
-      });
+      appendActivityIssue('warn', 'live session cleanup failed', error instanceof Error ? error.message : undefined);
     }
     const opened = writerRef.current;
     if (opened) {
       const persisted = await opened.endSession(targetSession);
       ended = ended && persisted.ok;
       if (!persisted.ok)
-        activityLog.append({
-          level: 'error',
-          source: 'app',
-          message: 'session end could not be saved',
-          ...(persisted.degradedReason ? { detail: persisted.degradedReason } : {}),
-        });
+        appendActivityIssue(
+          'error',
+          'session end could not be saved',
+          persisted.degradedReason ? persisted.degradedReason : undefined,
+        );
     }
     if (ended && capability && capability !== 'fake-recovered' && capability !== 'fake')
       await fetch('/api/stop', {
@@ -645,12 +640,11 @@ export function App() {
         const cap = fakeServices ? 'fake-recovered' : await bootstrapCapability();
         await start(cap, 'full', targetId);
       } catch (error) {
-        activityLog.append({
-          level: 'error',
-          source: 'app',
-          message: 'session could not be resumed',
-          ...(error instanceof Error ? { detail: error.message } : {}),
-        });
+        appendActivityIssue(
+          'error',
+          'session could not be resumed',
+          error instanceof Error ? error.message : undefined,
+        );
         sessionPausedRef.current = true;
         setSessionPaused(true);
       } finally {
@@ -723,12 +717,7 @@ export function App() {
       setView((previous) => (previous ? pausedSessionView(previous) : runtime.snapshot()));
       activityLog.append({ level: 'info', source: 'app', message: 'session paused by user' });
     } catch (error) {
-      activityLog.append({
-        level: 'error',
-        source: 'app',
-        message: 'session pause cleanup failed',
-        ...(error instanceof Error ? { detail: error.message } : {}),
-      });
+      appendActivityIssue('error', 'session pause cleanup failed', error instanceof Error ? error.message : undefined);
       sessionPausedRef.current = true;
       setSessionPaused(true);
       stoppedRef.current = true;
@@ -967,7 +956,8 @@ function pausedSessionView(state: SessionViewState): SessionViewState {
     playbackNotice: 'Any assistant response in progress was stopped and will not resume automatically.',
     conversationItems: state.conversationItems.map((item) =>
       item.kind === 'assistant' && item.playback !== 'completed' && item.playback !== 'interrupted'
-        ? { ...item, playback: 'interrupted' as const }
+        ? // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+          { ...item, playback: 'interrupted' as const }
         : item,
     ),
   };

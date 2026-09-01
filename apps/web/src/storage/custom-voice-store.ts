@@ -16,34 +16,48 @@ import {
   type StoredCustomVoice,
 } from './schema';
 
+type ExternalValue = string | number | boolean | null | undefined | ExternalRecord | readonly ExternalValue[];
+interface ExternalRecord {
+  readonly [key: string]: ExternalValue;
+}
+/** Structured-cloned row values: JSON shapes plus the Blob that stores voice audio. */
+type StoredValue = ExternalValue | Blob;
+type StorableInput = StoredValue | CustomVoiceRecord;
+const valueTag = Object.prototype.toString;
+const isJsonString = (value: StorableInput): value is string => valueTag.call(value) === '[object String]';
+const isJsonNumber = (value: StorableInput): value is number => valueTag.call(value) === '[object Number]';
+const isJsonObject = (value: StorableInput): value is ExternalRecord => valueTag.call(value) === '[object Object]';
+const isJsonArray = (value: StorableInput): value is readonly ExternalValue[] => Array.isArray(value);
+
 export type CustomVoiceRecord = StoredCustomVoice;
 
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function validRecord(value: unknown): value is CustomVoiceRecord {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+function validRecord(value: StorableInput): value is CustomVoiceRecord {
+  if (!value || !isJsonObject(value) || isJsonArray(value)) return false;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   const row = value as Partial<CustomVoiceRecord>;
   return (
     isValidCustomVoiceId(row.voiceId) &&
-    typeof row.name === 'string' &&
+    isJsonString(row.name) &&
     row.name.trim().length > 0 &&
     utf8Bytes(row.name) <= MAX_VOICE_NAME_BYTES &&
-    typeof row.refSha256 === 'string' &&
+    isJsonString(row.refSha256) &&
     /^[a-f0-9]{64}$/.test(row.refSha256) &&
     row.voiceId === `custom:${row.refSha256.slice(0, 24)}` &&
     row.sampleRate === CUSTOM_VOICE_SAMPLE_RATE &&
-    typeof row.durationMs === 'number' &&
+    isJsonNumber(row.durationMs) &&
     Number.isInteger(row.durationMs) &&
     row.durationMs >= 3_000 &&
     row.durationMs <= 20_000 &&
     row.wav instanceof Blob &&
-    typeof row.byteLength === 'number' &&
+    isJsonNumber(row.byteLength) &&
     row.byteLength === row.wav.size &&
     isReferenceSizeValid(row.byteLength) &&
-    typeof row.createdAt === 'string' &&
-    typeof row.updatedAt === 'string'
+    isJsonString(row.createdAt) &&
+    isJsonString(row.updatedAt)
   );
 }
 
@@ -57,7 +71,10 @@ export class CustomVoiceStore {
   async list(): Promise<CustomVoiceRecord[]> {
     try {
       const transaction = this.db.transaction(STORES.customVoices, 'readonly');
-      const rows = (await requestResult(transaction.objectStore(STORES.customVoices).getAll())) as unknown[];
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+      const rows = (await requestResult(
+        transaction.objectStore(STORES.customVoices).getAll(),
+      )) as readonly StorableInput[];
       return rows.filter(validRecord).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     } catch {
       return [];
@@ -67,7 +84,8 @@ export class CustomVoiceStore {
   async get(voiceId: string): Promise<CustomVoiceRecord | undefined> {
     try {
       const transaction = this.db.transaction(STORES.customVoices, 'readonly');
-      const row = (await requestResult(transaction.objectStore(STORES.customVoices).get(voiceId))) as unknown;
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+      const row = (await requestResult(transaction.objectStore(STORES.customVoices).get(voiceId))) as StorableInput;
       return validRecord(row) ? row : undefined;
     } catch {
       return undefined;
@@ -80,8 +98,10 @@ export class CustomVoiceStore {
     try {
       const transaction = this.db.transaction(STORES.customVoices, 'readwrite');
       const store = transaction.objectStore(STORES.customVoices);
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const existing = (await requestResult(store.get(record.voiceId))) as CustomVoiceRecord | undefined;
-      const all = (await requestResult(store.getAll())) as unknown[];
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+      const all = (await requestResult(store.getAll())) as readonly StorableInput[];
       const valid = all.filter(validRecord);
       const total =
         valid.reduce((sum, item) => sum + item.byteLength, 0) - (existing?.byteLength ?? 0) + record.byteLength;

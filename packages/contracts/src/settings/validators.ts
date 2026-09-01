@@ -21,67 +21,86 @@ import {
   type VoiceSpeedCapability,
 } from './types.js';
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
+function isNonEmptyString(cause: unknown): cause is string {
+  return cause !== null && String(cause) === cause && cause.length > 0;
 }
 
-function isFiniteString(value: unknown): value is string {
-  return typeof value === 'string';
+function isFiniteString(cause: unknown): cause is string {
+  return cause !== null && String(cause) === cause;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+type SettingsValue = string | number | boolean | null | SettingsValue[] | SettingsRecord;
+type SettingsRecord = { [key: string]: SettingsValue | undefined };
+
+function isPlainObject(cause: unknown): cause is SettingsRecord {
+  return cause !== null && Object(cause) === cause && !Array.isArray(cause);
 }
 
-function validateVoiceInfo(value: unknown): value is VoiceInfo {
+function isQwenVoiceLanguage(cause: string): cause is NonNullable<VoicePreference['language']> {
+  return QWEN_VOICE_LANGUAGES.some((language) => language === cause);
+}
+
+function isPlanningDepth(cause: string): cause is SessionPlanningRequest['depth'] {
+  return PLANNING_DEPTHS.some((depth) => depth === cause);
+}
+
+function isPiThinkingLevel(cause: string): cause is PiSettings['thinkingLevel'] {
+  return PI_THINKING_LEVELS.some((level) => level === cause);
+}
+
+function validateVoiceInfo(cause: unknown): cause is VoiceInfo {
   return (
-    isPlainObject(value) &&
-    isNonEmptyString(value.id) &&
-    isFiniteString(value.label) &&
-    Object.keys(value).every((key) => ['id', 'label'].includes(key))
+    isPlainObject(cause) &&
+    isNonEmptyString(cause.id) &&
+    isFiniteString(cause.label) &&
+    Object.keys(cause).every((key) => ['id', 'label'].includes(key))
   );
 }
 
-function isValidSpeedCapability(value: unknown): value is VoiceSpeedCapability {
-  if (!isPlainObject(value)) return false;
+function isValidSpeedCapability(cause: unknown): cause is VoiceSpeedCapability {
+  if (!isPlainObject(cause)) return false;
   return (
-    typeof value.supported === 'boolean' &&
-    typeof value.min === 'number' &&
-    Number.isFinite(value.min) &&
-    typeof value.max === 'number' &&
-    Number.isFinite(value.max) &&
-    typeof value.default === 'number' &&
-    Number.isFinite(value.default) &&
-    value.min >= MIN_VOICE_SPEED_MODIFIER &&
-    value.max <= MAX_VOICE_SPEED_MODIFIER &&
-    value.min <= value.max &&
-    value.default >= value.min &&
-    value.default <= value.max &&
-    Object.keys(value).every((key) => ['supported', 'min', 'max', 'default'].includes(key))
+    (cause.supported === true || cause.supported === false) &&
+    Number(cause.min) === cause.min &&
+    Number.isFinite(cause.min) &&
+    Number(cause.max) === cause.max &&
+    Number.isFinite(cause.max) &&
+    Number(cause.default) === cause.default &&
+    Number.isFinite(cause.default) &&
+    cause.min >= MIN_VOICE_SPEED_MODIFIER &&
+    cause.max <= MAX_VOICE_SPEED_MODIFIER &&
+    cause.min <= cause.max &&
+    cause.default >= cause.min &&
+    cause.default <= cause.max &&
+    Object.keys(cause).every((key) => ['supported', 'min', 'max', 'default'].includes(key))
   );
 }
 
-export function isValidVoiceCatalog(value: unknown): value is VoiceCatalog {
+export function isValidVoiceCatalog(cause: unknown): cause is VoiceCatalog {
+  if (!isPlainObject(cause) || !Array.isArray(cause.voices) || !cause.voices.every(validateVoiceInfo)) return false;
+  const voices: VoiceInfo[] = [];
+  for (const candidate of cause.voices) {
+    if (validateVoiceInfo(candidate)) voices.push(candidate);
+  }
+  const defaultVoiceId = cause.defaultVoiceId;
+  if (!isFiniteString(defaultVoiceId)) return false;
   return (
-    isPlainObject(value) &&
-    typeof value.catalogId === 'string' &&
-    value.catalogId.length > 0 &&
-    typeof value.backendId === 'string' &&
-    value.backendId.length > 0 &&
-    typeof value.modelId === 'string' &&
-    value.modelId.length > 0 &&
-    typeof value.runtimeConfigId === 'string' &&
-    value.runtimeConfigId.length > 0 &&
-    typeof value.revision === 'string' &&
-    value.revision.length > 0 &&
-    typeof value.defaultVoiceId === 'string' &&
-    Array.isArray(value.voices) &&
-    value.voices.length > 0 &&
-    value.voices.every(validateVoiceInfo) &&
-    value.voices.some((voice) => voice.id === value.defaultVoiceId) &&
-    new Set(value.voices.map((voice) => voice.id)).size === value.voices.length &&
-    (value.speed === undefined || isValidSpeedCapability(value.speed)) &&
-    Object.keys(value).every((key) =>
+    voices.length === cause.voices.length &&
+    isFiniteString(cause.catalogId) &&
+    cause.catalogId.length > 0 &&
+    isFiniteString(cause.backendId) &&
+    cause.backendId.length > 0 &&
+    isFiniteString(cause.modelId) &&
+    cause.modelId.length > 0 &&
+    isFiniteString(cause.runtimeConfigId) &&
+    cause.runtimeConfigId.length > 0 &&
+    isFiniteString(cause.revision) &&
+    cause.revision.length > 0 &&
+    voices.length > 0 &&
+    voices.some((voice) => voice.id === defaultVoiceId) &&
+    new Set(voices.map((voice) => voice.id)).size === voices.length &&
+    (cause.speed === undefined || isValidSpeedCapability(cause.speed)) &&
+    Object.keys(cause).every((key) =>
       [
         'catalogId',
         'backendId',
@@ -96,150 +115,143 @@ export function isValidVoiceCatalog(value: unknown): value is VoiceCatalog {
   );
 }
 
-export function isValidTtsModelDescriptor(value: unknown): value is TtsModelDescriptor {
+export function isValidTtsModelDescriptor(cause: unknown): cause is TtsModelDescriptor {
   if (
-    !isPlainObject(value) ||
-    typeof value.backendId !== 'string' ||
-    value.backendId.length === 0 ||
-    typeof value.modelId !== 'string' ||
-    value.modelId.length === 0 ||
-    typeof value.label !== 'string' ||
-    value.label.length === 0 ||
-    (value.status !== 'ready' && value.status !== 'unavailable') ||
-    (value.speed !== undefined && !isValidSpeedCapability(value.speed)) ||
-    (value.voiceCatalog !== undefined && !isValidVoiceCatalog(value.voiceCatalog)) ||
-    (value.voiceCatalog !== undefined &&
-      (value.voiceCatalog.backendId !== value.backendId || value.voiceCatalog.modelId !== value.modelId)) ||
-    (value.reason !== undefined && typeof value.reason !== 'string') ||
-    (value.fallback !== undefined &&
-      (!isPlainObject(value.fallback) ||
-        typeof value.fallback.backendId !== 'string' ||
-        typeof value.fallback.modelId !== 'string'))
+    !isPlainObject(cause) ||
+    !isFiniteString(cause.backendId) ||
+    cause.backendId.length === 0 ||
+    !isFiniteString(cause.modelId) ||
+    cause.modelId.length === 0 ||
+    !isFiniteString(cause.label) ||
+    cause.label.length === 0 ||
+    (cause.status !== 'ready' && cause.status !== 'unavailable') ||
+    (cause.speed !== undefined && !isValidSpeedCapability(cause.speed)) ||
+    (cause.voiceCatalog !== undefined && !isValidVoiceCatalog(cause.voiceCatalog)) ||
+    (cause.voiceCatalog !== undefined &&
+      (cause.voiceCatalog.backendId !== cause.backendId || cause.voiceCatalog.modelId !== cause.modelId)) ||
+    (cause.reason !== undefined && !isFiniteString(cause.reason)) ||
+    (cause.fallback !== undefined &&
+      (!isPlainObject(cause.fallback) ||
+        !isFiniteString(cause.fallback.backendId) ||
+        !isFiniteString(cause.fallback.modelId)))
   )
     return false;
-  if (value.status === 'ready' && value.voiceCatalog === undefined) return false;
-  return Object.keys(value).every((key) =>
+  if (cause.status === 'ready' && cause.voiceCatalog === undefined) return false;
+  return Object.keys(cause).every((key) =>
     ['backendId', 'modelId', 'label', 'status', 'speed', 'voiceCatalog', 'reason', 'fallback'].includes(key),
   );
 }
 
-export function isValidVoicePreference(value: unknown): value is VoicePreference {
+export function isValidVoicePreference(cause: unknown): cause is VoicePreference {
   return (
-    isPlainObject(value) &&
-    isNonEmptyString(value.catalogId) &&
-    isNonEmptyString(value.voiceId) &&
-    typeof value.speedModifier === 'number' &&
-    Number.isFinite(value.speedModifier) &&
-    value.speedModifier >= MIN_VOICE_SPEED_MODIFIER &&
-    value.speedModifier <= MAX_VOICE_SPEED_MODIFIER &&
-    (value.tonePrompt === undefined ||
-      (isNonEmptyString(value.tonePrompt) &&
-        new TextEncoder().encode(value.tonePrompt).length <= MAX_VOICE_TONE_PROMPT_BYTES)) &&
-    (value.language === undefined ||
-      (typeof value.language === 'string' && (QWEN_VOICE_LANGUAGES as readonly string[]).includes(value.language))) &&
-    (value.backendId === undefined || isNonEmptyString(value.backendId)) &&
-    (value.modelId === undefined || isNonEmptyString(value.modelId)) &&
-    ((value.backendId === undefined && value.modelId === undefined) ||
-      (isNonEmptyString(value.backendId) && isNonEmptyString(value.modelId)))
+    isPlainObject(cause) &&
+    isNonEmptyString(cause.catalogId) &&
+    isNonEmptyString(cause.voiceId) &&
+    Number(cause.speedModifier) === cause.speedModifier &&
+    Number.isFinite(cause.speedModifier) &&
+    cause.speedModifier >= MIN_VOICE_SPEED_MODIFIER &&
+    cause.speedModifier <= MAX_VOICE_SPEED_MODIFIER &&
+    (cause.tonePrompt === undefined ||
+      (isNonEmptyString(cause.tonePrompt) &&
+        new TextEncoder().encode(cause.tonePrompt).length <= MAX_VOICE_TONE_PROMPT_BYTES)) &&
+    (cause.language === undefined || (isFiniteString(cause.language) && isQwenVoiceLanguage(cause.language))) &&
+    (cause.backendId === undefined || isNonEmptyString(cause.backendId)) &&
+    (cause.modelId === undefined || isNonEmptyString(cause.modelId)) &&
+    ((cause.backendId === undefined && cause.modelId === undefined) ||
+      (isNonEmptyString(cause.backendId) && isNonEmptyString(cause.modelId)))
   );
 }
 
 /** Normalize a persisted or wire preference, retaining compatibility with pre-speed settings. */
-export function normalizeVoicePreference(value: unknown): VoicePreference | undefined {
-  if (!isPlainObject(value) || !isNonEmptyString(value.catalogId) || !isNonEmptyString(value.voiceId)) return undefined;
-  const speedModifier = value.speedModifier === undefined ? DEFAULT_VOICE_SPEED_MODIFIER : value.speedModifier;
-  if (typeof speedModifier !== 'number') return undefined;
-  const normalized: VoicePreference = {
-    catalogId: value.catalogId,
-    voiceId: value.voiceId,
-    speedModifier,
-    ...(typeof value.tonePrompt === 'string' && value.tonePrompt.trim() ? { tonePrompt: value.tonePrompt.trim() } : {}),
-    ...(typeof value.language === 'string' && (QWEN_VOICE_LANGUAGES as readonly string[]).includes(value.language)
-      ? { language: value.language as Exclude<VoicePreference['language'], undefined> }
-      : {}),
-    ...(value.backendId === undefined && value.modelId === undefined
-      ? {}
-      : { backendId: value.backendId as string, modelId: value.modelId as string }),
-  };
+export function normalizeVoicePreference(cause: unknown): VoicePreference | undefined {
+  if (!isPlainObject(cause) || !isNonEmptyString(cause.catalogId) || !isNonEmptyString(cause.voiceId)) return undefined;
+  const speedModifier = cause.speedModifier === undefined ? DEFAULT_VOICE_SPEED_MODIFIER : cause.speedModifier;
+  if (Number(speedModifier) !== speedModifier) return undefined;
+  const normalized: VoicePreference = { catalogId: cause.catalogId, voiceId: cause.voiceId, speedModifier };
+  if (isFiniteString(cause.tonePrompt) && cause.tonePrompt.trim()) normalized.tonePrompt = cause.tonePrompt.trim();
+  if (isFiniteString(cause.language) && isQwenVoiceLanguage(cause.language)) normalized.language = cause.language;
+  const hasBackendId = isNonEmptyString(cause.backendId);
+  const hasModelId = isNonEmptyString(cause.modelId);
+  if (hasBackendId !== hasModelId) return undefined;
+  if (isNonEmptyString(cause.backendId) && isNonEmptyString(cause.modelId)) {
+    normalized.backendId = cause.backendId;
+    normalized.modelId = cause.modelId;
+  }
   return isValidVoicePreference(normalized) ? normalized : undefined;
 }
 
-export function isValidSessionPlanningRequest(value: unknown): value is SessionPlanningRequest {
+export function isValidSessionPlanningRequest(cause: unknown): cause is SessionPlanningRequest {
   if (
-    !isPlainObject(value) ||
-    (value.enabled !== undefined && value.enabled !== true) ||
-    typeof value.topic !== 'string' ||
-    value.topic.trim().length === 0 ||
-    new TextEncoder().encode(value.topic).length > MAX_PLANNING_TOPIC_BYTES ||
-    typeof value.depth !== 'string' ||
-    !(PLANNING_DEPTHS as readonly string[]).includes(value.depth)
+    !isPlainObject(cause) ||
+    (cause.enabled !== undefined && cause.enabled !== true) ||
+    !isFiniteString(cause.topic) ||
+    cause.topic.trim().length === 0 ||
+    new TextEncoder().encode(cause.topic).length > MAX_PLANNING_TOPIC_BYTES ||
+    !isFiniteString(cause.depth) ||
+    !isPlanningDepth(cause.depth)
   )
     return false;
   if (
-    value.notes !== undefined &&
-    (typeof value.notes !== 'string' || new TextEncoder().encode(value.notes).length > MAX_PLANNING_NOTES_BYTES)
+    cause.notes !== undefined &&
+    (!isFiniteString(cause.notes) || new TextEncoder().encode(cause.notes).length > MAX_PLANNING_NOTES_BYTES)
   )
     return false;
-  if (value.reuse !== undefined && typeof value.reuse !== 'boolean') return false;
-  return Object.keys(value).every((key) => ['enabled', 'topic', 'depth', 'notes', 'reuse'].includes(key));
+  if (cause.reuse !== undefined && cause.reuse !== true && cause.reuse !== false) return false;
+  return Object.keys(cause).every((key) => ['enabled', 'topic', 'depth', 'notes', 'reuse'].includes(key));
 }
 
-export function normalizeSessionPlanningRequest(value: unknown): SessionPlanningRequest | undefined {
-  if (!isValidSessionPlanningRequest(value)) return undefined;
-  const topic = value.topic.trim();
-  const notes = value.notes?.trim();
-  return {
-    ...(value.enabled === true ? { enabled: true as const } : {}),
-    topic,
-    depth: value.depth,
-    ...(notes ? { notes } : {}),
-    ...(value.reuse === true ? { reuse: true } : {}),
-  };
+export function normalizeSessionPlanningRequest(cause: unknown): SessionPlanningRequest | undefined {
+  if (!isValidSessionPlanningRequest(cause)) return undefined;
+  const topic = cause.topic.trim();
+  const notes = cause.notes?.trim();
+  const normalized: SessionPlanningRequest = { topic, depth: cause.depth };
+  if (cause.enabled === true) normalized.enabled = true;
+  if (notes) normalized.notes = notes;
+  if (cause.reuse === true) normalized.reuse = true;
+  return normalized;
 }
 
-export function isValidPiSettings(value: unknown): value is PiSettings {
+export function isValidPiSettings(cause: unknown): cause is PiSettings {
   if (
-    !isPlainObject(value) ||
-    typeof value.model !== 'string' ||
-    value.model.length === 0 ||
-    value.model.startsWith('-') ||
-    new TextEncoder().encode(value.model).length > MAX_PI_MODEL_BYTES ||
-    /\s/u.test(value.model)
+    !isPlainObject(cause) ||
+    !isFiniteString(cause.model) ||
+    cause.model.length === 0 ||
+    cause.model.startsWith('-') ||
+    new TextEncoder().encode(cause.model).length > MAX_PI_MODEL_BYTES ||
+    /\s/u.test(cause.model)
   )
     return false;
-  return (
-    typeof value.thinkingLevel === 'string' && (PI_THINKING_LEVELS as readonly string[]).includes(value.thinkingLevel)
-  );
+  return isFiniteString(cause.thinkingLevel) && isPiThinkingLevel(cause.thinkingLevel);
 }
 
-export function normalizePiSettings(value: unknown): PiSettings {
-  return isValidPiSettings(value)
-    ? { model: value.model, thinkingLevel: value.thinkingLevel }
+export function normalizePiSettings(cause: unknown): PiSettings {
+  return isValidPiSettings(cause)
+    ? { model: cause.model, thinkingLevel: cause.thinkingLevel }
     : { ...DEFAULT_PI_SETTINGS };
 }
 
-export function normalizeTtsModel(value: unknown): { backendId: string; modelId: string } {
-  if (isPlainObject(value) && isNonEmptyString(value.backendId) && isNonEmptyString(value.modelId)) {
-    return { backendId: value.backendId, modelId: value.modelId };
+export function normalizeTtsModel(cause: unknown): Pick<TtsModelDescriptor, 'backendId' | 'modelId'> {
+  if (isPlainObject(cause) && isNonEmptyString(cause.backendId) && isNonEmptyString(cause.modelId)) {
+    return { backendId: cause.backendId, modelId: cause.modelId };
   }
   return { ...DEFAULT_TTS_MODEL };
 }
 
-export function normalizeVoiceSpeedCapability(value: unknown): VoiceSpeedCapability {
-  return isValidSpeedCapability(value) ? value : DEFAULT_VOICE_SPEED_CAPABILITY;
+export function normalizeVoiceSpeedCapability(cause: unknown): VoiceSpeedCapability {
+  return isValidSpeedCapability(cause) ? cause : DEFAULT_VOICE_SPEED_CAPABILITY;
 }
 
 export function isVoiceInCatalog(catalog: VoiceCatalog, voiceId: string): boolean {
   return catalog.voices.some((voice) => voice.id === voiceId);
 }
 
-export function isValidSessionSettingsSnapshot(value: unknown): value is SessionSettingsSnapshot {
-  if (!isPlainObject(value) || value.version !== 1) return false;
-  if (typeof value.persona !== 'string') return false;
+export function isValidSessionSettingsSnapshot(cause: unknown): cause is SessionSettingsSnapshot {
+  if (!isPlainObject(cause) || cause.version !== 1) return false;
+  if (!isFiniteString(cause.persona)) return false;
   try {
-    normalizePersona(value.persona);
+    normalizePersona(cause.persona);
   } catch {
     return false;
   }
-  return normalizeVoicePreference(value.voice) !== undefined && (value.pi === undefined || isValidPiSettings(value.pi));
+  return normalizeVoicePreference(cause.voice) !== undefined && (cause.pi === undefined || isValidPiSettings(cause.pi));
 }

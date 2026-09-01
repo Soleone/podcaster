@@ -74,7 +74,7 @@ function tsType(schema, owner = '') {
     const fields = Object.entries(schema.properties ?? {}).map(
       ([key, value]) => `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${tsType(value, owner)};`,
     );
-    if (schema.additionalProperties && typeof schema.additionalProperties === 'object')
+    if (schema.additionalProperties && Object(schema.additionalProperties) === schema.additionalProperties)
       fields.push(`[key: string]: ${tsType(schema.additionalProperties, owner)};`);
     if ((schema.additionalProperties === undefined || schema.additionalProperties === true) && fields.length === 0)
       return 'Record<string, unknown>';

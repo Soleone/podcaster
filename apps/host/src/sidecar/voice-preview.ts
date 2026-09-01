@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { decodeBinaryAudioFrame, joinPreviewPhrases } from '@app/contracts';
-import { AudioClient } from './AudioClient.js';
+import { AudioClient, type AudioClientVoiceSelection } from './AudioClient.js';
 import type { SidecarProcess } from './process.js';
 
 const MAX_PAYLOAD = 64 * 1024;
@@ -46,21 +46,22 @@ export async function synthesizeVoicePreview(
   const onExternalAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onExternalAbort, { once: true });
   const chunks: Int16Array[] = [];
+  const selection: AudioClientVoiceSelection = {
+    catalogId: input.catalogId,
+    voiceId: input.voiceId,
+  };
+  if (input.speedModifier !== undefined) selection.speedModifier = input.speedModifier;
+  if (input.tonePrompt) selection.tonePrompt = input.tonePrompt;
+  if (input.language) selection.language = input.language;
+  if (input.backendId !== undefined) selection.backendId = input.backendId;
+  if (input.modelId !== undefined) selection.modelId = input.modelId;
   const client = new AudioClient(
     sidecar,
     {},
     (encoded) => {
       chunks.push(decodeBinaryAudioFrame(encoded, MAX_FRAME_PAYLOAD).pcm16);
     },
-    {
-      catalogId: input.catalogId,
-      voiceId: input.voiceId,
-      ...(input.speedModifier !== undefined ? { speedModifier: input.speedModifier } : {}),
-      ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}),
-      ...(input.language ? { language: input.language } : {}),
-      ...(input.backendId !== undefined ? { backendId: input.backendId } : {}),
-      ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
-    },
+    selection,
   );
   try {
     await client.connect();

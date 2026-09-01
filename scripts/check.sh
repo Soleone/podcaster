@@ -55,6 +55,7 @@ if any(path.startswith("/") for path in meta["sourcePaths"]):
     raise SystemExit("fixture sourcePaths must be repository-relative")
 PY
 corepack pnpm format:check
+corepack pnpm lint
 # Every job below reads the generated contracts after the freshness check. The
 # host test builds its own web/contract artifacts, so the independent test jobs can
 # run together instead of paying each toolchain's startup cost serially.

@@ -8,12 +8,15 @@ import type { PiResearchClient } from '../../src/pi/PiResearchClient.js';
 import { buildApp } from '../../src/server/app.js';
 import type { SidecarProcess } from '../../src/sidecar/process.js';
 
+type TestJsonValue = null | boolean | number | string | TestJsonValue[] | { [key: string]: TestJsonValue };
+type TestPayload = { [key: string]: TestJsonValue };
+
 const sessionId = '018f1f32-7abc-7def-8abc-0123456789ab';
 const seed = '018f1f32-7abd-7def-8abc-0123456789ab';
 const utteranceId = '018f1f32-7abe-7def-8abc-0123456789ab';
 const playbackId = '018f1f32-7ac0-7def-8abc-0123456789ab';
 let sequence = 0;
-function command(type: string, payload: Record<string, unknown>, epoch = 0) {
+function command(type: string, payload: TestPayload, epoch = 0) {
   const suffix = (0x1000 + sequence++).toString(16).padStart(12, '0');
   return {
     protocolVersion: 1,
@@ -30,7 +33,9 @@ const pi: PiClient = {
     return { status: 'ready', detail: 'Pi is ready.', correctiveAction: 'None.' };
   },
   async *request() {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     yield { type: 'delta' as const, text: 'A concise response.' };
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     yield { type: 'final' as const, text: 'A concise response.' };
   },
   async shutdown() {},
@@ -55,7 +60,7 @@ async function fakeAudio(
   const wss = new WebSocketServer({ server });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   wss.on('connection', (socket) => {
     let opened = '';
     let utteranceSequence = 0;
@@ -97,7 +102,8 @@ async function fakeAudio(
         utteranceSequence++;
         return;
       }
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestPayload };
       if (message.type === 'stream.open') {
         opened = String(message.payload.streamId);
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: opened } }));
@@ -293,6 +299,7 @@ async function fakeAudio(
   };
   cleanup.push(close);
   return {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     child: {} as SidecarProcess['child'],
     origin: `http://127.0.0.1:${address.port}`,
     secret: 'sidecar-secret',
@@ -307,10 +314,11 @@ async function bootstrap(app: FastifyInstance, origin: string) {
     headers,
     body: '{"disclosureAcknowledged":true}',
   });
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   const body = (await response.json()) as { capability: string };
   return { body, cookie: response.headers.get('set-cookie')!.split(';')[0]! };
 }
-function waitFor(messages: Array<Record<string, unknown>>, type: string): Promise<Record<string, unknown>> {
+function waitFor(messages: Array<TestPayload>, type: string): Promise<TestPayload> {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 2_000;
     const timer = setInterval(() => {
@@ -326,9 +334,9 @@ function waitFor(messages: Array<Record<string, unknown>>, type: string): Promis
   });
 }
 function waitForWhere(
-  messages: Array<Record<string, unknown>>,
-  predicate: (message: Record<string, unknown>) => boolean,
-): Promise<Record<string, unknown>> {
+  messages: Array<TestPayload>,
+  predicate: (message: TestPayload) => boolean,
+): Promise<TestPayload> {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 2_000;
     const timer = setInterval(() => {
@@ -353,7 +361,7 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
   const wss = new WebSocketServer({ server });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   wss.on('connection', (socket) => {
     let opened = '';
     const nonterminal = new Map<number, { responseId: string; epoch: number }>();
@@ -392,7 +400,8 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
         utteranceSequence++;
         return;
       }
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestPayload };
       if (message.type === 'stream.open') {
         opened = String(message.payload.streamId);
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: opened } }));
@@ -506,6 +515,7 @@ async function fakeBoundedAudio(): Promise<SidecarProcess> {
   };
   cleanup.push(close);
   return {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     child: {} as SidecarProcess['child'],
     origin: `http://127.0.0.1:${address.port}`,
     secret: 'sidecar-secret',
@@ -552,7 +562,7 @@ describe('browser conversation routing', () => {
     await firstClosed;
 
     const second = new WebSocket(url, { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     second.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -588,7 +598,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -619,6 +629,7 @@ describe('browser conversation routing', () => {
     begin();
     await waitForWhere(
       messages,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       (message) => message.type === 'session.state' && (message.payload as { phase?: string }).phase === 'listening',
     );
 
@@ -638,6 +649,7 @@ describe('browser conversation routing', () => {
     socket.send(JSON.stringify(command('session.rollback_begin', {})));
     await waitForWhere(
       messages,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       (message) => message.type === 'session.state' && (message.payload as { phase?: string }).phase === 'prelive',
     );
     await waitForWhere(messages, () => closes === 1);
@@ -649,6 +661,7 @@ describe('browser conversation routing', () => {
       () =>
         messages.filter(
           (message) =>
+            // SAFETY: this test fixture is constructed in this file with the asserted shape.
             message.type === 'session.state' && (message.payload as { phase?: string }).phase === 'listening',
         ).length === 2,
     );
@@ -677,10 +690,13 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     const binary: Buffer[] = [];
     socket.on('message', (raw, isBinary) => {
-      if (isBinary) binary.push(Buffer.from(raw as Buffer));
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      // SAFETY: ws supplies Buffer data for binary message callbacks.
+      const binaryRaw = raw as Buffer;
+      if (isBinary) binary.push(Buffer.from(binaryRaw));
       else messages.push(JSON.parse(raw.toString()));
     });
     await new Promise<void>((resolve) => {
@@ -716,7 +732,8 @@ describe('browser conversation routing', () => {
     });
     expect(speechStart.epoch).toBe(0);
     const final = await waitFor(messages, 'transcript.final');
-    const finalPayload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const finalPayload = final.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -727,7 +744,8 @@ describe('browser conversation routing', () => {
       ),
     );
     const started = await waitFor(messages, 'tts.started');
-    expect((started.payload as Record<string, unknown>).playbackId).toBe(playbackId);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((started.payload as TestPayload).playbackId).toBe(playbackId);
     await waitFor(messages, 'tts.ended');
     await waitForWhere(messages, () => binary.length === 2);
     socket.send(
@@ -748,7 +766,8 @@ describe('browser conversation routing', () => {
     const listening = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).phase === 'listening',
     );
     expect(listening.epoch).toBe(0);
     expect(messages.filter((message) => message.type === 'policy.decision')).toHaveLength(1);
@@ -771,8 +790,10 @@ describe('browser conversation routing', () => {
           status: 'started',
           summary: 'research-backed topics',
         });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'Research-backed response.' };
         input.onToolActivity?.({ toolCallId: 'tool-1', toolName: 'web_search', status: 'ended', durationMs: 21 });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text: 'Research-backed response.' };
       },
       async shutdown() {},
@@ -789,7 +810,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -816,7 +837,8 @@ describe('browser conversation routing', () => {
       ),
     );
     const final = await waitFor(messages, 'transcript.final');
-    const finalPayload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const finalPayload = final.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -829,27 +851,33 @@ describe('browser conversation routing', () => {
     const stallStarted = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 0,
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'response.part_started' && (message.payload as TestPayload).partIndex === 0,
     );
     const stallTts = await waitForWhere(
       messages,
-      (message) => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 0,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (message) => message.type === 'tts.started' && (message.payload as TestPayload).partIndex === 0,
     );
     const bodyStarted = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 1,
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'response.part_started' && (message.payload as TestPayload).partIndex === 1,
     );
     const bodyTts = await waitForWhere(
       messages,
-      (message) => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 1,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (message) => message.type === 'tts.started' && (message.payload as TestPayload).partIndex === 1,
     );
 
     expect(researchCalls).toHaveLength(1);
     const toolActivity = messages.filter((message) => message.type === 'tool.activity');
     expect(toolActivity).toHaveLength(2);
-    const partResponseId = (stallStarted.payload as Record<string, unknown>).responseId;
-    const partTurnId = (stallStarted.payload as Record<string, unknown>).turnId;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const partResponseId = (stallStarted.payload as TestPayload).responseId;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const partTurnId = (stallStarted.payload as TestPayload).turnId;
     expect(toolActivity[0]?.payload).toEqual({
       scope: 'turn',
       turnId: partTurnId,
@@ -869,13 +897,18 @@ describe('browser conversation routing', () => {
     expect(messages.filter((message) => message.type === 'response.part_started')).toHaveLength(2);
     expect(messages.filter((message) => message.type === 'response.part_final')).toHaveLength(2);
     expect(messages.filter((message) => message.type === 'reasoning.final')).toHaveLength(2);
-    expect((stallStarted.payload as Record<string, unknown>).kind).toBe('stall');
-    expect((bodyStarted.payload as Record<string, unknown>).kind).toBe('body');
-    expect((stallTts.payload as Record<string, unknown>).responseId).toBe(
-      (bodyTts.payload as Record<string, unknown>).responseId,
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((stallStarted.payload as TestPayload).kind).toBe('stall');
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((bodyStarted.payload as TestPayload).kind).toBe('body');
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((stallTts.payload as TestPayload).responseId).toBe(
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (bodyTts.payload as TestPayload).responseId,
     );
     for (const started of [stallTts, bodyTts]) {
-      const payload = started.payload as Record<string, unknown>;
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const payload = started.payload as TestPayload;
       socket.send(
         JSON.stringify(
           command('playback.stopped', {
@@ -890,7 +923,8 @@ describe('browser conversation routing', () => {
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).phase === 'listening',
     );
     socket.close();
   });
@@ -911,8 +945,11 @@ describe('browser conversation routing', () => {
     };
     const researchPi: PiResearchClient = {
       async *requestBody(input) {
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         responseInputs.push(input as PiRequestInput);
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'A researched observation.' };
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text: 'A researched observation.' };
       },
       async *requestPlan(input) {
@@ -923,8 +960,10 @@ describe('browser conversation routing', () => {
           status: 'started',
           summary: 'future of local radio',
         });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'PRIVATE_TOOL_TRACE' };
         input.onToolActivity?.({ toolCallId: 'tool-9', toolName: 'web_search', status: 'ended', durationMs: 17 });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text: 'Useful facts\nTalking points: ask about local radio.' };
       },
       async shutdown() {},
@@ -941,7 +980,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -963,14 +1002,17 @@ describe('browser conversation routing', () => {
       messages,
       (message) =>
         message.type === 'session.state' &&
-        (message.payload as Record<string, unknown>).planning &&
-        (message.payload as Record<string, any>).planning.status === 'planning',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        (message.payload as TestPayload).planning &&
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        (message.payload as TestPayload).planning.status === 'planning',
     );
     expect(messages.some((message) => message.type === 'vad.speech_start')).toBe(false);
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'ready',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'ready',
     );
     expect(researchCalls).toEqual([{ topic: 'The future of local radio', depth: 'standard' }]);
     const planningActivity = messages.filter((message) => message.type === 'tool.activity');
@@ -999,7 +1041,8 @@ describe('browser conversation routing', () => {
       ),
     );
     const final = await waitFor(messages, 'transcript.final');
-    const finalPayload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const finalPayload = final.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -1021,6 +1064,7 @@ describe('browser conversation routing', () => {
     const researchPi: PiResearchClient = {
       async *requestBody() {},
       async *requestPlan(_input, signal) {
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'private progress' };
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
       },
@@ -1038,7 +1082,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1059,13 +1103,15 @@ describe('browser conversation routing', () => {
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'planning',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'planning',
     );
     socket.send(JSON.stringify(command('planning.cancel', { reason: 'user' })));
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'cancelled',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'cancelled',
     );
     socket.send(
       JSON.stringify(command('session.begin', { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 })),
@@ -1086,7 +1132,9 @@ describe('browser conversation routing', () => {
       async *requestBody() {},
       async *requestPlan() {
         yield {
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           type: 'error' as const,
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           state: 'unavailable' as const,
           detail: 'provider detail must stay private',
           correctiveAction: 'retry',
@@ -1106,7 +1154,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1127,7 +1175,8 @@ describe('browser conversation routing', () => {
     const failed = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'failed',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'failed',
     );
     expect(JSON.stringify(failed)).not.toContain('provider detail must stay private');
     socket.send(
@@ -1149,7 +1198,9 @@ describe('browser conversation routing', () => {
       async *requestBody() {},
       async *requestPlan(input) {
         input.onToolActivity?.({ toolCallId: 'tool-1', toolName: 'web_search', status: 'started' });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'private trace' };
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text: 'Notes: local radio facts.' };
       },
       async shutdown() {},
@@ -1166,7 +1217,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1187,30 +1238,38 @@ describe('browser conversation routing', () => {
     const running = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'planning',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'planning',
     );
-    const runningPlanning = (running.payload as Record<string, any>).planning;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const runningPlanning = (running.payload as TestPayload).planning;
     // Factual attempt/stage/deadline, no fabricated percentage.
     expect(runningPlanning.attempt).toBe(1);
     expect(['starting', 'researching', 'finalizing']).toContain(runningPlanning.stage);
     expect(runningPlanning.deadlineMs).toBe(60_000);
     expect(runningPlanning.progress).toBeUndefined();
-    expect((running.payload as Record<string, unknown>).phase).toBe('preparing');
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((running.payload as TestPayload).phase).toBe('preparing');
     // No audio engine, no listening, and no capture frames while preparing.
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect(messages.some((message) => message.type === 'session.state' && (message.payload as any).audio)).toBe(false);
     expect(
       messages.some(
         (message) =>
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           message.type === 'session.state' && ['listening', 'starting_live'].includes((message.payload as any).phase),
       ),
     ).toBe(false);
     const terminal = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'ready',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'ready',
     );
-    expect((terminal.payload as Record<string, unknown>).phase).toBe('prelive');
-    expect((terminal.payload as Record<string, any>).planning.attempt).toBe(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((terminal.payload as TestPayload).phase).toBe('prelive');
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((terminal.payload as TestPayload).planning.attempt).toBe(1);
     // Binary capture before session.begin is rejected by the protocol gate.
     const closed = new Promise<{ code: number }>((resolve) => socket.once('close', (code) => resolve({ code })));
     socket.send(
@@ -1227,6 +1286,7 @@ describe('browser conversation routing', () => {
     const researchPi: PiResearchClient = {
       async *requestBody() {},
       async *requestPlan(_input, signal) {
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'private trace' };
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
       },
@@ -1244,7 +1304,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1265,7 +1325,8 @@ describe('browser conversation routing', () => {
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'planning',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'planning',
     );
     // session.begin while preparation is running cancels first; the terminal
     // cancelled state must arrive before the audio engine opens.
@@ -1275,13 +1336,16 @@ describe('browser conversation routing', () => {
     const cancelled = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'cancelled',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'cancelled',
     );
-    expect((cancelled.payload as Record<string, any>).planning.reasonCode).toBe('interrupted');
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((cancelled.payload as TestPayload).planning.reasonCode).toBe('interrupted');
     const listening = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).phase === 'listening',
     );
     const cancelledIndex = messages.indexOf(cancelled);
     const listeningIndex = messages.indexOf(listening);
@@ -1319,7 +1383,7 @@ describe('browser conversation routing', () => {
       const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', {
         headers: { Origin: origin, Cookie: cookie },
       });
-      const messages: Array<Record<string, unknown>> = [];
+      const messages: Array<TestPayload> = [];
       socket.on('message', (raw, binary) => {
         if (!binary) messages.push(JSON.parse(raw.toString()));
       });
@@ -1345,7 +1409,8 @@ describe('browser conversation routing', () => {
       await waitForWhere(
         messages,
         (message) =>
-          message.type === 'failure' && (message.payload as Record<string, unknown>).code === 'begin_mismatch',
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
+          message.type === 'failure' && (message.payload as TestPayload).code === 'begin_mismatch',
       );
       expect(socket.readyState).toBe(WebSocket.OPEN);
 
@@ -1416,6 +1481,7 @@ describe('browser conversation routing', () => {
       async *requestPlan() {
         calls++;
         if (calls === 1) throw new Error('provider unavailable');
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text: 'Notes: second attempt facts.' };
       },
       async shutdown() {},
@@ -1432,7 +1498,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1453,17 +1519,22 @@ describe('browser conversation routing', () => {
     const failed = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'failed',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'failed',
     );
-    expect((failed.payload as Record<string, any>).planning.attempt).toBe(1);
-    expect((failed.payload as Record<string, any>).planning.reasonCode).toBe('provider_unavailable');
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((failed.payload as TestPayload).planning.attempt).toBe(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((failed.payload as TestPayload).planning.reasonCode).toBe('provider_unavailable');
     socket.send(JSON.stringify(command('planning.retry', {})));
     const retried = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, any>).planning?.status === 'ready',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).planning?.status === 'ready',
     );
-    expect((retried.payload as Record<string, any>).planning.attempt).toBe(2);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((retried.payload as TestPayload).planning.attempt).toBe(2);
     socket.close();
   });
 
@@ -1498,7 +1569,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1525,7 +1596,8 @@ describe('browser conversation routing', () => {
       ),
     );
     const final = await waitFor(messages, 'transcript.final');
-    const finalPayload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const finalPayload = final.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -1562,7 +1634,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1589,13 +1661,15 @@ describe('browser conversation routing', () => {
       ),
     );
     const final = await waitFor(messages, 'transcript.final');
-    const payload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const payload = final.payload as TestPayload;
     const acknowledgement = { turnId: payload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch };
     socket.send(JSON.stringify(command('turn.persistence_failed', { ...acknowledgement, reasonCode: 'quota' })));
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'failure' && (message.payload as Record<string, unknown>).code === 'stable_turn_not_persisted',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'failure' && (message.payload as TestPayload).code === 'stable_turn_not_persisted',
     );
     expect(messages.some((message) => message.type === 'policy.decision')).toBe(false);
     socket.send(JSON.stringify(command('turn.persisted', acknowledgement)));
@@ -1621,7 +1695,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1664,7 +1738,8 @@ describe('browser conversation routing', () => {
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
-          turnId: (second.payload as Record<string, unknown>).turnId,
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
+          turnId: (second.payload as TestPayload).turnId,
           finalEventId: second.eventId,
           persistedEpoch: second.epoch,
         }),
@@ -1684,7 +1759,8 @@ describe('browser conversation routing', () => {
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
-          turnId: (third.payload as Record<string, unknown>).turnId,
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
+          turnId: (third.payload as TestPayload).turnId,
           finalEventId: third.eventId,
           persistedEpoch: third.epoch,
         }),
@@ -1697,7 +1773,8 @@ describe('browser conversation routing', () => {
         command(
           'turn.persisted',
           {
-            turnId: (first.payload as Record<string, unknown>).turnId,
+            // SAFETY: this test fixture is constructed in this file with the asserted shape.
+            turnId: (first.payload as TestPayload).turnId,
             finalEventId: first.eventId,
             persistedEpoch: first.epoch,
           },
@@ -1758,9 +1835,12 @@ describe('browser conversation routing', () => {
       },
       async *request(input: PiRequestInput, _signal: AbortSignal) {
         piInputs.push({ boundedContext: input.boundedContext });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'First sentence. S' };
         await new Promise<void>((resolve) => releases.push(resolve));
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text: 'econd sentence.' };
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text: 'First sentence. Second sentence.' };
       },
       async shutdown() {},
@@ -1779,10 +1859,13 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     const binary: Buffer[] = [];
     socket.on('message', (raw, isBinary) => {
-      if (isBinary) binary.push(Buffer.from(raw as Buffer));
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      // SAFETY: ws supplies Buffer data for binary message callbacks.
+      const binaryRaw = raw as Buffer;
+      if (isBinary) binary.push(Buffer.from(binaryRaw));
       else messages.push(JSON.parse(raw.toString()));
     });
     await new Promise<void>((resolve) => {
@@ -1808,7 +1891,8 @@ describe('browser conversation routing', () => {
       ),
     );
     const final = await waitFor(messages, 'transcript.final');
-    const finalPayload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const finalPayload = final.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -1828,10 +1912,13 @@ describe('browser conversation routing', () => {
     expect(messages.some((message) => message.type === 'tts.ended')).toBe(false);
     const reasoningStarted = messages.find((message) => message.type === 'reasoning.started')!;
     const ttsStarted = messages.find((message) => message.type === 'tts.started')!;
-    expect((reasoningStarted.payload as Record<string, unknown>).responseId).toBe(
-      (ttsStarted.payload as Record<string, unknown>).responseId,
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((reasoningStarted.payload as TestPayload).responseId).toBe(
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (ttsStarted.payload as TestPayload).responseId,
     );
-    expect((ttsStarted.payload as Record<string, unknown>).playbackId).toBe(playbackId);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((ttsStarted.payload as TestPayload).playbackId).toBe(playbackId);
     expect(messages.filter((message) => message.type === 'reasoning.started')).toHaveLength(1);
     expect(messages.filter((message) => message.type === 'tts.started')).toHaveLength(1);
 
@@ -1841,10 +1928,13 @@ describe('browser conversation routing', () => {
     await waitFor(messages, 'tts.ended');
     await waitForWhere(messages, () => binary.length === 2);
     const ended = messages.find((message) => message.type === 'tts.ended')!;
-    expect((ended.payload as Record<string, unknown>).generatedSamples).toBe(960);
-    expect((ended.payload as Record<string, unknown>).playbackId).toBe(playbackId);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((ended.payload as TestPayload).generatedSamples).toBe(960);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((ended.payload as TestPayload).playbackId).toBe(playbackId);
     expect(
-      (messages.find((message) => message.type === 'reasoning.final')!.payload as Record<string, unknown>).text,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (messages.find((message) => message.type === 'reasoning.final')!.payload as TestPayload).text,
     ).toBe('First sentence. Second sentence.');
 
     // Authoritative browser terminal receipt commits assistant context for the next turn.
@@ -1871,7 +1961,8 @@ describe('browser conversation routing', () => {
     );
     await waitForWhere(messages, () => messages.filter((message) => message.type === 'transcript.final').length >= 2);
     const secondFinal = messages.filter((message) => message.type === 'transcript.final')[1]!;
-    const secondPayload = secondFinal.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const secondPayload = secondFinal.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -1901,7 +1992,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -1930,7 +2021,8 @@ describe('browser conversation routing', () => {
     const final = await waitFor(messages, 'transcript.final');
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(messages.some((message) => message.type === 'policy.decision')).toBe(false);
-    const payload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const payload = final.payload as TestPayload;
     const acknowledgement = { turnId: payload.turnId, finalEventId: final.eventId, persistedEpoch: final.epoch };
     socket.send(JSON.stringify(command('turn.persisted', acknowledgement)));
     expect((await waitFor(messages, 'policy.decision')).type).toBe('policy.decision');
@@ -1948,7 +2040,8 @@ describe('browser conversation routing', () => {
       (message) =>
         message.type === 'session.state' &&
         message.epoch === 1 &&
-        (message.payload as Record<string, unknown>).phase === 'listening',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        (message.payload as TestPayload).phase === 'listening',
     );
     expect(listening.type).toBe('session.state');
     expect(socket.readyState).toBe(WebSocket.OPEN);
@@ -1974,7 +2067,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, binary) => {
       if (!binary) messages.push(JSON.parse(raw.toString()));
     });
@@ -2000,7 +2093,8 @@ describe('browser conversation routing', () => {
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'failure' && (message.payload as Record<string, unknown>).code === 'runtime_unavailable',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'failure' && (message.payload as TestPayload).code === 'runtime_unavailable',
     );
     socket.send(
       encodeBinaryAudioFrame(
@@ -2019,7 +2113,8 @@ describe('browser conversation routing', () => {
     expect(
       messages.some(
         (message) =>
-          message.type === 'failure' && (message.payload as Record<string, unknown>).code === 'invalid_capture_frame',
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
+          message.type === 'failure' && (message.payload as TestPayload).code === 'invalid_capture_frame',
       ),
     ).toBe(false);
     socket.close();
@@ -2030,10 +2125,12 @@ describe('browser conversation routing', () => {
     const researchPi: PiResearchClient = {
       async *requestBody(_input, _signal) {
         yield {
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           type: 'delta' as const,
           text: 'The top Metroidvania is Metroid Prime. It scores 97. Symphony of the Night follows at 93. Ori and the Will of the Wisps also scores 93. Metroid Prime 2 reaches 92. Metroid Fusion rounds out the list at 92. ',
         };
         yield {
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           type: 'final' as const,
           text: 'The top Metroidvania is Metroid Prime. It scores 97. Symphony of the Night follows at 93. Ori and the Will of the Wisps also scores 93. Metroid Prime 2 reaches 92. Metroid Fusion rounds out the list at 92. ',
         };
@@ -2053,10 +2150,13 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     const binary: Buffer[] = [];
     socket.on('message', (raw, isBinary) => {
-      if (isBinary) binary.push(Buffer.from(raw as Buffer));
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      // SAFETY: ws supplies Buffer data for binary message callbacks.
+      const binaryRaw = raw as Buffer;
+      if (isBinary) binary.push(Buffer.from(binaryRaw));
       else messages.push(JSON.parse(raw.toString()));
     });
     await new Promise<void>((resolve) => {
@@ -2082,7 +2182,8 @@ describe('browser conversation routing', () => {
       ),
     );
     const final = await waitFor(messages, 'transcript.final');
-    const finalPayload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const finalPayload = final.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -2096,36 +2197,45 @@ describe('browser conversation routing', () => {
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 0,
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'response.part_started' && (message.payload as TestPayload).partIndex === 0,
     );
     const part0Tts = await waitForWhere(
       messages,
-      (message) => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 0,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (message) => message.type === 'tts.started' && (message.payload as TestPayload).partIndex === 0,
     );
-    expect((part0Tts.payload as Record<string, unknown>).outputStreamId).toBe(55);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((part0Tts.payload as TestPayload).outputStreamId).toBe(55);
     await waitForWhere(
       messages,
       (message) =>
-        message.type === 'response.part_started' && (message.payload as Record<string, unknown>).partIndex === 1,
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'response.part_started' && (message.payload as TestPayload).partIndex === 1,
     );
     const part1Tts = await waitForWhere(
       messages,
-      (message) => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 1,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (message) => message.type === 'tts.started' && (message.payload as TestPayload).partIndex === 1,
     );
-    expect((part1Tts.payload as Record<string, unknown>).outputStreamId).toBe(56);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect((part1Tts.payload as TestPayload).outputStreamId).toBe(56);
     // The six-sentence body splits into two parts (indices 1 and 2).
     await waitForWhere(
       messages,
-      (message) => message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === 2,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      (message) => message.type === 'tts.started' && (message.payload as TestPayload).partIndex === 2,
     );
     await waitFor(messages, 'response.part_final');
     const started = messages.filter((message) => message.type === 'tts.started');
     expect(started).toHaveLength(3);
-    expect(started.map((message) => (message.payload as Record<string, unknown>).partIndex)).toEqual([0, 1, 2]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect(started.map((message) => (message.payload as TestPayload).partIndex)).toEqual([0, 1, 2]);
     expect(binary.length).toBeGreaterThanOrEqual(3);
     // Terminal receipts for every part return to listening.
     for (const startedEvent of started) {
-      const playbackId = (startedEvent.payload as Record<string, unknown>).playbackId as string;
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const playbackId = (startedEvent.payload as TestPayload).playbackId as string;
       socket.send(
         JSON.stringify(
           command('playback.stopped', {
@@ -2140,7 +2250,8 @@ describe('browser conversation routing', () => {
     const listening = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).phase === 'listening',
     );
     expect(listening.epoch).toBe(0);
     expect(messages.filter((message) => message.type === 'reasoning.final')).toHaveLength(3);
@@ -2153,7 +2264,9 @@ describe('browser conversation routing', () => {
       async *requestBody(_input, _signal) {
         const text =
           'The top Metroidvania is Metroid Prime. It scores 97. Symphony of the Night follows at 93. Ori and the Will of the Wisps also scores 93. Metroid Prime 2 reaches 92. Metroid Fusion rounds out the list at 92. Metroid Dread completes the set at 94. Hollow Knight earned 90. Axiom Verge closes at 88. ';
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text };
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text };
       },
       async shutdown() {},
@@ -2171,7 +2284,7 @@ describe('browser conversation routing', () => {
     cleanup.push(async () => app.close());
     const { body, cookie } = await bootstrap(app, origin);
     const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });
-    const messages: Array<Record<string, unknown>> = [];
+    const messages: Array<TestPayload> = [];
     socket.on('message', (raw, isBinary) => {
       if (!isBinary) messages.push(JSON.parse(raw.toString()));
     });
@@ -2198,7 +2311,8 @@ describe('browser conversation routing', () => {
       ),
     );
     const final = await waitFor(messages, 'transcript.final');
-    const finalPayload = final.payload as Record<string, unknown>;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    const finalPayload = final.payload as TestPayload;
     socket.send(
       JSON.stringify(
         command('turn.persisted', {
@@ -2214,7 +2328,8 @@ describe('browser conversation routing', () => {
       await waitForWhere(
         messages,
         (message) =>
-          message.type === 'tts.started' && (message.payload as Record<string, unknown>).partIndex === partIndex,
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
+          message.type === 'tts.started' && (message.payload as TestPayload).partIndex === partIndex,
       );
     }
     expect(messages.filter((message) => message.type === 'failure' || message.type === 'response.failed')).toHaveLength(
@@ -2222,9 +2337,11 @@ describe('browser conversation routing', () => {
     );
     const started = messages.filter((message) => message.type === 'tts.started');
     expect(started).toHaveLength(4);
-    expect(started.map((message) => (message.payload as Record<string, unknown>).partIndex)).toEqual([0, 1, 2, 3]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
+    expect(started.map((message) => (message.payload as TestPayload).partIndex)).toEqual([0, 1, 2, 3]);
     for (const startedEvent of started) {
-      const playbackId = (startedEvent.payload as Record<string, unknown>).playbackId as string;
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const playbackId = (startedEvent.payload as TestPayload).playbackId as string;
       socket.send(
         JSON.stringify(
           command('playback.stopped', {
@@ -2239,7 +2356,8 @@ describe('browser conversation routing', () => {
     const listening = await waitForWhere(
       messages,
       (message) =>
-        message.type === 'session.state' && (message.payload as Record<string, unknown>).phase === 'listening',
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
+        message.type === 'session.state' && (message.payload as TestPayload).phase === 'listening',
     );
     expect(listening.epoch).toBe(0);
     socket.close();

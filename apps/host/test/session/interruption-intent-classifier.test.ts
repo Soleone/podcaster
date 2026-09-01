@@ -13,6 +13,7 @@ import type { PiClient, PiEvent, PiRequestInput } from '../../src/pi/PiClient.js
 class FakeClassifierPi implements PiClient {
   readonly inputs: PiRequestInput[] = [];
   async probe() {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     return { status: 'ready' as const, detail: '', correctiveAction: 'None.' };
   }
   async *request(input: PiRequestInput): AsyncIterable<PiEvent> {
@@ -60,6 +61,7 @@ describe('interruption intent contract', () => {
     ['Hold off for a second', 'accept'],
     ['Can we discuss another system?', 'accept'],
     // Representative corrections from the reported interruption bug: these must
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     // take over the paused answer, never resume it as control-only speech.
     ["No I no I don't mean that it's a more recent one", 'accept'],
     ['No no no not those try to think of something else', 'accept'],

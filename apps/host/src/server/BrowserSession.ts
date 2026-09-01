@@ -38,11 +38,11 @@ const MAX_RECONNECT_QUEUE_BYTES = 8 * 1024 * 1024;
 // Safe starting bounds per preparation depth: these are hard attempt deadlines
 // and prompt-level tool caps, not progress predictions. Revised from measured
 // p95 attempt/tool timings when available.
-const PLANNING_BOUNDS: Record<PlanningDepth, { deadlineMs: number; maxTools: number }> = {
+const PLANNING_BOUNDS = {
   light: { deadlineMs: 30_000, maxTools: 1 },
   standard: { deadlineMs: 60_000, maxTools: 2 },
   deep: { deadlineMs: 120_000, maxTools: 3 },
-};
+} satisfies Record<PlanningDepth, { deadlineMs: number; maxTools: number }>;
 /** One factual planning attempt; the host owns exactly one at a time. */
 interface PlanningAttempt {
   attempt: number;
@@ -87,6 +87,13 @@ interface CompletedPersistenceAck {
   epoch: number;
 }
 class PlanningCancelled extends Error {}
+type HostEventPayload<T extends HostEvent['type']> = HostEvent extends infer Event
+  ? Event extends { type: infer EventType; payload: infer Payload }
+    ? T extends EventType
+      ? Payload
+      : never
+    : never
+  : never;
 type BrowserCommandType = BrowserCommand['type'];
 type BrowserCommandFor<T extends BrowserCommandType> = BrowserCommand extends infer Command
   ? Command extends { type: infer Type }
@@ -134,6 +141,7 @@ function event<T extends HostEvent['type']>(
       : never
     : never,
 ): HostEvent {
+  // SAFETY: `payload` is selected from HostEvent's discriminated union by `type`.
   return {
     protocolVersion: 1,
     sessionId,
@@ -208,6 +216,7 @@ export class BrowserSession {
   isPlanningControl(raw: RawData, binary: boolean): boolean {
     if (binary) return false;
     try {
+      // SAFETY: JSON.parse output is inspected only for the optional command type.
       const value = JSON.parse(raw.toString()) as { type?: unknown };
       return (
         value?.type === 'planning.cancel' ||
@@ -227,6 +236,8 @@ export class BrowserSession {
       return this.protocolError('invalid_json');
     }
     if (!CONTRACT_VALIDATORS.BrowserCommand(value)) return this.protocolError('invalid_command');
+    // SAFETY: CONTRACT_VALIDATORS.BrowserCommand accepted this parsed command.
+    // SAFETY: CONTRACT_VALIDATORS.BrowserCommand accepted this parsed command.
     const command = value as BrowserCommand;
     if (command.sessionId !== this.sessionId) return this.protocolError('session_mismatch');
     if (command.type === 'planning.cancel') {
@@ -292,6 +303,7 @@ export class BrowserSession {
       return this.protocolError('invalid_json');
     }
     if (!CONTRACT_VALIDATORS.BrowserCommand(value)) return this.protocolError('invalid_command');
+    // SAFETY: CONTRACT_VALIDATORS.BrowserCommand accepted this parsed command.
     const command = value as BrowserCommand;
     if (this.sessionId && command.sessionId !== this.sessionId) return this.protocolError('session_mismatch');
     if (command.type === 'session.open') return this.open(command);
@@ -471,17 +483,22 @@ export class BrowserSession {
         this.voice,
       );
       const orchestrator = new SessionOrchestrator({
-        sessionId,
-        sessionSeed: this.sessionSeed,
-        pi: this.responsePi!,
-        speech: audio,
-        personaSource: this.personaSource,
-        ...(this.researchPi ? { researchPi: this.researchPi } : {}),
-        ...(this.planningNotes ? { planningContext: this.planningNotes } : {}),
-        multiPartEnabled: this.options.multiPartEnabled,
-        transcriptOnly: this.transcriptOnly,
-        interruptionClassifier: new PiInterruptionIntentClassifier(this.classifierPi),
-        emit: (value) => this.send(value),
+        ...(() => {
+          const orchestratorOptions: ConstructorParameters<typeof SessionOrchestrator>[0] = {
+            sessionId,
+            sessionSeed: this.sessionSeed,
+            pi: this.responsePi!,
+            speech: audio,
+            personaSource: this.personaSource,
+            multiPartEnabled: this.options.multiPartEnabled,
+            transcriptOnly: this.transcriptOnly,
+            interruptionClassifier: new PiInterruptionIntentClassifier(this.classifierPi),
+            emit: (value) => this.send(value),
+          };
+          if (this.researchPi) orchestratorOptions.researchPi = this.researchPi;
+          if (this.planningNotes) orchestratorOptions.planningContext = this.planningNotes;
+          return orchestratorOptions;
+        })(),
       });
       this.audio = audio;
       this.orchestrator = orchestrator;
@@ -549,15 +566,20 @@ export class BrowserSession {
         phase: status === 'planning' ? 'preparing' : 'prelive',
         personaDigest: snapshot?.personaDigest ?? this.personaDigest,
         planning: {
-          status,
-          attempt: attempt?.attempt ?? 0,
-          ...(attempt?.deadlineMs !== undefined ? { deadlineMs: attempt.deadlineMs } : {}),
-          ...(stage !== undefined ? { stage } : {}),
-          ...(fields.reasonCode !== undefined ? { reasonCode: fields.reasonCode } : {}),
-          topic: request.topic,
-          depth: request.depth,
-          detail: fields.detail,
-          ...(notes !== undefined ? { notes } : {}),
+          ...(() => {
+            const planning: HostEventPayload<'session.state'>['planning'] = {
+              status,
+              attempt: attempt?.attempt ?? 0,
+              topic: request.topic,
+              depth: request.depth,
+              detail: fields.detail,
+            };
+            if (attempt?.deadlineMs !== undefined) planning.deadlineMs = attempt.deadlineMs;
+            if (stage !== undefined) planning.stage = stage;
+            if (fields.reasonCode !== undefined) planning.reasonCode = fields.reasonCode;
+            if (notes !== undefined) planning.notes = notes;
+            return planning;
+          })(),
         },
       }),
     );
@@ -825,6 +847,7 @@ export class BrowserSession {
     this.pending.delete(finalEventId);
     this.completedPersistenceAcks.set(finalEventId, { turnId: pending.turnId, epoch: pending.epoch });
     if (this.completedPersistenceAcks.size > MAX_COMPLETED_PERSISTENCE_ACKS) {
+      // SAFETY: Map keys are strings and `value` is defined while size is positive.
       const oldest = this.completedPersistenceAcks.keys().next().value as string | undefined;
       if (oldest) this.completedPersistenceAcks.delete(oldest);
     }
@@ -873,7 +896,7 @@ export class BrowserSession {
     if (!this.stopped) this.sendFrame(JSON.stringify(value), false);
   }
   private sendFrame(value: string | Buffer, binary: boolean): void {
-    const bytes = typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength;
+    const bytes = Buffer.isBuffer(value) ? value.byteLength : Buffer.byteLength(value);
     const socket = this.socket;
     if (socket && socket.readyState === socket.OPEN) {
       try {

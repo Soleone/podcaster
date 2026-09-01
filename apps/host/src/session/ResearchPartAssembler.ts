@@ -31,11 +31,11 @@ export interface ResearchPartLimits {
 
 // Short riffs and questions should stay quick; a respectful challenge earns a
 // deeper 2-3-part answer without permitting a rambling research monologue.
-export const RESEARCH_PART_LIMITS: Readonly<Record<ResearchPartPosture, ResearchPartLimits>> = {
+export const RESEARCH_PART_LIMITS = {
   riff: { maxPartWords: 90, maxPartChars: 4_096, maxPartSentences: 3, maxParts: 7 },
   question: { maxPartWords: 90, maxPartChars: 4_096, maxPartSentences: 3, maxParts: 7 },
   challenge: { maxPartWords: 120, maxPartChars: 4_096, maxPartSentences: 3, maxParts: 7 },
-};
+} satisfies Readonly<Record<ResearchPartPosture, ResearchPartLimits>>;
 
 export interface ResearchAssemblerResult {
   /** Exact concatenation of all delta texts. */
@@ -79,7 +79,7 @@ export class ResearchPartAssembler {
     return this.flushComplete();
   }
 
-  final(finalText: string): { parts: PartChunk[]; result: ResearchAssemblerResult } {
+  final(finalText: string) {
     if (finalText !== this.raw) throw new MismatchedFinalError(finalText, this.raw);
     const segments = this.segments();
     for (let index = this.processed; index < segments.length; index++) this.addSentence(segments[index]!.segment);

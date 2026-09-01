@@ -9,7 +9,7 @@ import { deleteSessionRecording } from '../recording/export';
 import { RecordingRecorder } from '../recording/recorder';
 import type { EncodeMp3 } from '../recording/encode';
 import { activityLog } from './activity-log';
-import { SessionController, type ControlledPlayback } from './controller';
+import { SessionController, type ControlledPlayback, type SessionControllerOptions } from './controller';
 import { createEnvelope, type HostEventPayload, uuidV7 } from './envelope';
 import { FakeSessionTransport } from './fake-transport';
 import type { SessionTransport } from './transport';
@@ -18,6 +18,12 @@ import { initialSessionState, type SessionViewState } from './state';
 import { RecordingStore, type RecordingItemSummary } from '../storage/recording-store';
 import type { StableTurnWriter } from '../storage/stable-turn-writer';
 import type { SessionSettingsSnapshot } from '@app/contracts/settings';
+
+declare global {
+  interface Window {
+    __podcasterFakeWorkletNode?: { port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } };
+  }
+}
 
 export interface LiveSessionRuntime {
   readonly sessionId: string;
@@ -114,12 +120,17 @@ class InstrumentedPlayback implements ControlledPlayback {
   }
 }
 
+function errorActivityDetail(cause: unknown): { detail?: string } {
+  return cause instanceof Error ? { detail: cause.message } : {};
+}
+
 function fakeHostEvent<T extends HostEvent['type']>(
   sessionId: string,
   epoch: number,
   type: T,
   payload: HostEventPayload<T>,
 ): HostEvent {
+  // SAFETY: the generic payload is paired with its discriminant by HostEventPayload.
   return createEnvelope({ sessionId, epoch, type, payload }) as HostEvent;
 }
 
@@ -195,20 +206,10 @@ class Runtime implements LiveSessionRuntime {
     await transport.connect(this.options.capability);
     this.unsubs.push(transport.onEvent((event) => recorder.onSessionEvent(event)));
     let controller!: SessionController;
-    controller = new SessionController({
+    const controllerOptions: SessionControllerOptions = {
       sessionId: this.sessionId,
       transport,
       writer: this.options.writer,
-      ...(this.options.initialState
-        ? {
-            initialState: this.options.fake
-              ? {
-                  ...this.options.initialState,
-                  audioEngine: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' },
-                }
-              : this.options.initialState,
-          }
-        : {}),
       playbackFactory: (input) => {
         const playback = new BrowserPlayback(
           input.playbackId,
@@ -235,7 +236,16 @@ class Runtime implements LiveSessionRuntime {
         );
         return this.options.fake ? new InstrumentedPlayback(playback, this.stats) : playback;
       },
-    });
+    };
+    if (this.options.initialState) {
+      controllerOptions.initialState = this.options.fake
+        ? {
+            ...this.options.initialState,
+            audioEngine: { status: 'ready', capture: 'ready', vad: 'ready', tts: 'ready' },
+          }
+        : this.options.initialState;
+    }
+    controller = new SessionController(controllerOptions);
     this.controller = controller;
     this.unsubs.push(controller.subscribe((state) => this.options.callbacks.onView(state)));
     this.unsubs.push(
@@ -248,12 +258,14 @@ class Runtime implements LiveSessionRuntime {
         void capture?.stop().catch(() => undefined);
       }),
     );
-    transport.openSession({
+    const openOptions: Parameters<SessionTransport['openSession']>[0] = {
       sessionSeed: this.options.seed,
       reasoningMode: this.options.reasoningMode,
-      ...(this.options.planning ? { planning: this.options.planning } : {}),
       settings: this.options.settings,
-    });
+    };
+    if (this.options.planning) openOptions.planning = this.options.planning;
+    transport.openSession(openOptions);
+    // SAFETY: fake transports are created internally when the fake option is enabled.
     const fakeTransport = this.options.fake ? (transport as FakeSessionTransport) : undefined;
     if (fakeTransport && this.options.planning)
       await fakeTransport.emit(
@@ -295,6 +307,7 @@ class Runtime implements LiveSessionRuntime {
           await this.options.activate();
           await this.startCapture();
           if (this.options.planning)
+            // SAFETY: this branch runs only for the internally selected fake transport.
             await (transport as FakeSessionTransport).emit(
               fakeHostEvent(this.sessionId, controller.snapshot().epoch, 'session.state', {
                 phase: 'listening',
@@ -356,10 +369,9 @@ class Runtime implements LiveSessionRuntime {
     send?: (frame: Uint8Array) => void | Promise<void>,
   ): Promise<CaptureHandle> {
     if (this.options.createCapture) return this.options.createCapture(streamId, onAudio);
-    const dependencies = {
-      ...(streamId === undefined ? {} : { streamId: () => streamId }),
-      ...(onAudio ? { onAudio } : {}),
-    };
+    const dependencies: ConstructorParameters<typeof BrowserCapture>[0] = {};
+    if (streamId !== undefined) dependencies.streamId = () => streamId;
+    if (onAudio) dependencies.onAudio = onAudio;
     return new BrowserCapture(dependencies).start({
       send: send ?? ((frame) => this.transport!.sendCapture(frame)),
       degraded: (message) => this.controller?.degrade(message),
@@ -497,7 +509,7 @@ class Runtime implements LiveSessionRuntime {
           level: 'warn',
           source: 'app',
           message: 'recording cleanup failed',
-          ...(error instanceof Error ? { detail: error.message } : {}),
+          ...errorActivityDetail(error),
         });
       }
     }
@@ -551,6 +563,7 @@ class Runtime implements LiveSessionRuntime {
 
   testApi(): LiveRuntimeTestApi | undefined {
     if (!this.options.fake || !this.transport || !this.controller) return undefined;
+    // SAFETY: testApi is available only when this runtime was created with a fake transport.
     const transport = this.transport as FakeSessionTransport;
     const controller = this.controller;
     return {
@@ -569,12 +582,12 @@ class Runtime implements LiveSessionRuntime {
         transport.emitAudio({ playbackId, sequence: 0, sampleOffset, pcm16: new Int16Array(samples) });
         await new Promise((resolve) => setTimeout(resolve, 0));
       },
-      capture: () =>
-        (
-          window as unknown as {
-            __podcasterFakeWorkletNode?: { port: { onmessage: ((event: MessageEvent<Float32Array>) => void) | null } };
-          }
-        ).__podcasterFakeWorkletNode?.port.onmessage?.({ data: new Float32Array(961) } as MessageEvent<Float32Array>),
+      capture: () => {
+        // SAFETY: this local fixture constructs a MessageEvent-compatible data payload for the fake worklet.
+        window.__podcasterFakeWorkletNode?.port.onmessage?.({
+          data: new Float32Array(961),
+        } as MessageEvent<Float32Array>);
+      },
       degrade: (message) => controller.degrade(message),
       stats: () => ({
         ...this.stats,

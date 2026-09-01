@@ -105,7 +105,7 @@ describe('deterministic posture policy', () => {
         input({ turnId: String(seed), stableUserTurnCount: seed % 10, eligibleTurnsSinceChallenge: seed % 6 }),
       );
       expect(['riff', 'question', 'challenge', 'silence']).toContain(result.posture);
-      expect(typeof result.posture).toBe('string');
+      expect(result.posture).toBeTypeOf('string');
       expect(result.inputDigest).toMatch(/^[a-f0-9]{64}$/u);
     }
   });

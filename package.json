@@ -11,6 +11,7 @@
     "contracts:generate": "node packages/contracts/scripts/generate.mjs",
     "format": "prettier --write package.json pnpm-workspace.yaml tsconfig.base.json playwright.config.ts apps/*/package.json packages/*/package.json 'apps/**/*.{ts,tsx,js,mjs,cjs,css}' 'packages/**/*.{ts,tsx,js,mjs,cjs,css}' 'scripts/**/*.{js,mjs,cjs,ts}'",
     "format:check": "prettier --check package.json pnpm-workspace.yaml tsconfig.base.json playwright.config.ts apps/*/package.json packages/*/package.json 'apps/**/*.{ts,tsx,js,mjs,cjs,css}' 'packages/**/*.{ts,tsx,js,mjs,cjs,css}' 'scripts/**/*.{js,mjs,cjs,ts}'",
+    "lint": "oxlint --config oxlint.config.ts .",
     "test": "node scripts/test.mjs",
     "check": "bash scripts/check.sh",
     "build": "corepack pnpm --filter @app/web build && corepack pnpm --filter @app/policy build && corepack pnpm --filter @app/host build",
@@ -21,7 +22,9 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.80.0",
     "@playwright/test": "1.55.0",
+    "oxlint": "1.80.0",
     "prettier": "3.6.2",
     "tsx": "4.20.6",
     "vitest": "3.2.4"

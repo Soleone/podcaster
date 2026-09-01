@@ -1,3 +1,4 @@
+import { isJsonBoolean, isJsonObject, type JsonObject } from '../lib/json-values';
 import type {
   CustomVoiceMetadata,
   PlanningDepth,
@@ -125,8 +126,10 @@ export function openPodcasterDatabase(
       if (event.oldVersion > 0 && event.oldVersion < 2) {
         const rowsRequest = turns.getAll();
         rowsRequest.onsuccess = () => {
-          const rows = (rowsRequest.result as Array<Record<string, unknown>>).sort((left, right) => {
-            const compare = (a: unknown, b: unknown) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0);
+          // SAFETY: legacy rows are structured-cloned JSON-shaped records written by prior app versions.
+          const rows = (rowsRequest.result as JsonObject[]).sort((left, right) => {
+            const compare = (a: JsonObject[string] | undefined, b: JsonObject[string] | undefined) =>
+              String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
             const sessionOrder = compare(left.sessionId, right.sessionId);
             if (sessionOrder !== 0) return sessionOrder;
             const chronology = compare(left.createdAt, right.createdAt);
@@ -172,8 +175,12 @@ export function openPodcasterDatabase(
         cursorRequest.onsuccess = () => {
           const cursor = cursorRequest.result;
           if (!cursor) return;
-          const row = cursor.value as Record<string, unknown>;
-          if (typeof row.trimmed !== 'boolean') cursor.update({ ...row, trimmed: false });
+          if (!isJsonObject(cursor.value)) {
+            cursor.continue();
+            return;
+          }
+          const row = cursor.value;
+          if (!isJsonBoolean(row.trimmed)) cursor.update({ ...row, trimmed: false });
           cursor.continue();
         };
       }

@@ -126,7 +126,7 @@ describe('custom voice catalog merge', () => {
   });
 
   it('is idempotent and ignores duplicates or stock ids', () => {
-    const merged = withCustomVoices(catalog, [custom, custom, { ...custom, voiceId: 'Ryan' as never }])!;
+    const merged = withCustomVoices(catalog, [custom, custom, { ...custom, voiceId: 'Ryan' }])!;
     expect(merged.voices).toHaveLength(3);
   });
 

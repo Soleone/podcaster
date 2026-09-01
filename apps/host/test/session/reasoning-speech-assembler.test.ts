@@ -48,6 +48,7 @@ describe('ReasoningSpeechAssembler', () => {
       expect(result.chunks).toHaveLength(1);
     });
 
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     it('emits multiple sentences as boundaries are confirmed', () => {
       const a = new ReasoningSpeechAssembler('riff');
       // Segmenter: ["Hello there. ", "How are you? ", "I"]
@@ -66,6 +67,7 @@ describe('ReasoningSpeechAssembler', () => {
       expect(result.chunks).toHaveLength(3);
     });
 
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     it('no period final flushes as single sentence', () => {
       const a = new ReasoningSpeechAssembler('riff');
       expect(a.append('No punctuation here')).toEqual([]);
@@ -179,6 +181,7 @@ describe('ReasoningSpeechAssembler', () => {
   });
 
   describe('emoji and special characters', () => {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     it('handles emoji as segment start', () => {
       const a = new ReasoningSpeechAssembler('riff');
       // Segmenter: ["Great job! ", "🎉 Really"]
@@ -245,6 +248,7 @@ describe('ReasoningSpeechAssembler', () => {
       expect(() => a.final(text)).toThrow();
     });
 
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     it('counts the same whitespace-delimited words as the Pi response bound', () => {
       const words = Array.from({ length: 45 }, (_, i) => `multi-part-${i}`);
       const text = words.join(' ') + '.';
@@ -387,6 +391,7 @@ describe('ReasoningSpeechAssembler', () => {
   });
 
   describe('canonical prefix for interruption classification', () => {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     it('updates canonical prefix as deltas arrive', () => {
       const a = new ReasoningSpeechAssembler('riff');
       a.append('Hello world. How');

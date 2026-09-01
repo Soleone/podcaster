@@ -6,8 +6,11 @@ import type {
   PlaybackStoppedEvent,
   TranscriptFinalEvent,
 } from '@app/contracts';
+import { isJsonArray, isJsonBoolean, isJsonNumber, isJsonObject, isJsonString } from '../lib/json-values';
+import type { JsonObject, JsonValue } from '../lib/json-values';
 import type { PlaybackProgress, PlaybackTerminal } from '../audio/playback-ledger';
 import { activityLog } from './activity-log';
+import type { ActivityEntry } from './activity-log';
 import { createEnvelope, type BrowserCommandPayload } from './envelope';
 import type { OutputAudioChunk, SessionStartRequest, SessionTransport } from './transport';
 
@@ -36,7 +39,10 @@ export interface WebSocketTransportOptions {
 }
 
 function subscribeBrowserConnectivityHints(hint: () => void): () => void {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+  // The global exists only in a browser UI context; workers and SSR bundles
+  // have no window/document binding, so probe globalThis instead of referencing
+  // the bare globals (which would throw where they are absent).
+  if (globalThis.window === undefined || globalThis.document === undefined) return () => {};
   window.addEventListener('online', hint);
   document.addEventListener('visibilitychange', hint);
   return () => {
@@ -159,18 +165,22 @@ export class WebSocketSessionTransport implements SessionTransport {
     };
     socket.onmessage = (message) => {
       if (this.socket !== socket || this.intentionalDisconnect) return;
-      if (typeof message.data !== 'string') {
+      if (!isJsonString(message.data)) {
+        if (!(message.data instanceof ArrayBuffer)) {
+          this.protocolFailure('a binary message was not an ArrayBuffer.');
+          return;
+        }
         this.handleBinary(message.data);
         return;
       }
-      let value: unknown;
+      let value: JsonValue;
       try {
         value = JSON.parse(message.data);
       } catch {
         this.protocolFailure('the message was not valid JSON.');
         return;
       }
-      if (typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'authenticated') {
+      if (isJsonObject(value) && value.type === 'authenticated') {
         authenticated = true;
         this.clearHandshakeWatchdog();
         this.connected = true;
@@ -196,10 +206,7 @@ export class WebSocketSessionTransport implements SessionTransport {
         return;
       }
       if (!isStrictHostEvent(value)) {
-        const type =
-          typeof value === 'object' && value !== null
-            ? String((value as { type?: unknown }).type ?? 'unknown')
-            : 'unknown';
+        const type = isJsonObject(value) ? String(value.type ?? 'unknown') : 'unknown';
         this.protocolFailure(`the "${type}" event failed validation.`);
         return;
       }
@@ -241,8 +248,7 @@ export class WebSocketSessionTransport implements SessionTransport {
           this.protocolFailure('tts.started did not match the established response identity.');
           return;
         }
-        const outputStreamId =
-          typeof hostEvent.payload.outputStreamId === 'number' ? hostEvent.payload.outputStreamId : undefined;
+        const outputStreamId = hostEvent.payload.outputStreamId;
         const binding: OutputBinding = {
           playbackId: String(hostEvent.payload.playbackId),
           responseId: String(hostEvent.payload.responseId),
@@ -251,8 +257,8 @@ export class WebSocketSessionTransport implements SessionTransport {
           sampleOffset: 0,
           terminal: false,
           receivedAt: Date.now(),
-          ...(outputStreamId !== undefined ? { streamId: outputStreamId } : {}),
         };
+        if (outputStreamId !== undefined) binding.streamId = outputStreamId;
         if (outputStreamId !== undefined) {
           if (this.outputs.byStream.has(outputStreamId) || this.usedOutputStreams.has(outputStreamId)) {
             this.protocolFailure('tts.started reused an output stream id.');
@@ -295,21 +301,17 @@ export class WebSocketSessionTransport implements SessionTransport {
         }
         this.latestResponseId = undefined;
       }
-      if (
-        hostEvent.type === 'session.state' &&
-        hostEvent.payload.audio &&
-        typeof hostEvent.payload.audio === 'object'
-      ) {
-        const audio = hostEvent.payload.audio as Record<string, unknown>;
+      if (hostEvent.type === 'session.state') {
+        const audio = hostEvent.payload.audio;
         const pending = this.pendingAudioStart;
-        if (pending && audio.status === 'ready') {
-          this.pendingAudioStart = undefined;
-          pending.resolve();
-        } else if (pending && audio.status === 'failed') {
-          this.pendingAudioStart = undefined;
-          pending.reject(
-            new Error(typeof audio.detail === 'string' ? audio.detail : 'The audio engine failed to warm up.'),
-          );
+        if (pending && audio) {
+          if (audio.status === 'ready') {
+            this.pendingAudioStart = undefined;
+            pending.resolve();
+          } else if (audio.status === 'failed') {
+            this.pendingAudioStart = undefined;
+            pending.reject(new Error(audio.detail ?? 'The audio engine failed to warm up.'));
+          }
         }
       }
       for (const listener of this.eventListeners) void listener(hostEvent);
@@ -326,12 +328,13 @@ export class WebSocketSessionTransport implements SessionTransport {
       this.initialReject?.(new Error('The secure session connection could not be authenticated.'));
       this.initialResolve = undefined;
       this.initialReject = undefined;
-      activityLog.append({
+      const failure: Omit<ActivityEntry, 'ts'> = {
         level: 'error',
         source: 'transport',
         message: 'session connection could not be established',
-        ...(detail ? { detail } : {}),
-      });
+      };
+      if (detail) failure.detail = detail;
+      activityLog.append(failure);
       return;
     }
     if (this.permanentFailure) {
@@ -344,12 +347,13 @@ export class WebSocketSessionTransport implements SessionTransport {
       this.reconnecting = true;
       this.reconnectStartedAt = Date.now();
       this.reconnectAttempt = 0;
-      activityLog.append({
+      const losing: Omit<ActivityEntry, 'ts'> = {
         level: 'warn',
         source: 'transport',
         message: 'session connection lost; reconnecting',
-        ...(detail ? { detail } : {}),
-      });
+      };
+      if (detail) losing.detail = detail;
+      activityLog.append(losing);
       // Browsers throttle timers in hidden tabs, which delays exactly these
       // backoff attempts; retry eagerly when the tab becomes visible or the
       // network comes back.
@@ -448,12 +452,12 @@ export class WebSocketSessionTransport implements SessionTransport {
   /** Pre-live open; planning state arrives as session.state events and the host
    * never opens microphone capture until session.begin. */
   openSession(input: SessionStartRequest): void {
-    const payload = {
+    const payload: BrowserCommandPayload<'session.open'> = {
       sessionSeed: input.sessionSeed,
       reasoningMode: input.reasoningMode,
-      ...(input.planning ? { planning: input.planning } : {}),
       settings: input.settings,
     };
+    if (input.planning) payload.planning = input.planning;
     this.sendCommand('session.open', payload);
   }
   /** Explicit live transition: sends session.begin and resolves once the host
@@ -568,11 +572,7 @@ export class WebSocketSessionTransport implements SessionTransport {
     return () => this.reconnectListeners.delete(listener);
   }
 
-  private handleBinary(data: unknown): void {
-    if (!(data instanceof ArrayBuffer)) {
-      this.protocolFailure('a binary message was not an ArrayBuffer.');
-      return;
-    }
+  private handleBinary(data: ArrayBuffer): void {
     let frame;
     try {
       frame = decodeBinaryAudioFrame(new Uint8Array(data), MAX_BINARY_PAYLOAD);
@@ -629,6 +629,9 @@ export class WebSocketSessionTransport implements SessionTransport {
     payload: BrowserCommandPayload<T>,
     epoch = this.epoch(),
   ): void {
+    // SAFETY: the ternary guard narrows `type` to 'playback.progress' before
+    // the payload is read through the playback.progress contract, so the
+    // assertion only ever applies to a payload of that exact event type.
     const progress = type === 'playback.progress' ? (payload as BrowserCommandPayload<'playback.progress'>) : undefined;
     const key = progress
       ? `playback.progress:${String(progress.playbackId)}:${String(progress.outputEpoch)}`
@@ -636,15 +639,17 @@ export class WebSocketSessionTransport implements SessionTransport {
     this.sendWire(JSON.stringify(createEnvelope({ sessionId: this.sessionId, epoch, type, payload })), type, key);
   }
   private sendWire(message: string, type = 'control', key?: string): void {
+    const queued: QueuedCommand = { message, type };
+    if (key) queued.key = key;
     if (!this.connected) {
       if (!this.reconnecting) throw new Error('Session transport is not connected.');
-      this.queueCommand({ message, type, ...(key ? { key } : {}) });
+      this.queueCommand(queued);
       return;
     }
     try {
       this.readySocket().send(message);
     } catch {
-      this.queueCommand({ message, type, ...(key ? { key } : {}) });
+      this.queueCommand(queued);
       this.handleSocketFailure(this.socket, 'command send failed');
     }
   }
@@ -701,54 +706,55 @@ const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 // The sidecar stream id is generated host-side with node:crypto randomUUID() (UUIDv4),
 // so VAD streamIds accept any RFC 4122 UUID version (v1-v8), not just v7.
 const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-function exact(value: Record<string, unknown>, keys: readonly string[]): boolean {
+function exact(value: JsonObject, keys: readonly string[]): boolean {
   return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 }
-function hasOnly(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): boolean {
+function hasOnly(value: JsonObject, required: readonly string[], optional: readonly string[]): boolean {
   const allowed = new Set([...required, ...optional]);
   return required.every((key) => key in value) && Object.keys(value).every((key) => allowed.has(key));
 }
-function integer(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 0;
+function integer(value: JsonValue | undefined): value is number {
+  return isJsonNumber(value) && Number.isSafeInteger(value) && Number(value) >= 0;
 }
-function partOk(value: Record<string, unknown>): boolean {
+function partOk(value: JsonObject): boolean {
   const index = value.partIndex;
   const partId = value.partId;
   if (index === undefined && partId === undefined) return true;
   if (index === undefined || !integer(index) || Number(index) > 7) return false;
-  if (partId !== undefined && (typeof partId !== 'string' || !UUID_ANY.test(partId))) return false;
+  if (partId !== undefined && (!isJsonString(partId) || !UUID_ANY.test(partId))) return false;
   return true;
 }
-function modelIdentityOk(value: Record<string, unknown>): boolean {
+function modelIdentityOk(value: JsonObject): boolean {
   const backendId = value.backendId;
   const modelId = value.modelId;
   if (backendId === undefined && modelId === undefined) return true;
-  return typeof backendId === 'string' && backendId.length > 0 && typeof modelId === 'string' && modelId.length > 0;
+  return isJsonString(backendId) && backendId.length > 0 && isJsonString(modelId) && modelId.length > 0;
 }
 
-/** Validates only the canonical HostEvent schema shape. */
-function isHostEventShape(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const event = value as Record<string, unknown>;
+/** Validates only the canonical HostEvent contract. */
+function isCanonicalHostEvent(value: JsonValue): boolean {
+  if (!isJsonObject(value)) return false;
+  const event = value;
   if (
     !exact(event, ['protocolVersion', 'sessionId', 'epoch', 'eventId', 'type', 'monotonicMs', 'payload']) ||
     event.protocolVersion !== 1 ||
-    typeof event.sessionId !== 'string' ||
+    !isJsonString(event.sessionId) ||
     !UUID_V7.test(event.sessionId) ||
     !integer(event.epoch) ||
-    typeof event.eventId !== 'string' ||
+    !isJsonString(event.eventId) ||
     !UUID_V7.test(event.eventId) ||
-    typeof event.type !== 'string' ||
+    !isJsonString(event.type) ||
     event.type.length === 0 ||
-    typeof event.monotonicMs !== 'number' ||
+    !isJsonNumber(event.monotonicMs) ||
     event.monotonicMs < 0 ||
-    typeof event.payload !== 'object' ||
-    event.payload === null ||
-    Array.isArray(event.payload)
+    !isJsonObject(event.payload)
   )
     return false;
-  const payload = event.payload as Record<string, unknown>;
-  const uuid = (key: string) => typeof payload[key] === 'string' && UUID_ANY.test(payload[key]);
+  const payload = event.payload;
+  const uuid = (key: string): boolean => {
+    const candidate = payload[key];
+    return isJsonString(candidate) && UUID_ANY.test(candidate);
+  };
   const anyUuid = uuid;
   switch (event.type) {
     case 'session.state': {
@@ -770,27 +776,26 @@ function isHostEventShape(value: unknown): boolean {
           'interruption_deciding',
           'stopped',
         ].includes(String(payload.phase)) ||
-        typeof payload.personaDigest !== 'string' ||
+        !isJsonString(payload.personaDigest) ||
         !/^[a-f0-9]{64}$/.test(payload.personaDigest)
       )
         return false;
       if (payload.audio !== undefined) {
-        if (typeof payload.audio !== 'object' || payload.audio === null || Array.isArray(payload.audio)) return false;
-        const audio = payload.audio as Record<string, unknown>;
+        if (!isJsonObject(payload.audio)) return false;
+        const audio = payload.audio;
         if (
           !hasOnly(audio, ['status', 'capture', 'vad', 'tts'], ['detail']) ||
           !['starting', 'warming', 'ready', 'failed', 'retrying'].includes(String(audio.status)) ||
           !['starting', 'ready', 'failed'].includes(String(audio.capture)) ||
           !['starting', 'warming', 'ready', 'failed'].includes(String(audio.vad)) ||
           !['starting', 'warming', 'ready', 'failed'].includes(String(audio.tts)) ||
-          (audio.detail !== undefined && (typeof audio.detail !== 'string' || audio.detail.length > 512))
+          (audio.detail !== undefined && (!isJsonString(audio.detail) || audio.detail.length > 512))
         )
           return false;
       }
       if (payload.planning === undefined) return true;
-      if (typeof payload.planning !== 'object' || payload.planning === null || Array.isArray(payload.planning))
-        return false;
-      const planning = payload.planning as Record<string, unknown>;
+      if (!isJsonObject(payload.planning)) return false;
+      const planning = payload.planning;
       return (
         hasOnly(
           planning,
@@ -804,13 +809,13 @@ function isHostEventShape(value: unknown): boolean {
         (planning.reasonCode === undefined ||
           ['timeout', 'provider_unavailable', 'invalid_result', 'interrupted'].includes(String(planning.reasonCode))) &&
         (planning.topic === undefined ||
-          (typeof planning.topic === 'string' &&
+          (isJsonString(planning.topic) &&
             planning.topic.length > 0 &&
             new TextEncoder().encode(planning.topic).length <= 2048)) &&
         (planning.depth === undefined || ['light', 'standard', 'deep'].includes(String(planning.depth))) &&
-        (planning.detail === undefined || (typeof planning.detail === 'string' && planning.detail.length <= 512)) &&
+        (planning.detail === undefined || (isJsonString(planning.detail) && planning.detail.length <= 512)) &&
         (planning.notes === undefined ||
-          (typeof planning.notes === 'string' && new TextEncoder().encode(planning.notes).length <= 12_288))
+          (isJsonString(planning.notes) && new TextEncoder().encode(planning.notes).length <= 12_288))
       );
     }
     case 'transcript.partial':
@@ -818,7 +823,7 @@ function isHostEventShape(value: unknown): boolean {
         exact(payload, ['utteranceId', 'sequence', 'text', 'replacedCharacters']) &&
         uuid('utteranceId') &&
         integer(payload.sequence) &&
-        typeof payload.text === 'string' &&
+        isJsonString(payload.text) &&
         payload.text.length <= 16_384 &&
         integer(payload.replacedCharacters)
       );
@@ -826,7 +831,7 @@ function isHostEventShape(value: unknown): boolean {
       return (
         exact(payload, ['turnId', 'text', 'endpointComplete']) &&
         uuid('turnId') &&
-        typeof payload.text === 'string' &&
+        isJsonString(payload.text) &&
         payload.text.length <= 16_384 &&
         payload.endpointComplete === true
       );
@@ -850,12 +855,12 @@ function isHostEventShape(value: unknown): boolean {
         exact(payload, ['turnId', 'policyVersion', 'eligible', 'posture', 'reasonCodes', 'inputDigest']) &&
         uuid('turnId') &&
         payload.policyVersion === 'v1.experimental' &&
-        typeof payload.eligible === 'boolean' &&
+        isJsonBoolean(payload.eligible) &&
         ['riff', 'question', 'challenge', 'silence'].includes(String(payload.posture)) &&
-        Array.isArray(payload.reasonCodes) &&
+        isJsonArray(payload.reasonCodes) &&
         payload.reasonCodes.length > 0 &&
-        payload.reasonCodes.every((code) => typeof code === 'string' && code.length > 0) &&
-        typeof payload.inputDigest === 'string' &&
+        payload.reasonCodes.every((code) => isJsonString(code) && code.length > 0) &&
+        isJsonString(payload.inputDigest) &&
         /^[a-f0-9]{64}$/.test(payload.inputDigest)
       );
     case 'reasoning.started':
@@ -871,7 +876,7 @@ function isHostEventShape(value: unknown): boolean {
         hasOnly(payload, ['turnId', 'responseId', 'text'], ['partIndex', 'partId']) &&
         uuid('turnId') &&
         uuid('responseId') &&
-        typeof payload.text === 'string' &&
+        isJsonString(payload.text) &&
         payload.text.length > 0 &&
         payload.text.length <= 4_096 &&
         partOk(payload)
@@ -897,7 +902,7 @@ function isHostEventShape(value: unknown): boolean {
         uuid('turnId') &&
         uuid('responseId') &&
         ['riff', 'question', 'challenge'].includes(String(payload.posture)) &&
-        typeof payload.text === 'string' &&
+        isJsonString(payload.text) &&
         payload.text.length > 0 &&
         payload.text.length <= 4_096 &&
         partOk(payload)
@@ -936,7 +941,7 @@ function isHostEventShape(value: unknown): boolean {
         integer(payload.partIndex) &&
         Number(payload.partIndex) <= 7 &&
         ['stall', 'body'].includes(String(payload.kind)) &&
-        (payload.partId === undefined || (typeof payload.partId === 'string' && UUID_ANY.test(payload.partId))) &&
+        (payload.partId === undefined || (isJsonString(payload.partId) && UUID_ANY.test(payload.partId))) &&
         ((payload.kind === 'stall' && payload.partIndex === 0) ||
           (payload.kind === 'body' && Number(payload.partIndex) >= 1))
       );
@@ -952,7 +957,7 @@ function isHostEventShape(value: unknown): boolean {
         ) &&
         uuid('responseId') &&
         integer(payload.outputEpoch) &&
-        typeof payload.resumable === 'boolean' &&
+        isJsonBoolean(payload.resumable) &&
         (payload.rewindMs === undefined || (integer(payload.rewindMs) && Number(payload.rewindMs) <= 1_000)) &&
         partOk(payload) &&
         (payload.playbackId === undefined || uuid('playbackId'))
@@ -993,13 +998,13 @@ function isHostEventShape(value: unknown): boolean {
     case 'failure':
       return (
         exact(payload, ['code', 'detail', 'correctiveAction', 'recoverable']) &&
-        typeof payload.code === 'string' &&
+        isJsonString(payload.code) &&
         payload.code.length > 0 &&
-        typeof payload.detail === 'string' &&
+        isJsonString(payload.detail) &&
         payload.detail.length > 0 &&
-        typeof payload.correctiveAction === 'string' &&
+        isJsonString(payload.correctiveAction) &&
         payload.correctiveAction.length > 0 &&
-        typeof payload.recoverable === 'boolean'
+        isJsonBoolean(payload.recoverable)
       );
     case 'tool.activity': {
       if (
@@ -1009,10 +1014,10 @@ function isHostEventShape(value: unknown): boolean {
           ['turnId', 'responseId', 'summary', 'durationMs'],
         ) ||
         !['planning', 'turn'].includes(String(payload.scope)) ||
-        typeof payload.toolCallId !== 'string' ||
+        !isJsonString(payload.toolCallId) ||
         payload.toolCallId.length === 0 ||
         new TextEncoder().encode(payload.toolCallId).length > 128 ||
-        typeof payload.toolName !== 'string' ||
+        !isJsonString(payload.toolName) ||
         payload.toolName.length === 0 ||
         new TextEncoder().encode(payload.toolName).length > 64 ||
         !['started', 'ended', 'failed'].includes(String(payload.status))
@@ -1020,7 +1025,7 @@ function isHostEventShape(value: unknown): boolean {
         return false;
       if (
         payload.summary !== undefined &&
-        (typeof payload.summary !== 'string' || new TextEncoder().encode(payload.summary).length > 160)
+        (!isJsonString(payload.summary) || new TextEncoder().encode(payload.summary).length > 160)
       )
         return false;
       if (payload.durationMs !== undefined && !integer(payload.durationMs)) return false;
@@ -1038,6 +1043,6 @@ function isHostEventShape(value: unknown): boolean {
  * The schema check is deliberately separate from the stateful identity and
  * sequence checks performed by the transport message handler above.
  */
-export function isStrictHostEvent(value: unknown): value is HostEvent {
-  return isHostEventShape(value);
+export function isStrictHostEvent(value: JsonValue): value is HostEvent {
+  return isCanonicalHostEvent(value);
 }

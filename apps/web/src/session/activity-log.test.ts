@@ -27,7 +27,7 @@ describe('activity log', () => {
       message: 'something odd',
       detail: 'detail text',
     });
-    expect(typeof warned!.ts).toBe('number');
+    expect(Number.isFinite(warned!.ts)).toBe(true);
     activityLog.append({ level: 'error', source: 'controller', message: 'degraded' });
     expect(activityLog.entries()[1]!.detail).toBeUndefined();
     expect(activityLog.entries()[1]!.level).toBe('error');
@@ -80,9 +80,10 @@ describe('activity log', () => {
     const text = activityLog.toText();
     expect(text).toContain('ERROR transport: protocol failure');
     expect(text).toContain('vad.speech_start');
+    // SAFETY: toJSON serializes the locally constructed activity entry array.
     const parsed = JSON.parse(activityLog.toJSON()) as ActivityEntry[];
     expect(parsed).toHaveLength(1);
     expect(parsed[0]).toMatchObject({ level: 'error', source: 'transport', message: 'protocol failure' });
-    expect(typeof parsed[0]!.ts).toBe('number');
+    expect(Number.isFinite(parsed[0]!.ts)).toBe(true);
   });
 });

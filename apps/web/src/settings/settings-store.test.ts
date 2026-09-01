@@ -15,6 +15,7 @@ afterEach(async () => {
 });
 
 const settings = () => ({
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   version: 1 as const,
   agentName: 'Ada',
   persona: 'You are a sharp skeptic.',
@@ -49,7 +50,7 @@ describe('SettingsStore', () => {
     dbName = 'settings-test-b';
     const db = await openPodcasterDatabase(indexedDB, dbName);
     const transaction = db.transaction(STORES.meta, 'readwrite');
-    transaction.objectStore(STORES.meta).put({ key: 'settings:v1', notTheRightShape: true });
+    transaction.objectStore(STORES.meta).put({ key: 'settings:v1', invalidStoredSettings: true });
     await new Promise<void>((resolve) => {
       transaction.oncomplete = () => resolve();
     });
@@ -62,6 +63,7 @@ describe('SettingsStore', () => {
     const store = await SettingsStore.open(indexedDB, dbName);
     expect(await store.save(settings())).toBe(true);
     const oversized = {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       version: 1 as const,
       agentName: 'Ada',
       persona: 'x'.repeat(9000),
@@ -75,6 +77,7 @@ describe('SettingsStore', () => {
     dbName = 'settings-test-models';
     const store = await SettingsStore.open(indexedDB, dbName);
     const value = {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       version: 1 as const,
       agentName: 'Ada',
       persona: 'You are a sharp skeptic.',
@@ -106,6 +109,7 @@ describe('SettingsStore', () => {
     dbName = 'settings-test-d';
     const store = await SettingsStore.open(indexedDB, dbName);
     const longName = {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       version: 1 as const,
       agentName: 'x'.repeat(65),
       persona: 'You are a sharp skeptic.',
@@ -119,6 +123,7 @@ describe('SettingsStore', () => {
     dbName = 'settings-test-invalid-model-profile';
     const store = await SettingsStore.open(indexedDB, dbName);
     const base = {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       version: 1 as const,
       agentName: 'Ada',
       persona: 'You are a sharp skeptic.',

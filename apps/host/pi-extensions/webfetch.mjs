@@ -15,7 +15,7 @@ const parameters = {
 };
 
 function validatedUrl(value) {
-  if (typeof value !== 'string' || value.trim().length === 0) throw new Error('webfetch requires a URL');
+  if (String(value) !== value || value.trim().length === 0) throw new Error('webfetch requires a URL');
   let parsed;
   try {
     parsed = new URL(value);

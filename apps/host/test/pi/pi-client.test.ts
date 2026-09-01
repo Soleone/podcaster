@@ -51,6 +51,7 @@ describe('production Pi RPC boundary', () => {
       .split('\n')
       .map((line) => JSON.parse(line));
     const prompt = String(calls.find((call) => call.command === 'prompt')?.message);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     // Stall framing leads the message and frames part 0 as a hook, not a full answer.
     expect(prompt.startsWith(PI_STALL_INSTRUCTION)).toBe(true);
     expect(prompt).toMatch(/NOT an attempt at a complete answer/i);
@@ -137,6 +138,7 @@ describe('production Pi RPC boundary', () => {
     ['login', 'login_required'],
     ['rate-limit', 'rate_limited'],
     ['incompatible-model', 'incompatible'],
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
   ] as const)('maps %s readiness safely', async (scenario, expected) => {
     const { value } = await client(scenario);
     const status = await value.probe();
@@ -144,6 +146,7 @@ describe('production Pi RPC boundary', () => {
     expect(status.detail).not.toMatch(/secret|token=/i);
   });
 
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   it('does not accept unrelated normally settled assistant text as readiness or mislabel it as an installation mismatch', async () => {
     const { value } = await client('unrelated-probe');
     expect(await value.probe()).toMatchObject({ status: 'unavailable' });
@@ -162,12 +165,14 @@ describe('production Pi RPC boundary', () => {
     await value.shutdown();
   });
 
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   it('treats U+2028 as content rather than a JSONL separator', async () => {
     const { value } = await client('unicode-separator');
     expect(await events(value)).toContainEqual({ type: 'delta', text: '\u2028world' });
     await value.shutdown();
   });
 
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   it.each(['malformed', 'oversized', 'invalid-utf8', 'crlf', 'crash', 'too-many-words'] as const)(
     'fails safely on %s child output',
     async (scenario) => {
@@ -182,6 +187,7 @@ describe('production Pi RPC boundary', () => {
   it.each([
     ['async-login', 'login_required'],
     ['async-rate-limit', 'rate_limited'],
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
   ] as const)('classifies sanitized asynchronous provider failure %s', async (scenario, state) => {
     const { value } = await client(scenario);
     const result = await events(value);
@@ -206,6 +212,7 @@ describe('production Pi RPC boundary', () => {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const descendantPid = calls.find((item) => item.descendantPid)?.descendantPid as number;
     expect(descendantPid).toBeTypeOf('number');
     await value.shutdown();

@@ -5,6 +5,8 @@ import {
   resolvePiExecutableConfiguration,
   type ActiveRequest,
   type Lifecycle,
+  asObjectValue,
+  isJsonString,
   type ObjectValue,
 } from './pi-process.js';
 
@@ -77,16 +79,16 @@ function readiness(status: PiReadinessStatus): PiReadiness {
             : 'Retry, or continue transcript-only.';
   return { status, detail, correctiveAction };
 }
-function classify(error: unknown): PiReadiness {
-  const lower = (error instanceof Error ? error.message : String(error)).toLowerCase();
+function classify(cause: unknown): PiReadiness {
+  const lower = (cause instanceof Error ? cause.message : String(cause)).toLowerCase();
   if (/429|rate.?limit|quota|too many requests/.test(lower)) return readiness('rate_limited');
   if (/login|sign.?in|authenticat|unauthorized|forbidden|credential/.test(lower)) return readiness('login_required');
   if (/incompatible|version|protocol|unsupported|unknown option|model not found|pinned model/.test(lower))
     return readiness('incompatible');
   return readiness('unavailable');
 }
-function errorEvent(error: unknown): PiEvent {
-  const mapped = classify(error);
+function errorEvent(cause: unknown): PiEvent {
+  const mapped = classify(cause);
   return {
     type: 'error',
     state: mapped.status === 'ready' ? 'unavailable' : mapped.status,
@@ -101,12 +103,10 @@ function promptFor(input: PiRequestInput): string {
     ['transcript', input.transcript, 16_384],
     ['boundedContext', input.boundedContext, 16_384],
   ] as const)
-    if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > max)
-      throw new Error(`${name} exceeds its bound`);
+    if (Buffer.byteLength(value, 'utf8') > max) throw new Error(`${name} exceeds its bound`);
   let instruction = '';
   if (input.instruction !== undefined) {
-    if (typeof input.instruction !== 'string' || Buffer.byteLength(input.instruction, 'utf8') > 4096)
-      throw new Error('instruction exceeds its bound');
+    if (Buffer.byteLength(input.instruction, 'utf8') > 4096) throw new Error('instruction exceeds its bound');
     instruction = `${input.instruction}\n`;
   }
   return `${instruction}Posture: ${input.posture}\nBounded context:\n${input.boundedContext}\nTranscript:\n${input.transcript}`;
@@ -334,8 +334,7 @@ export class StdioPiClient implements PiClient {
           'abort settlement timed out',
         );
         const state = await this.send('get_state', {}, this.requestDeadlineMs);
-        if ((state.data as ObjectValue | undefined)?.isStreaming !== false)
-          throw new Error('Pi remained streaming after abort');
+        if (asObjectValue(state.data)?.isStreaming !== false) throw new Error('Pi remained streaming after abort');
         this.finishActive(active);
       } catch {
         try {
@@ -361,8 +360,8 @@ export class StdioPiClient implements PiClient {
     const lifecycle = this.active ?? this.probeLifecycle;
     if (!lifecycle) return;
     if (value.type === 'message_update') {
-      const update = value.assistantMessageEvent as ObjectValue | undefined;
-      if (update?.type === 'text_delta' && typeof update.delta === 'string' && !lifecycle.messageEnded) {
+      const update = asObjectValue(value.assistantMessageEvent);
+      if (update?.type === 'text_delta' && isJsonString(update.delta) && !lifecycle.messageEnded) {
         if (this.active) {
           if (this.active.cutoff) return;
           const bytes = Buffer.byteLength(update.delta, 'utf8');
@@ -385,11 +384,11 @@ export class StdioPiClient implements PiClient {
       return;
     }
     if (value.type === 'message_end') {
-      const message = value.message as ObjectValue | undefined;
+      const message = asObjectValue(value.message);
       if (message?.role === 'assistant') {
         lifecycle.messageEnded = true;
-        lifecycle.stopReason = typeof message.stopReason === 'string' ? message.stopReason : undefined;
-        lifecycle.providerError = typeof message.errorMessage === 'string' ? message.errorMessage : undefined;
+        lifecycle.stopReason = isJsonString(message.stopReason) ? message.stopReason : undefined;
+        lifecycle.providerError = isJsonString(message.errorMessage) ? message.errorMessage : undefined;
       }
     } else if (value.type === 'agent_settled') lifecycle.settled = true;
     if (this.active && !this.active.cutoff && this.active.messageEnded && this.active.settled) {
@@ -437,8 +436,11 @@ export class StdioPiClient implements PiClient {
     return this.process.send(type, fields, timeoutMs);
   }
   private assertPinnedModel(state: ObjectValue, models: ObjectValue): void {
-    const selected = (state.data as ObjectValue | undefined)?.model as ObjectValue | undefined;
-    const list = ((models.data as ObjectValue | undefined)?.models ?? []) as ObjectValue[];
+    const selected = asObjectValue(asObjectValue(state.data)?.model);
+    const modelValues = asObjectValue(models.data)?.models;
+    const list = Array.isArray(modelValues)
+      ? modelValues.map(asObjectValue).filter((item): item is ObjectValue => item !== undefined)
+      : [];
     const [provider, id] = this.model.split('/', 2);
     if (
       selected?.provider !== provider ||

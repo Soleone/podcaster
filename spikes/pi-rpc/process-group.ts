@@ -16,13 +16,19 @@ export async function stopDetachedProcessGroup(
   const alive = () => {
     try { process.kill(target, 0); return true; }
     catch (error) {
+      // SAFETY: only `process.kill` runs above, and Node rejects it with an
+      // ErrnoException whose `code` is the errno string; anything else is rethrown.
       if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
       throw error;
     }
   };
   const signal = (name: NodeJS.Signals) => {
     try { if (groupSignalUsed) process.kill(target, name); else child.kill(name); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    catch (error) {
+      // SAFETY: the try body only calls `process.kill` or `child.kill`, both of
+      // which reject with an ErrnoException carrying the errno `code`.
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
   };
   const waitForGone = async () => {
     const deadline = Date.now() + timeoutMs;

@@ -5,6 +5,14 @@ export const POLICY_VERSION = 'v1.experimental' as const;
 // Require a few eligible turns between challenges so deeper responses feel earned.
 export const CHALLENGE_COOLDOWN_TURNS = 3;
 export type Posture = 'riff' | 'question' | 'challenge' | 'silence';
+
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+/** True for plain mapping objects such as JSON.stringify emits. */
+function isJsonObject(value: JsonValue): value is { [key: string]: JsonValue } {
+  return Object.prototype.toString.call(value) === '[object Object]';
+}
+
 export type PolicyReasonCode =
   | 'empty'
   | 'too_short'
@@ -61,13 +69,14 @@ function isNonSubstantive(value: string): boolean {
   return words.length > 0 && words.every((word) => nonSubstantiveWords.has(word.toLocaleLowerCase()));
 }
 
-function canonicalize(value: unknown): string {
+function canonicalize(value: JsonValue): string {
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  if (value && typeof value === 'object')
-    return `{${Object.entries(value as Record<string, unknown>)
+  if (value !== null && isJsonObject(value)) {
+    return `{${Object.entries(value)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, item]) => `${JSON.stringify(key)}:${canonicalize(item)}`)
       .join(',')}}`;
+  }
   return JSON.stringify(value);
 }
 

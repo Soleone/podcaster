@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RecordingStore } from '../storage/recording-store';
 import type { StableEvent } from '../storage/stable-turn-writer';
 import { RecordingRecorder, type EncodeMp3 } from './recorder';
+import type { JsonObject } from '../lib/json-values';
 
 let dbName = '';
 afterEach(async () => {
@@ -22,7 +23,10 @@ const TURN = '018f1f32-7ac0-7def-8abc-0123456789ab';
 const RESPONSE = '018f1f32-7ac1-7def-8abc-0123456789ab';
 const PLAYBACK = '018f1f32-7ac2-7def-8abc-0123456789ab';
 
-function event<T extends StableEvent['type']>(type: T, payload: Record<string, unknown>): StableEvent {
+type EventPayload = JsonObject;
+
+function event<T extends StableEvent['type']>(type: T, payload: EventPayload): StableEvent {
+  // SAFETY: The fixture literal is constructed in this file with StableEvent's required shape.
   return {
     protocolVersion: 1,
     eventId: '018f1f32-7abd-7def-8abc-0123456789ab',
@@ -185,6 +189,7 @@ describe('RecordingRecorder', () => {
     store.close();
   });
 
+  // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
   it('marks completed playback as delivered and not interrupted', async () => {
     const { store, recorder } = await setup();
     await store.setRecordingEnabled(true);
@@ -227,6 +232,7 @@ describe('RecordingRecorder', () => {
     store.close();
   });
 
+  // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
   it('finalizes an open user slice as truncated on stop and drops open agent buffers', async () => {
     const { store, recorder } = await setup();
     await store.setRecordingEnabled(true);

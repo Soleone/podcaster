@@ -72,6 +72,7 @@ export class RecordingStore {
   async updateTurnId(itemId: string, turnId: string): Promise<void> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
     const store = transaction.objectStore(STORES.recordingItems);
+    // SAFETY: this store is populated only with StoredRecordingItem rows by this repository.
     const item = (await requestResult(store.get(itemId))) as StoredRecordingItem | undefined;
     if (item && item.turnId !== turnId) store.put({ ...item, turnId });
     await transactionDone(transaction);
@@ -79,6 +80,7 @@ export class RecordingStore {
 
   async getSessionItems(sessionId: string): Promise<StoredRecordingItem[]> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readonly');
+    // SAFETY: this indexed query reads rows written as StoredRecordingItem values by this repository.
     return (await requestResult(
       transaction.objectStore(STORES.recordingItems).index('sessionId').getAll(sessionId),
     )) as StoredRecordingItem[];
@@ -101,6 +103,7 @@ export class RecordingStore {
   async setItemTrimmed(itemId: string, trimmed: boolean): Promise<void> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
     const store = transaction.objectStore(STORES.recordingItems);
+    // SAFETY: this store is populated only with StoredRecordingItem rows by this repository.
     const item = (await requestResult(store.get(itemId))) as StoredRecordingItem | undefined;
     if (item) store.put({ ...item, trimmed });
     await transactionDone(transaction);
@@ -117,6 +120,7 @@ export class RecordingStore {
     const store = transaction.objectStore(STORES.recordingItems);
     const updates: StoredRecordingItem[] = [];
     for (const itemId of itemIds) {
+      // SAFETY: this store is populated only with StoredRecordingItem rows by this repository.
       const item = (await requestResult(store.get(itemId))) as StoredRecordingItem | undefined;
       if (!item || item.sessionId !== sessionId) {
         transaction.abort();
@@ -131,6 +135,7 @@ export class RecordingStore {
 
   async countSessionItems(sessionId: string): Promise<number> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readonly');
+    // SAFETY: IndexedDB count requests always resolve to a number.
     return (await requestResult(
       transaction.objectStore(STORES.recordingItems).index('sessionId').count(sessionId),
     )) as number;
@@ -139,6 +144,7 @@ export class RecordingStore {
   async deleteSession(sessionId: string): Promise<void> {
     const transaction = this.db.transaction(STORES.recordingItems, 'readwrite');
     const store = transaction.objectStore(STORES.recordingItems);
+    // SAFETY: this indexed query reads rows written as StoredRecordingItem values by this repository.
     const items = (await requestResult(store.index('sessionId').getAll(sessionId))) as StoredRecordingItem[];
     for (const item of items) store.delete(item.itemId);
     await transactionDone(transaction);

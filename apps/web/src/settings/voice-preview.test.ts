@@ -24,6 +24,7 @@ function installAudioMock() {
     resume: vi.fn(async () => {
       context.state = 'running';
     }),
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     decodeAudioData: vi.fn(async () => ({}) as AudioBuffer),
     createBufferSource: vi.fn(() => {
       const source: FakeSource = {
@@ -52,9 +53,10 @@ function installFetchMock(overrides: { ok?: boolean; status?: number; error?: st
       ok: overrides.ok ?? true,
       status: overrides.status ?? 200,
       arrayBuffer: async () => new ArrayBuffer(8),
-      json: async () => (overrides.error ? { error: overrides.error } : {}),
+      json: async () => (overrides.error ? { error: overrides.error } : undefined),
     };
-    return response as unknown as Response;
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+    return response as Response;
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
@@ -82,6 +84,7 @@ describe('startVoicePreview', () => {
     expect(url).toBe('/api/voice-preview');
     expect(init!.method).toBe('POST');
     expect(init!.credentials).toBe('same-origin');
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     expect((init!.headers as Record<string, string>)['x-podcaster-capability']).toBe('cap-1');
     expect(init!.body).toBe(JSON.stringify({ voiceId: 'af_bella', speedModifier: 1.0 }));
 

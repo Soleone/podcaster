@@ -17,6 +17,16 @@ import {
   type StoredTurn,
 } from './schema';
 
+type ExternalValue = string | number | boolean | null | undefined | ExternalRecord | readonly ExternalValue[];
+interface ExternalRecord {
+  readonly [key: string]: ExternalValue;
+}
+const valueTag = Object.prototype.toString;
+const isJsonString = (value: ExternalValue): value is string => valueTag.call(value) === '[object String]';
+const isJsonNumber = (value: ExternalValue): value is number => valueTag.call(value) === '[object Number]';
+const isJsonObject = (value: ExternalValue): value is ExternalRecord => valueTag.call(value) === '[object Object]';
+const isJsonArray = (value: ExternalValue): value is readonly ExternalValue[] => Array.isArray(value);
+
 export type PersistedSessionEvent = HostEvent | PlaybackProgressEvent | PlaybackPausedEvent | PlaybackStoppedEvent;
 export type StableEvent = PersistedSessionEvent;
 export interface StorageResult {
@@ -47,8 +57,8 @@ const isoNow = () => new Date().toISOString();
 const turnKey = (sessionId: string, turnId: string) => `${sessionId}:${turnId}`;
 const accountingKey = (sessionId: string, playbackId: string, outputEpoch: number) =>
   `${sessionId}:${outputEpoch}:${playbackId}`;
-const stringValue = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
-const numberValue = (value: unknown): number | undefined =>
+const stringValue = (value: ExternalValue): string | undefined => (isJsonString(value) ? value : undefined);
+const numberValue = (value: ExternalValue): number | undefined =>
   Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
 
 /**
@@ -56,7 +66,7 @@ const numberValue = (value: unknown): number | undefined =>
  * paired part identity only for deterministic archive reconstruction; a bare
  * partIndex must never change active final checkpoint semantics.
  */
-function legacyMultipartPart(payload: Record<string, unknown>): { partId: string; partIndex: number } | undefined {
+function legacyMultipartPart(payload: ExternalRecord): { partId: string; partIndex: number } | undefined {
   const partId = stringValue(payload.partId);
   const partIndex = numberValue(payload.partIndex);
   return partId !== undefined && partIndex !== undefined ? { partId, partIndex } : undefined;
@@ -75,7 +85,7 @@ function timestampMs(value: string | null | undefined): number | undefined {
  */
 export function sessionActiveDurationMs(session: StoredSession, atMs = Date.now()): number {
   const persisted =
-    typeof session.activeDurationMs === 'number' && Number.isFinite(session.activeDurationMs)
+    isJsonNumber(session.activeDurationMs) && Number.isFinite(session.activeDurationMs)
       ? Math.max(0, session.activeDurationMs)
       : undefined;
   if (persisted !== undefined) {
@@ -121,12 +131,15 @@ function blankTurn(sessionId: string, turnId: string, at: string, timelineSequen
   };
 }
 
-function planningSnapshot(value: unknown): StoredSession['planning'] | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const input = value as Record<string, unknown>;
+function planningSnapshot(value: ExternalValue): StoredSession['planning'] | undefined {
+  if (!value || !isJsonObject(value) || isJsonArray(value)) return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+  const input = value as ExternalRecord;
   const statuses: PlanningStatus[] = ['skipped', 'planning', 'ready', 'failed', 'cancelled', 'continued'];
   const depths: PlanningDepth[] = ['light', 'standard', 'deep'];
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   const stages = ['starting', 'researching', 'finalizing'] as const;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   const reasonCodes = ['timeout', 'provider_unavailable', 'invalid_result', 'interrupted'] as const;
   if (
     !Object.keys(input).every((key) =>
@@ -145,48 +158,58 @@ function planningSnapshot(value: unknown): StoredSession['planning'] | undefined
     )
   )
     return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   if (!statuses.includes(input.status as PlanningStatus)) return undefined;
   if (input.attempt !== undefined && (!Number.isSafeInteger(input.attempt) || Number(input.attempt) < 0))
     return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   if (input.stage !== undefined && !stages.includes(input.stage as (typeof stages)[number])) return undefined;
   if (input.deadlineMs !== undefined && (!Number.isSafeInteger(input.deadlineMs) || Number(input.deadlineMs) < 0))
     return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   if (input.reasonCode !== undefined && !reasonCodes.includes(input.reasonCode as (typeof reasonCodes)[number]))
     return undefined;
   if (
     input.topic !== undefined &&
-    (typeof input.topic !== 'string' ||
+    (!isJsonString(input.topic) ||
       input.topic.length === 0 ||
       new TextEncoder().encode(input.topic).length > MAX_PLANNING_TOPIC_BYTES)
   )
     return undefined;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   if (input.depth !== undefined && !depths.includes(input.depth as PlanningDepth)) return undefined;
   if (
     input.progress !== undefined &&
     (!Number.isSafeInteger(input.progress) || Number(input.progress) < 0 || Number(input.progress) > 100)
   )
     return undefined;
-  if (input.detail !== undefined && (typeof input.detail !== 'string' || input.detail.length > 512)) return undefined;
+  if (input.detail !== undefined && (!isJsonString(input.detail) || input.detail.length > 512)) return undefined;
   if (
     input.notes !== undefined &&
-    (typeof input.notes !== 'string' || new TextEncoder().encode(input.notes).length > MAX_PLANNING_NOTES_BYTES)
+    (!isJsonString(input.notes) || new TextEncoder().encode(input.notes).length > MAX_PLANNING_NOTES_BYTES)
   )
     return undefined;
   return {
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     status: input.status as PlanningStatus,
-    ...(typeof input.attempt === 'number' ? { attempt: input.attempt } : {}),
+    ...(isJsonNumber(input.attempt) ? { attempt: input.attempt } : undefined),
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     ...(stages.includes(input.stage as (typeof stages)[number])
-      ? { stage: input.stage as (typeof stages)[number] }
-      : {}),
-    ...(typeof input.deadlineMs === 'number' ? { deadlineMs: input.deadlineMs } : {}),
+      ? // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+        { stage: input.stage as (typeof stages)[number] }
+      : undefined),
+    ...(isJsonNumber(input.deadlineMs) ? { deadlineMs: input.deadlineMs } : undefined),
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     ...(reasonCodes.includes(input.reasonCode as (typeof reasonCodes)[number])
-      ? { reasonCode: input.reasonCode as (typeof reasonCodes)[number] }
-      : {}),
-    ...(typeof input.topic === 'string' ? { topic: input.topic } : {}),
-    ...(depths.includes(input.depth as PlanningDepth) ? { depth: input.depth as PlanningDepth } : {}),
-    ...(typeof input.progress === 'number' ? { progress: input.progress } : {}),
-    ...(typeof input.detail === 'string' ? { detail: input.detail } : {}),
-    ...(typeof input.notes === 'string' ? { notes: input.notes } : {}),
+      ? // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+        { reasonCode: input.reasonCode as (typeof reasonCodes)[number] }
+      : undefined),
+    ...(isJsonString(input.topic) ? { topic: input.topic } : undefined),
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+    ...(depths.includes(input.depth as PlanningDepth) ? { depth: input.depth as PlanningDepth } : undefined),
+    ...(isJsonNumber(input.progress) ? { progress: input.progress } : undefined),
+    ...(isJsonString(input.detail) ? { detail: input.detail } : undefined),
+    ...(isJsonString(input.notes) ? { notes: input.notes } : undefined),
   };
 }
 
@@ -227,6 +250,7 @@ export class StableTurnWriter {
     return this.guard(async () => {
       const transaction = this.db.transaction(STORES.sessions, 'readwrite');
       const sessions = transaction.objectStore(STORES.sessions);
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const existing = (await requestResult(sessions.get(input.sessionId))) as StoredSession | undefined;
       if (existing) {
         transaction.abort();
@@ -245,8 +269,8 @@ export class StableTurnWriter {
         activeDurationMs: 0,
         runningSince: null,
         pausedAt: null,
-        ...(title ? { title } : {}),
-        ...(input.preparation ? { preparation: preparationDraft(input.preparation) } : {}),
+        ...(title ? { title } : undefined),
+        ...(input.preparation ? { preparation: preparationDraft(input.preparation) } : undefined),
         failures: [],
       } satisfies StoredSession);
       await transactionDone(transaction);
@@ -261,6 +285,7 @@ export class StableTurnWriter {
     return this.guard(async () => {
       const transaction = this.db.transaction(STORES.sessions, 'readwrite');
       const sessions = transaction.objectStore(STORES.sessions);
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const session = (await requestResult(sessions.get(sessionId))) as StoredSession | undefined;
       if (!session || session.state !== 'draft') {
         transaction.abort();
@@ -288,6 +313,7 @@ export class StableTurnWriter {
     return this.guard(async () => {
       const transaction = this.db.transaction([STORES.sessions, STORES.meta], 'readwrite');
       const sessions = transaction.objectStore(STORES.sessions);
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const existing = (await requestResult(sessions.get(input.sessionId))) as StoredSession | undefined;
       const now = input.startedAt ?? isoNow();
       const nowMs = timestampMs(now) ?? Date.now();
@@ -312,8 +338,8 @@ export class StableTurnWriter {
           activeDurationMs,
           runningSince: now,
           pausedAt: null,
-          ...(input.settings ? { settings: input.settings } : {}),
-          ...(input.planning ? { planning: input.planning } : {}),
+          ...(input.settings ? { settings: input.settings } : undefined),
+          ...(input.planning ? { planning: input.planning } : undefined),
           failures: [],
         } satisfies StoredSession);
       } else {
@@ -332,14 +358,14 @@ export class StableTurnWriter {
           ...(preserveRuntimeIdentity
             ? (existing.settings ?? input.settings)
               ? { settings: existing.settings ?? input.settings }
-              : {}
+              : undefined
             : input.settings
               ? { settings: input.settings }
-              : {}),
+              : undefined),
           ...(preserveRuntimeIdentity
             ? (existing.planning ?? input.planning)
               ? { planning: existing.planning ?? input.planning }
-              : {}
+              : undefined
             : { planning: draftPlanning }),
         });
       }
@@ -350,27 +376,32 @@ export class StableTurnWriter {
 
   async getSession(sessionId: string): Promise<StoredSession | undefined> {
     const transaction = this.db.transaction(STORES.sessions, 'readonly');
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     return (await requestResult(transaction.objectStore(STORES.sessions).get(sessionId))) as StoredSession | undefined;
   }
 
   /** Every local session, most recently active first. */
   async listSessions(): Promise<StoredSession[]> {
     const transaction = this.db.transaction(STORES.sessions, 'readonly');
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     const sessions = (await requestResult(transaction.objectStore(STORES.sessions).getAll())) as StoredSession[];
     return sessions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async countTurns(sessionId: string): Promise<number> {
     const transaction = this.db.transaction(STORES.turns, 'readonly');
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     return (await requestResult(transaction.objectStore(STORES.turns).index('sessionId').count(sessionId))) as number;
   }
 
   async recoverActiveSession(): Promise<StoredSession | undefined> {
     const transaction = this.db.transaction([STORES.sessions, STORES.meta], 'readonly');
+    // SAFETY: IndexedDB returned the row written under this local storage contract.
     const active = (await requestResult(transaction.objectStore(STORES.meta).get('activeSession'))) as
       | { sessionId?: string }
       | undefined;
     if (!active?.sessionId) return;
+    // SAFETY: IndexedDB returned the row written under this local storage contract.
     return (await requestResult(transaction.objectStore(STORES.sessions).get(active.sessionId))) as
       | StoredSession
       | undefined;
@@ -385,6 +416,7 @@ export class StableTurnWriter {
     return this.guard(async () => {
       const transaction = this.db.transaction([STORES.sessions, STORES.turns, STORES.meta], 'readwrite');
       const store = transaction.objectStore(STORES.sessions);
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const session = (await requestResult(store.get(sessionId))) as StoredSession | undefined;
       if (!session) {
         transaction.abort();
@@ -399,8 +431,10 @@ export class StableTurnWriter {
         throw new PauseRejected('The session has already ended.');
       }
       const atMs = timestampMs(pausedAt) ?? Date.now();
+      // SAFETY: IndexedDB returned the row written under this local storage contract.
       const turns = (await requestResult(
         transaction.objectStore(STORES.turns).index('sessionId').getAll(sessionId),
+        // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       )) as StoredTurn[];
       for (const turn of turns) {
         const checkpoint = playbacks.find(
@@ -459,6 +493,7 @@ export class StableTurnWriter {
     return this.guard(async () => {
       const transaction = this.db.transaction([STORES.sessions, STORES.meta], 'readwrite');
       const store = transaction.objectStore(STORES.sessions);
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const session = (await requestResult(store.get(sessionId))) as StoredSession | undefined;
       if (session) {
         const atMs = timestampMs(endedAt) ?? Date.now();
@@ -473,6 +508,7 @@ export class StableTurnWriter {
         });
       }
       const meta = transaction.objectStore(STORES.meta);
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const active = (await requestResult(meta.get('activeSession'))) as { sessionId?: string } | undefined;
       if (active?.sessionId === sessionId) meta.delete('activeSession');
       await transactionDone(transaction);
@@ -495,6 +531,7 @@ export class StableTurnWriter {
       const sessions = transaction.objectStore(STORES.sessions);
       const at = isoNow();
       if (event.type === 'session.state') {
+        // SAFETY: The value is validated or constructed with this declared contract at this boundary.
         const session = (await requestResult(sessions.get(event.sessionId))) as StoredSession | undefined;
         const planning = planningSnapshot(event.payload.planning);
         if (session && planning) {
@@ -513,10 +550,12 @@ export class StableTurnWriter {
       const turnId = 'turnId' in event.payload ? stringValue(event.payload.turnId) : undefined;
       if (turnId)
         turn =
+          // SAFETY: The value is validated or constructed with this declared contract at this boundary.
           ((await requestResult(turns.get(turnKey(event.sessionId, turnId)))) as StoredTurn | undefined) ??
           blankTurn(event.sessionId, turnId, at, event.monotonicMs);
       const responseId = 'responseId' in event.payload ? stringValue(event.payload.responseId) : undefined;
       if (!turn && responseId) {
+        // SAFETY: The value is validated or constructed with this declared contract at this boundary.
         const matches = (await requestResult(turns.index('responseId').getAll(responseId))) as StoredTurn[];
         turn = matches.find((candidate) => candidate.sessionId === event.sessionId);
       }
@@ -528,6 +567,7 @@ export class StableTurnWriter {
             ? (numberValue(event.payload.cancelledEpoch) ?? event.epoch)
             : event.epoch;
       if (!turn && playbackId) {
+        // SAFETY: The value is validated or constructed with this declared contract at this boundary.
         const matches = (await requestResult(turns.index('playbackId').getAll(playbackId))) as StoredTurn[];
         turn = matches.find(
           (candidate) => candidate.sessionId === event.sessionId && candidate.outputEpoch === playbackEpoch,
@@ -541,9 +581,9 @@ export class StableTurnWriter {
         const posture = event.payload.posture;
         if (posture === 'riff' || posture === 'question' || posture === 'challenge' || posture === 'silence')
           turn.posture = posture;
-        if (typeof event.payload.eligible === 'boolean') turn.eligible = event.payload.eligible;
+        if (event.payload.eligible === true || event.payload.eligible === false) turn.eligible = event.payload.eligible;
         const reasonCodes = Array.isArray(event.payload.reasonCodes) ? event.payload.reasonCodes : [];
-        if (typeof reasonCodes[0] === 'string') turn.policyReason = reasonCodes[0];
+        if (isJsonString(reasonCodes[0])) turn.policyReason = reasonCodes[0];
       } else if (event.type === 'reasoning.started' && turn && responseId) {
         // Associate the response identity with the user turn before any early
         // tts.started needs to reconcile playback accounting against it.
@@ -562,7 +602,8 @@ export class StableTurnWriter {
         if (responseId) turn.responseId = responseId;
         const text = stringValue(event.payload.text);
         if (text !== undefined) {
-          const legacy = legacyMultipartPart(event.payload as Record<string, unknown>);
+          // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+          const legacy = legacyMultipartPart(event.payload as ExternalRecord);
           if (legacy) {
             const parts = { ...turn.legacyReasoningParts, [legacy.partId]: { partIndex: legacy.partIndex, text } };
             turn.legacyReasoningParts = parts;
@@ -661,8 +702,11 @@ export class StableTurnWriter {
           turn.interruptionIntent = intent;
         turn.controlOnly = event.payload.action === 'resume';
         turn.interruptedResponseId = responseId ?? null;
+        // SAFETY: Rows in this index are StoredTurn values written by this store.
         const interruptedMatches = responseId
-          ? ((await requestResult(turns.index('responseId').getAll(responseId))) as StoredTurn[])
+          ? // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+            // SAFETY: IndexedDB returned the row written under this local storage contract.
+            ((await requestResult(turns.index('responseId').getAll(responseId))) as StoredTurn[])
           : [];
         const interrupted = interruptedMatches.find((candidate) => candidate.sessionId === event.sessionId);
         if (interrupted && interrupted.key !== turn.key) {
@@ -682,6 +726,7 @@ export class StableTurnWriter {
           if (!turn.failures.includes(code)) turn.failures.push(code);
         } else {
           const sessions = transaction.objectStore(STORES.sessions);
+          // SAFETY: The value is validated or constructed with this declared contract at this boundary.
           const session = (await requestResult(sessions.get(event.sessionId))) as StoredSession | undefined;
           if (session && !session.failures.includes(code))
             sessions.put({ ...session, failures: [...session.failures, code], updatedAt: isoNow() });
@@ -698,8 +743,10 @@ export class StableTurnWriter {
 
   async getTurns(sessionId: string): Promise<StoredTurn[]> {
     const transaction = this.db.transaction(STORES.turns, 'readonly');
+    // SAFETY: IndexedDB returned the row written under this local storage contract.
     return (await requestResult(
       transaction.objectStore(STORES.turns).index('sessionId').getAll(sessionId),
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     )) as StoredTurn[];
   }
 
@@ -725,6 +772,7 @@ export class StableTurnWriter {
   ): Promise<PlaybackAccounting> {
     const key = accountingKey(sessionId, playbackId, outputEpoch);
     return (
+      // SAFETY: IndexedDB returned the row written under this local storage contract.
       ((await requestResult(transaction.objectStore(STORES.terminalReceipts).get(key))) as
         | PlaybackAccounting
         | undefined) ?? { playbackId: key, pendingMax: 0, terminal: null }

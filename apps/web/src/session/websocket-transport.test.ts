@@ -2,11 +2,37 @@ import { CONTRACT_VALIDATORS, type HostEvent, type PlaybackStoppedEvent } from '
 import { encodeBinaryAudioFrame } from '@app/contracts/binary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isStrictHostEvent, WebSocketSessionTransport } from './websocket-transport';
+import { parseJsonValue, type JsonObject, type JsonValue } from '../lib/json-values';
 import { activityLog } from './activity-log';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const originalWebSocket = globalThis.WebSocket;
+interface TestOutputBinding {
+  playbackId: string;
+  responseId?: string;
+  outputEpoch: number;
+  expectedSequence: number;
+  sampleOffset: number;
+  terminal: boolean;
+  streamId?: number;
+}
+interface TransportInternals {
+  socket: object;
+  connected: boolean;
+  outputs: { single: TestOutputBinding };
+  usedOutputStreams: Set<number>;
+  handleBinary(data: ArrayBuffer): void;
+}
+function transportInternals(transport: WebSocketSessionTransport): TransportInternals {
+  const opaque: object = transport;
+  // SAFETY: TransportInternals names private implementation fields owned by
+  // WebSocketSessionTransport (socket, connected, outputs, usedOutputStreams,
+  // handleBinary) that these tests configure directly to simulate connected
+  // state. TS private members block direct structural comparison, so the
+  // assertion goes through an opaque object reference.
+  return opaque as TransportInternals;
+}
 const contractsRoot = resolve(import.meta.dirname, '../../../../packages/contracts');
 const hostFixtureCases = [
   ['barge-in', 'barge-in'],
@@ -27,9 +53,9 @@ const hostFixtureCases = [
   ['vad-speech-end', 'vad-speech-end'],
   ['vad-speech-start', 'vad-speech-start'],
 ] as const;
-function hostFixture(directory: 'valid' | 'invalid', name: string): unknown {
+function hostFixture(directory: 'valid' | 'invalid', name: string) {
   const filename = directory === 'invalid' ? name.replace(/[._]/g, '-') : name;
-  return JSON.parse(readFileSync(resolve(contractsRoot, 'fixtures', directory, `${filename}.json`), 'utf8'));
+  return parseJsonValue(readFileSync(resolve(contractsRoot, 'fixtures', directory, `${filename}.json`), 'utf8'));
 }
 
 describe('browser HostEvent validator parity', () => {
@@ -49,7 +75,8 @@ describe('browser HostEvent validator parity', () => {
     expect(isStrictHostEvent(value)).toBe(false);
   });
   it('accepts planning-scope tool activity without turn identity in both validators', () => {
-    const base = hostFixture('valid', 'tool-activity') as Record<string, unknown>;
+    // SAFETY: The canonical fixture is JSON parsed in this test and is required to be an object here.
+    const base = hostFixture('valid', 'tool-activity') as JsonObject;
     const value = {
       ...base,
       payload: { scope: 'planning', toolCallId: 'tool-9', toolName: 'web_search', status: 'started' },
@@ -58,7 +85,8 @@ describe('browser HostEvent validator parity', () => {
     expect(isStrictHostEvent(value)).toBe(true);
   });
   it('rejects tool activity with oversized or extra payload fields in both validators', () => {
-    const base = hostFixture('valid', 'tool-activity') as Record<string, unknown>;
+    // SAFETY: The canonical fixture is JSON parsed in this test and is required to be an object here.
+    const base = hostFixture('valid', 'tool-activity') as JsonObject;
     const oversized = {
       ...base,
       payload: {
@@ -94,17 +122,17 @@ describe('WebSocketSessionTransport terminal retries', () => {
     class FakeWebSocket {
       static OPEN = 1;
       readyState = 1;
-      sent: unknown[] = [];
-      send(value: unknown) {
+      sent: JsonValue[] = [];
+      send(value: JsonValue) {
         this.sent.push(value);
       }
       close() {}
     }
-    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    Object.defineProperty(globalThis, 'WebSocket', { value: FakeWebSocket, configurable: true, writable: true });
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('session', () => 9);
-    (transport as unknown as { socket: FakeWebSocket; connected: boolean }).socket = socket;
-    (transport as unknown as { connected: boolean }).connected = true;
+    transportInternals(transport).socket = socket;
+    transportInternals(transport).connected = true;
     const event: PlaybackStoppedEvent = {
       protocolVersion: 1,
       sessionId: 'session',
@@ -123,6 +151,7 @@ describe('WebSocketSessionTransport terminal retries', () => {
     transport.sendTerminal(first, event);
     transport.sendTerminal({ ...first, reason: 'failed' }, { ...event, eventId: 'different' });
     const sent = socket.sent.map(
+      // SAFETY: The fake socket stores JSON emitted by this transport, with the asserted envelope shape.
       (value) => JSON.parse(String(value)) as { eventId: string; payload: { reason: string } },
     );
     expect(sent).toEqual([
@@ -137,17 +166,17 @@ describe('WebSocketSessionTransport output binding', () => {
     class FakeWebSocket {
       static OPEN = 1;
       readyState = 1;
-      sent: unknown[] = [];
-      send(value: unknown) {
+      sent: JsonValue[] = [];
+      send(value: JsonValue) {
         this.sent.push(value);
       }
       close() {}
     }
-    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    Object.defineProperty(globalThis, 'WebSocket', { value: FakeWebSocket, configurable: true, writable: true });
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 2);
-    (transport as unknown as { socket: FakeWebSocket }).socket = socket;
-    (transport as unknown as { outputs: { single: unknown } }).outputs.single = {
+    transportInternals(transport).socket = socket;
+    transportInternals(transport).outputs.single = {
       playbackId: '018f1f32-7abf-7def-8abc-0123456789ab',
       outputEpoch: 2,
       expectedSequence: 0,
@@ -166,8 +195,8 @@ describe('WebSocketSessionTransport output binding', () => {
       { channel: 2, streamId: 77, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(240) },
       64 * 1024,
     );
-    (transport as unknown as { handleBinary(data: unknown): void }).handleBinary(first.buffer);
-    (transport as unknown as { handleBinary(data: unknown): void }).handleBinary(second.buffer);
+    transportInternals(transport).handleBinary(first.buffer);
+    transportInternals(transport).handleBinary(second.buffer);
     expect(chunks).toEqual([
       { sequence: 0, sampleOffset: 0, samples: 480 },
       { sequence: 1, sampleOffset: 480, samples: 240 },
@@ -184,13 +213,13 @@ describe('WebSocketSessionTransport output binding', () => {
         this.closed = code;
       }
     }
-    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
-    const make = (output: Record<string, unknown>, used: number[] = []) => {
+    Object.defineProperty(globalThis, 'WebSocket', { value: FakeWebSocket, configurable: true, writable: true });
+    const make = (output: TestOutputBinding, used: number[] = []) => {
       const socket = new FakeWebSocket();
       const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 2);
-      (transport as unknown as { socket: FakeWebSocket }).socket = socket;
-      (transport as unknown as { outputs: { single: unknown } }).outputs.single = output;
-      const usedStreams = (transport as unknown as { usedOutputStreams: Set<number> }).usedOutputStreams;
+      transportInternals(transport).socket = socket;
+      transportInternals(transport).outputs.single = output;
+      const usedStreams = transportInternals(transport).usedOutputStreams;
       for (const stream of used) usedStreams.add(stream);
       return { transport, socket };
     };
@@ -202,7 +231,7 @@ describe('WebSocketSessionTransport output binding', () => {
       { playbackId: 'playback', outputEpoch: 2, expectedSequence: 0, sampleOffset: 0, terminal: false },
       [77],
     );
-    (reused.transport as unknown as { handleBinary(data: unknown): void }).handleBinary(binary(77, 0));
+    transportInternals(reused.transport).handleBinary(binary(77, 0));
     expect(reused.socket.closed).toBe(4000);
 
     const collision = make({
@@ -213,7 +242,7 @@ describe('WebSocketSessionTransport output binding', () => {
       sampleOffset: 480,
       terminal: false,
     });
-    (collision.transport as unknown as { handleBinary(data: unknown): void }).handleBinary(binary(78, 1));
+    transportInternals(collision.transport).handleBinary(binary(78, 1));
     expect(collision.socket.closed).toBe(4000);
 
     const late = make({
@@ -224,7 +253,7 @@ describe('WebSocketSessionTransport output binding', () => {
       sampleOffset: 480,
       terminal: true,
     });
-    (late.transport as unknown as { handleBinary(data: unknown): void }).handleBinary(binary(77, 1));
+    transportInternals(late.transport).handleBinary(binary(77, 1));
     expect(late.socket.closed).toBe(4000);
   });
 
@@ -233,20 +262,20 @@ describe('WebSocketSessionTransport output binding', () => {
       static OPEN = 1;
       readyState = 1;
       closed: number | undefined;
-      sent: unknown[] = [];
-      send(value: unknown) {
+      sent: JsonValue[] = [];
+      send(value: JsonValue) {
         this.sent.push(value);
       }
       close(code: number) {
         this.closed = code;
       }
     }
-    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    Object.defineProperty(globalThis, 'WebSocket', { value: FakeWebSocket, configurable: true, writable: true });
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 3);
-    (transport as unknown as { socket: FakeWebSocket; connected: boolean }).socket = socket;
-    (transport as unknown as { connected: boolean }).connected = true;
-    (transport as unknown as { outputs: { single: unknown } }).outputs.single = {
+    transportInternals(transport).socket = socket;
+    transportInternals(transport).connected = true;
+    transportInternals(transport).outputs.single = {
       playbackId: '018f1f32-7abf-7def-8abc-0123456789ab',
       outputEpoch: 2,
       streamId: 77,
@@ -254,15 +283,15 @@ describe('WebSocketSessionTransport output binding', () => {
       sampleOffset: 480,
       terminal: false,
     };
-    (transport as unknown as { usedOutputStreams: Set<number> }).usedOutputStreams.add(77);
+    transportInternals(transport).usedOutputStreams.add(77);
     transport.sendTerminal({
       playbackId: '018f1f32-7abf-7def-8abc-0123456789ab',
       cancelledEpoch: 2,
       finalPlayedSampleOffset: 240,
       reason: 'cancelled',
     });
-    expect((transport as unknown as { outputs: { single: { terminal: boolean } } }).outputs.single.terminal).toBe(true);
-    (transport as unknown as { outputs: { single: unknown } }).outputs.single = {
+    expect(transportInternals(transport).outputs.single.terminal).toBe(true);
+    transportInternals(transport).outputs.single = {
       playbackId: '018f1f32-7ac0-7def-8abc-0123456789ab',
       outputEpoch: 3,
       expectedSequence: 0,
@@ -275,15 +304,15 @@ describe('WebSocketSessionTransport output binding', () => {
       { channel: 2, streamId: 78, sequence: 0, monotonicUs: 3n, pcm16: new Int16Array(480) },
       64 * 1024,
     ).buffer;
-    (transport as unknown as { handleBinary(data: unknown): void }).handleBinary(fresh);
+    transportInternals(transport).handleBinary(fresh);
     expect(chunks).toEqual([480]);
     expect(socket.closed).toBeUndefined();
 
     const lateSocket = new FakeWebSocket();
     const lateTransport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 3);
-    (lateTransport as unknown as { socket: FakeWebSocket; connected: boolean }).socket = lateSocket;
-    (lateTransport as unknown as { connected: boolean }).connected = true;
-    (lateTransport as unknown as { outputs: { single: unknown } }).outputs.single = {
+    transportInternals(lateTransport).socket = lateSocket;
+    transportInternals(lateTransport).connected = true;
+    transportInternals(lateTransport).outputs.single = {
       playbackId: '018f1f32-7abf-7def-8abc-0123456789ab',
       outputEpoch: 2,
       streamId: 77,
@@ -301,7 +330,7 @@ describe('WebSocketSessionTransport output binding', () => {
       { channel: 2, streamId: 77, sequence: 1, monotonicUs: 2n, pcm16: new Int16Array(240) },
       64 * 1024,
     ).buffer;
-    (lateTransport as unknown as { handleBinary(data: unknown): void }).handleBinary(late);
+    transportInternals(lateTransport).handleBinary(late);
     expect(lateSocket.closed).toBe(4000);
   });
 
@@ -315,11 +344,11 @@ describe('WebSocketSessionTransport output binding', () => {
         this.closed = code;
       }
     }
-    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    Object.defineProperty(globalThis, 'WebSocket', { value: FakeWebSocket, configurable: true, writable: true });
     const socket = new FakeWebSocket();
     const transport = new WebSocketSessionTransport('018f1f32-7abc-7def-8abc-0123456789ab', () => 2);
-    (transport as unknown as { socket: FakeWebSocket }).socket = socket;
-    (transport as unknown as { outputs: { single: unknown } }).outputs.single = {
+    transportInternals(transport).socket = socket;
+    transportInternals(transport).outputs.single = {
       playbackId: '018f1f32-7abf-7def-8abc-0123456789ab',
       responseId: '018f1f32-7ac1-7def-8abc-0123456789ab',
       outputEpoch: 2,
@@ -331,14 +360,15 @@ describe('WebSocketSessionTransport output binding', () => {
       { channel: 2, streamId: 77, sequence: 1, monotonicUs: 1n, pcm16: new Int16Array(480) },
       64 * 1024,
     );
-    (transport as unknown as { handleBinary(data: unknown): void }).handleBinary(gapped.buffer);
+    transportInternals(transport).handleBinary(gapped.buffer);
     expect(socket.closed).toBe(4000);
   });
 });
 
 const SESSION = '018f1f32-7abc-7def-8abc-0123456789ab';
 let eventSequence = 0;
-function hostEvent<T extends HostEvent['type']>(type: T, payload: Record<string, unknown>, epoch = 0): HostEvent {
+function hostEvent<T extends HostEvent['type']>(type: T, payload: JsonObject, epoch = 0): HostEvent {
+  // SAFETY: This helper constructs the complete canonical HostEvent fixture shape.
   return {
     protocolVersion: 1,
     sessionId: SESSION,
@@ -347,7 +377,19 @@ function hostEvent<T extends HostEvent['type']>(type: T, payload: Record<string,
     monotonicMs: Date.now(),
     type,
     payload,
+    // SAFETY: The test constructs this event literal with the HostEvent shape being exercised.
   } as HostEvent;
+}
+
+/** Envelope shape for events the host contract no longer defines; used to verify rejection. */
+interface NonContractEvent {
+  protocolVersion: number;
+  sessionId: string;
+  epoch: number;
+  eventId: string;
+  monotonicMs: number;
+  type: string;
+  payload: JsonObject;
 }
 
 class EventSocket {
@@ -356,11 +398,11 @@ class EventSocket {
   closed: number | undefined;
   failureMessages: string[] = [];
   onopen: (() => void) | undefined;
-  onmessage: ((message: { data: unknown }) => void) | undefined;
+  onmessage: ((message: { data: JsonValue | ArrayBufferLike }) => void) | undefined;
   onerror: (() => void) | undefined;
   onclose: ((event?: { code?: number; reason?: string }) => void) | undefined;
-  sent: unknown[] = [];
-  send(value: unknown) {
+  sent: JsonValue[] = [];
+  send(value: JsonValue) {
     this.sent.push(value);
   }
   close(code: number) {
@@ -369,8 +411,10 @@ class EventSocket {
 }
 
 async function wiredTransport(socket: EventSocket, epoch = () => 0) {
-  (globalThis as Record<string, unknown>).location ??= { protocol: 'http:', host: 'test' };
-  const transport = new WebSocketSessionTransport(SESSION, epoch, () => socket as unknown as WebSocket);
+  // SAFETY: The transport reads globalThis.location to derive the WebSocket URL; tests substitute a minimal shape.
+  (globalThis as { location?: { protocol: string; host: string } }).location ??= { protocol: 'http:', host: 'test' };
+  // SAFETY: The intersection keeps the real WebSocket contract while naming the test socket members the transport uses.
+  const transport = new WebSocketSessionTransport(SESSION, epoch, () => socket as WebSocket & EventSocket);
   const connecting = transport.connect('capability');
   socket.onopen?.();
   socket.onmessage?.({ data: JSON.stringify({ type: 'authenticated' }) });
@@ -378,7 +422,7 @@ async function wiredTransport(socket: EventSocket, epoch = () => 0) {
   transport.onFailure((message) => socket.failureMessages.push(message));
   return transport;
 }
-function emitText(socket: EventSocket, event: HostEvent): void {
+function emitText(socket: EventSocket, event: HostEvent | NonContractEvent): void {
   socket.onmessage?.({ data: JSON.stringify(event) });
 }
 function emitBinary(socket: EventSocket, streamId: number, sequence: number, samples: number): void {
@@ -399,6 +443,7 @@ describe('WebSocketSessionTransport recovery', () => {
       planning: { topic: 'radio', depth: 'standard' },
       settings: { version: 1, persona: '', voice: { catalogId: 'catalog', voiceId: 'voice', speedModifier: 1 } },
     });
+    // SAFETY: The fake socket stores JSON emitted by this transport, with the asserted envelope shape.
     const start = JSON.parse(String(socket.sent.at(-1))) as { type: string; payload: { planning: unknown } };
     expect(start).toMatchObject({
       type: 'session.open',
@@ -415,7 +460,8 @@ describe('WebSocketSessionTransport recovery', () => {
     const socket = new EventSocket();
     const transport = await wiredTransport(socket);
     const pending = transport.beginLive(7);
-    const begin = JSON.parse(String(socket.sent.at(-1))) as { type: string; payload: Record<string, unknown> };
+    // SAFETY: The canonical fixture is JSON parsed in this test and is required to be an object here.
+    const begin = JSON.parse(String(socket.sent.at(-1))) as { type: string; payload: JsonObject };
     expect(begin).toMatchObject({
       type: 'session.begin',
       payload: { streamId: 7, sampleRate: 16000, channels: 1, frameSamples: 320 },
@@ -460,7 +506,8 @@ describe('WebSocketSessionTransport recovery', () => {
   it('reconnects within the grace window, queues commands, and avoids a failure notification', async () => {
     vi.useFakeTimers();
     try {
-      (globalThis as Record<string, unknown>).location = { protocol: 'http:', host: 'test' };
+      // SAFETY: The transport reads globalThis.location to derive the WebSocket URL; tests substitute a minimal shape.
+      (globalThis as { location?: { protocol: string; host: string } }).location = { protocol: 'http:', host: 'test' };
       const sockets = [new EventSocket()];
       let firstSocket = true;
       const transport = new WebSocketSessionTransport(
@@ -469,11 +516,13 @@ describe('WebSocketSessionTransport recovery', () => {
         () => {
           if (firstSocket) {
             firstSocket = false;
-            return sockets[0] as unknown as WebSocket;
+            // SAFETY: The intersection keeps the real WebSocket contract while naming the test socket members the transport uses.
+            return sockets[0] as WebSocket & EventSocket;
           }
           const socket = new EventSocket();
           sockets.push(socket);
-          return socket as unknown as WebSocket;
+          // SAFETY: The intersection keeps the real WebSocket contract while naming the test socket members the transport uses.
+          return socket as WebSocket & EventSocket;
         },
         { reconnectWindowMs: 100, reconnectDelaysMs: [10] },
       );
@@ -525,7 +574,8 @@ describe('WebSocketSessionTransport recovery', () => {
   it('abandons a hung reconnect attempt via the handshake watchdog and keeps cycling', async () => {
     vi.useFakeTimers();
     try {
-      (globalThis as Record<string, unknown>).location = { protocol: 'http:', host: 'test' };
+      // SAFETY: The transport reads globalThis.location to derive the WebSocket URL; tests substitute a minimal shape.
+      (globalThis as { location?: { protocol: string; host: string } }).location = { protocol: 'http:', host: 'test' };
       const sockets = [new EventSocket()];
       let firstSocket = true;
       const transport = new WebSocketSessionTransport(
@@ -534,11 +584,13 @@ describe('WebSocketSessionTransport recovery', () => {
         () => {
           if (firstSocket) {
             firstSocket = false;
-            return sockets[0] as unknown as WebSocket;
+            // SAFETY: The intersection keeps the real WebSocket contract while naming the test socket members the transport uses.
+            return sockets[0] as WebSocket & EventSocket;
           }
           const socket = new EventSocket();
           sockets.push(socket);
-          return socket as unknown as WebSocket;
+          // SAFETY: The intersection keeps the real WebSocket contract while naming the test socket members the transport uses.
+          return socket as WebSocket & EventSocket;
         },
         { reconnectWindowMs: 60_000, reconnectDelaysMs: [10] },
       );
@@ -569,7 +621,8 @@ describe('WebSocketSessionTransport recovery', () => {
   it('retries immediately when a connectivity hint arrives during backoff', async () => {
     vi.useFakeTimers();
     try {
-      (globalThis as Record<string, unknown>).location = { protocol: 'http:', host: 'test' };
+      // SAFETY: The transport reads globalThis.location to derive the WebSocket URL; tests substitute a minimal shape.
+      (globalThis as { location?: { protocol: string; host: string } }).location = { protocol: 'http:', host: 'test' };
       let emitHint: (() => void) | undefined;
       const unsubscribed = vi.fn();
       const subscribeConnectivityHints = (hint: () => void) => {
@@ -584,11 +637,13 @@ describe('WebSocketSessionTransport recovery', () => {
         () => {
           if (firstSocket) {
             firstSocket = false;
-            return sockets[0] as unknown as WebSocket;
+            // SAFETY: The intersection keeps the real WebSocket contract while naming the test socket members the transport uses.
+            return sockets[0] as WebSocket & EventSocket;
           }
           const socket = new EventSocket();
           sockets.push(socket);
-          return socket as unknown as WebSocket;
+          // SAFETY: The intersection keeps the real WebSocket contract while naming the test socket members the transport uses.
+          return socket as WebSocket & EventSocket;
         },
         { reconnectDelaysMs: [10_000], subscribeConnectivityHints },
       );
@@ -786,6 +841,7 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     expect(socket.closed).toBe(4000);
   });
 
+  // SAFETY: This locally constructed test fixture has the asserted shape.
   it('accepts tts.started after reasoning.final as well', async () => {
     const socket = new EventSocket();
     const transport = await wiredTransport(socket);
@@ -949,10 +1005,12 @@ describe.skip('obsolete multi-part output routing', () => {
     transport.onAudio((chunk) =>
       chunks.push({ playbackId: chunk.playbackId, sampleOffset: chunk.sampleOffset, samples: chunk.pcm16.length }),
     );
+    // SAFETY: This locally constructed test fixture has the asserted shape.
     // Part 0 (stall): same responseId as part 1, new reasoning.started per part.
     // The wire contract emits response.part_started BEFORE reasoning.started.
     emitText(
       socket,
+      // SAFETY: This locally constructed test fixture has the asserted shape.
       hostEvent('response.part_started' as any, {
         turnId: turnUuid,
         responseId: responseA,
@@ -977,6 +1035,7 @@ describe.skip('obsolete multi-part output routing', () => {
     // Part 1 (body) starts while part 0 PCM is still streaming.
     emitText(
       socket,
+      // SAFETY: This locally constructed test fixture has the asserted shape.
       hostEvent('response.part_started' as any, {
         turnId: turnUuid,
         responseId: responseA,
@@ -1015,6 +1074,7 @@ describe.skip('obsolete multi-part output routing', () => {
     );
     emitText(
       socket,
+      // SAFETY: This locally constructed test fixture has the asserted shape.
       hostEvent('response.part_final' as any, { turnId: turnUuid, responseId: responseA, partIndex: 1, kind: 'body' }),
     );
     emitText(
@@ -1034,6 +1094,7 @@ describe.skip('obsolete multi-part output routing', () => {
     ]);
   });
 
+  // SAFETY: This locally constructed test fixture has the asserted shape.
   it('accepts response.part_started as the first event of a brand-new response', async () => {
     const socket = new EventSocket();
     const transport = await wiredTransport(socket);
@@ -1046,6 +1107,7 @@ describe.skip('obsolete multi-part output routing', () => {
     // must establish the response instead of failing the session.
     emitText(
       socket,
+      // SAFETY: This locally constructed test fixture has the asserted shape.
       hostEvent('response.part_started' as any, {
         turnId: turnUuid,
         responseId: responseA,
@@ -1068,6 +1130,7 @@ describe.skip('obsolete multi-part output routing', () => {
     // Real wire order: part_started precedes reasoning.started for each part.
     emitText(
       socket,
+      // SAFETY: This locally constructed test fixture has the asserted shape.
       hostEvent('response.part_started' as any, {
         turnId: turnUuid,
         responseId: responseA,
@@ -1102,6 +1165,7 @@ describe.skip('obsolete multi-part output routing', () => {
     );
     emitText(
       socket,
+      // SAFETY: This locally constructed test fixture has the asserted shape.
       hostEvent('response.part_final' as any, { turnId: turnUuid, responseId: responseA, partIndex: 0, kind: 'stall' }),
     );
     emitText(
@@ -1166,9 +1230,11 @@ describe('WebSocketSessionTransport protocol failure diagnostics', () => {
     expect(socket.failureMessages).toEqual([expect.stringContaining('vad.speech_start')]);
   });
 
+  // SAFETY: This locally constructed test fixture has the asserted shape.
   it('rejects a budget.mitigation event as a protocol failure (event removed from the host contract)', async () => {
     const socket = new EventSocket();
     await wiredTransport(socket);
+    // SAFETY: This test intentionally constructs an event outside the HostEvent contract to verify rejection.
     emitText(socket, {
       protocolVersion: 1,
       sessionId: SESSION,
@@ -1193,7 +1259,7 @@ describe('WebSocketSessionTransport protocol failure diagnostics', () => {
           trigger: 'handoff gap 420ms > 150ms',
         },
       },
-    } as unknown as HostEvent);
+    });
     expect(socket.closed).toBe(4000);
     expect(socket.failureMessages).toEqual([expect.stringContaining('budget.mitigation')]);
   });

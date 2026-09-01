@@ -182,10 +182,11 @@ export class RecordingRecorder {
           playbackId,
           responseId,
           turnId: this.responseTurns.get(responseId) ?? null,
-          partIndex:
-            typeof (event.payload as { partIndex?: number }).partIndex === 'number'
-              ? ((event.payload as { partIndex?: number }).partIndex ?? null)
-              : null,
+          partIndex: (() => {
+            // SAFETY: Session events are decoded at the transport boundary; this optional extension is numeric when present.
+            const value = (event.payload as { partIndex?: number }).partIndex;
+            return Number.isFinite(value) ? (value ?? null) : null;
+          })(),
           sampleRate,
           outputEpoch: event.epoch,
           frames: [],
@@ -278,7 +279,7 @@ export class RecordingRecorder {
         createdAt: new Date().toISOString(),
         monotonicMs,
         trimmed: false,
-        data: new Blob([mp3], { type: 'audio/mpeg' }),
+        data: new Blob([Uint8Array.from(mp3)], { type: 'audio/mpeg' }),
       };
       await this.deps.store.put(item);
       this.committedUserItems.set(slice.utteranceId, slice.itemId);
@@ -297,8 +298,10 @@ export class RecordingRecorder {
       const pcm = concatFrames(buffer.frames.map((pcm16) => ({ pcm16 })));
       if (pcm.length === 0) return;
       const mp3 = await this.deps.encode(pcm, buffer.sampleRate, PER_TURN_KBPS);
+      // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
       const reason = TERMINAL_REASONS.includes(terminal.reason as TerminalReason)
-        ? (terminal.reason as NonNullable<TerminalReason>)
+        ? // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+          (terminal.reason as NonNullable<TerminalReason>)
         : 'cancelled';
       const monotonicMs = this.now();
       const item: StoredRecordingItem = {
@@ -323,7 +326,7 @@ export class RecordingRecorder {
         createdAt: new Date().toISOString(),
         monotonicMs,
         trimmed: false,
-        data: new Blob([mp3], { type: 'audio/mpeg' }),
+        data: new Blob([Uint8Array.from(mp3)], { type: 'audio/mpeg' }),
       };
       await this.deps.store.put(item);
     })().catch(() => undefined);

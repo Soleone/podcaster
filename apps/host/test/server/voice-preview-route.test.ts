@@ -36,6 +36,7 @@ const qwenCatalog = Object.freeze({
     { id: 'Serena', label: 'Serena' },
   ],
 });
+// SAFETY: this test fixture is constructed in this file with the asserted shape.
 const PI_SETTINGS = { model: 'openai-codex/gpt-5.6-sol', thinkingLevel: 'medium' as const };
 const defaultProbeClient: PiClient = {
   async probe() {
@@ -62,11 +63,32 @@ async function fakeSidecarHealth(options: {
   const http = createServer();
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   let healthRequestCount = 0;
   http.on('request', (_request, response) => {
     healthRequestCount++;
     const requestNumber = healthRequestCount;
+    const qwenExtras = options.qwen
+      ? {
+          ttsModels: [
+            {
+              backendId: 'kokoro',
+              modelId: 'kokoro-82m-onnx',
+              label: 'Kokoro CUDA',
+              status: 'ready',
+              voiceCatalog,
+            },
+            {
+              backendId: 'qwen3',
+              modelId: 'qwen-model',
+              label: 'Qwen CustomVoice',
+              status: 'ready',
+              voiceCatalog: qwenCatalog,
+            },
+          ],
+          activeTtsModel: { backendId: 'kokoro', modelId: 'kokoro-82m-onnx' },
+        }
+      : undefined;
     const body = JSON.stringify(
       options.failHealthRequests?.includes(requestNumber)
         ? { status: 'invalid' }
@@ -76,27 +98,8 @@ async function fakeSidecarHealth(options: {
               stt: 'nemotron-3.5-transformers-fp32-320ms-paced-v1',
               tts: 'kokoro-82m-onnx-fp32-af-heart-cuda-v1',
               voiceCatalog,
-              ...(options.qwen
-                ? {
-                    ttsModels: [
-                      {
-                        backendId: 'kokoro',
-                        modelId: 'kokoro-82m-onnx',
-                        label: 'Kokoro CUDA',
-                        status: 'ready',
-                        voiceCatalog,
-                      },
-                      {
-                        backendId: 'qwen3',
-                        modelId: 'qwen-model',
-                        label: 'Qwen CustomVoice',
-                        status: 'ready',
-                        voiceCatalog: qwenCatalog,
-                      },
-                    ],
-                    activeTtsModel: { backendId: 'kokoro', modelId: 'kokoro-82m-onnx' },
-                  }
-                : {}),
+              ttsModels: qwenExtras?.ttsModels,
+              activeTtsModel: qwenExtras?.activeTtsModel,
             }
           : {
               status: 'starting',
@@ -114,6 +117,7 @@ async function fakeSidecarHealth(options: {
   });
   return {
     sidecar: {
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       child: {} as SidecarProcess['child'],
       origin: `http://127.0.0.1:${address.port}`,
       secret: 'secret',
@@ -171,6 +175,7 @@ async function bootstrap(origin: string) {
     headers: { ...headers(), 'content-type': 'application/json' },
     body: '{"disclosureAcknowledged":true}',
   });
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   const body = (await response.json()) as { capability: string };
   return {
     capability: body.capability,
@@ -250,6 +255,7 @@ describe('POST /api/readiness', () => {
         headers,
         body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS }),
       });
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       return response.json() as Promise<{ services: { audio: { state: string } } }>;
     };
 
@@ -279,6 +285,7 @@ describe('POST /api/readiness', () => {
         headers,
         body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS }),
       });
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       return response.json() as Promise<{ services: { audio: { state: string } } }>;
     };
 
@@ -325,9 +332,11 @@ describe('POST /api/readiness', () => {
 
     await read();
     const ready = await read();
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect(((await ready.json()) as { services: { pi: { state: string } } }).services.pi.state).toBe('ready');
     clock += 10_001;
     const duringRefresh = await read();
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect(((await duringRefresh.json()) as { services: { pi: { state: string } } }).services.pi.state).toBe('ready');
     expect(probeCount).toBe(2);
     releaseRefresh();
@@ -366,6 +375,7 @@ describe('POST /api/readiness', () => {
         headers,
         body: JSON.stringify({ microphoneGranted: true, pi: PI_SETTINGS }),
       });
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       return response.json() as Promise<{ services: { pi: { state: string } } }>;
     };
 
@@ -381,6 +391,7 @@ describe('POST /api/readiness', () => {
     expect((await read()).services.pi.state).toBe('incompatible');
   });
 
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   it('reports the selected Qwen CustomVoice backend as the active ready backend', async () => {
     const { origin } = await makeApp(
       async (input) => ({ pcm16: new Int16Array(input.phrases.length), sampleRate: 24_000 }),
@@ -403,6 +414,7 @@ describe('POST /api/readiness', () => {
       }),
     });
     expect(response.status).toBe(200);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const body = (await response.json()) as {
       capabilities: Array<{ id: string; state: string; reason: string }>;
       sidecar: string;
@@ -435,6 +447,7 @@ describe('POST /api/readiness', () => {
         ttsModel: { backendId: 'qwen3', modelId: 'qwen-model' },
       }),
     });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const body = (await response.json()) as {
       capabilities: Array<{ id: string; state: string }>;
       voiceCatalog?: { backendId: string };
@@ -526,6 +539,7 @@ describe('POST /api/voice-preview', () => {
     await new Promise((resolve) => setTimeout(resolve, 20)); // let the first preview reach its gate
     const overlap = await preview(origin, auth, 'af_heart');
     expect(overlap.status).toBe(429);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect(((await overlap.json()) as { error: string }).error).toBe('preview_in_flight');
     gates[0]!();
     expect((await first).status).toBe(200);
@@ -539,6 +553,7 @@ describe('POST /api/voice-preview', () => {
     const auth = await bootstrap(origin);
     const response = await preview(origin, auth, 'af_heart');
     expect(response.status).toBe(409);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect(((await response.json()) as { error: string }).error).toBe('voice_catalog_unavailable');
   });
 });

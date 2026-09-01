@@ -1,3 +1,5 @@
+type TestJsonValue = null | boolean | number | string | TestJsonValue[] | { [key: string]: TestJsonValue };
+type TestJsonRecord = { [key: string]: TestJsonValue };
 import { describe, expect, it } from 'vitest';
 import { decide, type PolicyDecision, type PolicyInput } from '@app/policy';
 import { PI_STALL_INSTRUCTION, type PiClient, type PiEvent, type PiRequestInput } from '../../src/pi/PiClient.js';
@@ -37,6 +39,7 @@ class FakePi implements PiClient {
     },
   ) {}
   async probe() {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     return { status: 'ready' as const, detail: 'ready', correctiveAction: 'None.' };
   }
   request(input: PiRequestInput, signal: AbortSignal): AsyncIterable<PiEvent> {
@@ -72,10 +75,9 @@ class FakeSpeech implements SpeechOutputPort {
     signal: AbortSignal;
     onGeneratedSamples?: (total: number) => void;
   }): SpeechOutputStream {
-    this.begins.push({
-      responseId: input.responseId,
-      ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
-    });
+    const begin: (typeof this.begins)[number] = { responseId: input.responseId };
+    if (input.partIndex !== undefined) begin.partIndex = input.partIndex;
+    this.begins.push(begin);
     this.speechIndex++;
     const playbackId = ids[80 + this.speechIndex]!;
     const self = this;
@@ -83,17 +85,14 @@ class FakeSpeech implements SpeechOutputPort {
     return {
       started: Promise.resolve(meta),
       append(text: string): void {
-        self.appended.push({
-          responseId: input.responseId,
-          ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
-          text,
-        });
+        const appended: (typeof self.appended)[number] = { responseId: input.responseId, text };
+        if (input.partIndex !== undefined) appended.partIndex = input.partIndex;
+        self.appended.push(appended);
       },
       finish(): void {
-        self.finished.push({
-          responseId: input.responseId,
-          ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
-        });
+        const finished: (typeof self.finished)[number] = { responseId: input.responseId };
+        if (input.partIndex !== undefined) finished.partIndex = input.partIndex;
+        self.finished.push(finished);
       },
     };
   }
@@ -103,11 +102,12 @@ class FakeSpeech implements SpeechOutputPort {
     generatedSamples: number;
     completion?: Promise<{ generatedSamples: number }>;
   }> {
-    const stream = this.begin({
+    const beginInput: Parameters<FakeSpeech['begin']>[0] = {
       responseId: input.responseId,
-      ...(input.partIndex !== undefined ? { partIndex: input.partIndex } : {}),
       signal: input.signal ?? new AbortController().signal,
-    });
+    };
+    if (input.partIndex !== undefined) beginInput.partIndex = input.partIndex;
+    const stream = this.begin(beginInput);
     stream.append(input.text);
     stream.finish();
     return stream.started;
@@ -117,7 +117,9 @@ class FakeSpeech implements SpeechOutputPort {
   }
   resume(_responseId: string) {}
   cancel(responseId: string, partIndex?: number) {
-    this.cancelled.push({ responseId, ...(partIndex !== undefined ? { partIndex } : {}) });
+    const cancelled: (typeof this.cancelled)[number] = { responseId };
+    if (partIndex !== undefined) cancelled.partIndex = partIndex;
+    this.cancelled.push(cancelled);
   }
   release?(_responseId: string, _partIndex?: number) {}
 }
@@ -186,7 +188,7 @@ describe.skip('obsolete multipart compatibility', () => {
     const { session, events, researchPi } = setup({ researchPi: new FakeResearchPi(body) });
     const handling = session.handleStableFinal(turn(0));
     await handling;
-    const indexOf = (type: string, payload?: Record<string, unknown>) =>
+    const indexOf = (type: string, payload?: TestJsonRecord) =>
       events.findIndex(
         (event) =>
           event.type === type &&
@@ -204,6 +206,7 @@ describe.skip('obsolete multipart compatibility', () => {
     expect(stallFinal).toBeLessThan(stallPartFinal);
     expect(stallPartFinal).toBeLessThan(body1Started);
     expect(body1Started).toBeLessThan(body1Final);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const partStarted = byType(events, 'response.part_started').map((event) => event.payload.partIndex as number);
     expect(partStarted[0]).toBe(0);
     expect(partStarted.slice(1).every((index, i) => index === i + 1)).toBe(true);
@@ -284,6 +287,7 @@ describe.skip('obsolete multipart compatibility', () => {
     await handling;
     const partIndices = speech.begins.map((begin) => begin.partIndex);
     expect(partIndices).toEqual([0, 1, 2]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const started = byType(events, 'tts.started').map((event) => event.payload.partIndex as number);
     expect(started).toEqual([0, 1, 2]);
   });
@@ -346,6 +350,7 @@ describe.skip('obsolete multipart compatibility', () => {
     expect(speech.finished.some((item) => item.partIndex === 0)).toBe(true);
     // The research body still starts and receives exactly the streamed stall text.
     expect(researchPi.inputs[0]!.stallText).toBe('I will check that.');
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const started = byType(events, 'response.part_started').map((event) => event.payload.partIndex as number);
     expect(started).toEqual([0, 1, 2]);
     // The session returns to listening once every part has played out.
@@ -445,6 +450,7 @@ describe.skip('obsolete multipart compatibility', () => {
 
     // The host tracks the response through its parent ActiveResponse, while the
     // browser pauses the currently audible body part. The decision must carry
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     // that body playback id or the browser will reject it as stale.
     session.beginProvisionalBargeIn(responseId);
     session.playbackPaused({

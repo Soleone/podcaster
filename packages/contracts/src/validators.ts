@@ -1,19 +1,8 @@
 // Runtime validators associated with the generated contract model names.
-import Ajv2020Module, { type ValidateFunction } from 'ajv/dist/2020.js';
-import addFormatsModule from 'ajv-formats';
+import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 import { CONTRACT_SCHEMAS, type ContractModelName } from './generated/contracts.js';
 
-type AjvInstance = {
-  addKeyword(value: Record<string, unknown>): void;
-  addSchema(value: unknown): void;
-  getSchema(id: string): ValidateFunction | undefined;
-};
-const Ajv2020 = ((Ajv2020Module as unknown as { default?: unknown }).default ?? Ajv2020Module) as unknown as new (
-  options: Record<string, unknown>,
-) => AjvInstance;
-const addFormats = ((addFormatsModule as unknown as { default?: unknown }).default ?? addFormatsModule) as unknown as (
-  ajv: AjvInstance,
-) => void;
 function hasUnpairedSurrogate(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const unit = value.charCodeAt(index);
@@ -26,7 +15,7 @@ function hasUnpairedSurrogate(value: string): boolean {
   return false;
 }
 const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
-addFormats(ajv);
+addFormats.default(ajv);
 ajv.addKeyword({
   keyword: 'maxUtf8Bytes',
   type: 'string',
@@ -35,9 +24,12 @@ ajv.addKeyword({
 });
 for (const schema of Object.values(CONTRACT_SCHEMAS)) ajv.addSchema(schema);
 
-export const CONTRACT_VALIDATORS = Object.fromEntries(
-  Object.entries(CONTRACT_SCHEMAS).map(([path, schema]) => [
-    schema.title,
-    ajv.getSchema(`https://podcaster.local/schema/${path}`)!,
-  ]),
-) as Record<ContractModelName, ValidateFunction>;
+export const CONTRACT_VALIDATORS =
+  // SAFETY: CONTRACT_SCHEMAS is generated with exactly one schema for every
+  // ContractModelName. Every schema is registered above and must resolve by path.
+  Object.fromEntries(
+    Object.entries(CONTRACT_SCHEMAS).map(([path, schema]) => [
+      schema.title,
+      ajv.getSchema(`https://podcaster.local/schema/${path}`)!,
+    ]),
+  ) as Record<ContractModelName, ValidateFunction>;

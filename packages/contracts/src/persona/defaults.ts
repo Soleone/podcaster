@@ -35,18 +35,22 @@ export const DEFAULT_PERSONA_FIELDS: Omit<PersonaInterpretation, 'body'> = Objec
   invitation_only: false,
   posture_weights: Object.freeze({ riff: 50, question: 35, challenge: 15 }),
   challenge_enabled: true,
+  // SAFETY: the frozen arrays hold only string literals; freeze adds no
+  // elements and mutates none, so re-exposing the contract's mutable Array
+  // element type stays sound.
   interests: Object.freeze([
     'late-night radio and field recordings',
     'coastal weather and tides',
     'analog photography',
     'slow cooking',
     'chess endgames',
-  ]) as unknown as string[],
+  ]) as string[],
+  // SAFETY: same invariant as interests above: freeze never changes contents.
   experiences: Object.freeze([
     'Volunteered the graveyard shift at a small community radio station, reading shipping forecasts and taking late call-ins',
     'Grew up in a fishing town where the day started with tide tables and the harbour foghorn',
     'Keeps a shoebox of developed film negatives from long walks along the sea wall',
     'Learned patience from Sunday stock pots that simmered for hours',
     'Plays correspondence chess, almost entirely endgame studies, one move a day',
-  ]) as unknown as string[],
+  ]) as string[],
 });

@@ -83,11 +83,11 @@ export async function startVoicePreview(input: {
         body: JSON.stringify({
           voiceId: input.voiceId,
           speedModifier: input.speedModifier ?? 1.0,
-          ...(input.backendId !== undefined ? { backendId: input.backendId } : {}),
-          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
-          ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : {}),
-          ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : {}),
-          ...(input.language ? { language: input.language } : {}),
+          ...(input.backendId !== undefined ? { backendId: input.backendId } : undefined),
+          ...(input.modelId !== undefined ? { modelId: input.modelId } : undefined),
+          ...(input.catalogId !== undefined ? { catalogId: input.catalogId } : undefined),
+          ...(input.tonePrompt ? { tonePrompt: input.tonePrompt } : undefined),
+          ...(input.language ? { language: input.language } : undefined),
         }),
         signal: controller.signal,
       });
@@ -103,6 +103,7 @@ export async function startVoicePreview(input: {
       );
     }
     if (!response.ok) {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       const detail = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
       throw new Error(previewServerMessage(detail, response.status));
     }

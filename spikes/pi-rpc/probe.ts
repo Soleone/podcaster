@@ -16,7 +16,17 @@ const MAX_ASSISTANT_TEXT_BYTES = 1024;
 const EXACT_MARKER = "RPC_READY";
 const FIXTURE_DIR = resolve("spikes/pi-rpc/fixtures");
 
-type Json = Record<string, unknown>;
+type JsonScalar = string | number | boolean | null;
+type JsonValue = JsonScalar | JsonValue[] | Json;
+type Json = { [key: string]: JsonValue };
+
+function jsonObject(value: JsonValue | undefined): Json | undefined {
+  return value !== null && value !== undefined && !Array.isArray(value) && Object(value) === value ? value : undefined;
+}
+
+function jsonArray(value: JsonValue | undefined): Json[] | undefined {
+  return Array.isArray(value) && value.every((item) => jsonObject(item) !== undefined) ? value : undefined;
+}
 type Readiness = "ready" | "login_required" | "unavailable" | "incompatible" | "rate_limited";
 
 function safeEnvironment(): NodeJS.ProcessEnv {
@@ -138,7 +148,12 @@ class RpcProbe {
         return;
       }
       let value: Json;
-      try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(record)) as Json; }
+      try {
+        const parsed: JsonValue = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(record));
+        const message = jsonObject(parsed);
+        if (!message) throw new Error('RPC record must be an object');
+        value = message;
+      }
       catch {
         this.failProtocol(new Error("Pi emitted malformed JSONL"));
         return;
@@ -154,7 +169,7 @@ class RpcProbe {
   }
 
   private handle(value: Json): void {
-    if (value.type === "response" && typeof value.id === "string") {
+    if (value.type === "response" && String(value.id) === value.id) {
       const item = this.pending.get(value.id);
       if (item) {
         clearTimeout(item.timer);
@@ -164,8 +179,8 @@ class RpcProbe {
       }
     }
     if (value.type === "message_update" && !this.cancellationCutoff) {
-      const update = value.assistantMessageEvent as Json | undefined;
-      if (update?.type === "text_delta" && typeof update.delta === "string") {
+      const update = jsonObject(value.assistantMessageEvent);
+      if (update?.type === "text_delta" && String(update.delta) === update.delta) {
         this.assistantTextBytes += Buffer.byteLength(update.delta, "utf8");
         if (this.assistantTextBytes > MAX_ASSISTANT_TEXT_BYTES) this.assistantTextExceeded = true;
         else this.assistantText += update.delta;
@@ -212,11 +227,11 @@ class RpcProbe {
   }
 }
 
-function sanitizeEvent(value: Json, cutoff: boolean): { value?: Json; suppressed?: boolean } {
+function sanitizeEvent(value: Json, cutoff: boolean) {
   if (value.type === "response") return { value: { type: "response", id: value.id, command: value.command, success: value.success } };
   if (value.type === "message_update") {
-    const update = value.assistantMessageEvent as Json | undefined;
-    if (!update) return { value: { type: "message_update", shape: "missing_update" } };
+    const update = jsonObject(value.assistantMessageEvent);
+    if (!update) return { value: { type: "message_update", updateStatus: "missing_update" } };
     if (update.type === "text_delta") {
       if (cutoff) return { suppressed: true };
       return { value: { type: "message_update", updateType: "text_delta", contentIndex: update.contentIndex, text: "<model-text>", chars: String(update.delta ?? "").length } };
@@ -225,12 +240,11 @@ function sanitizeEvent(value: Json, cutoff: boolean): { value?: Json; suppressed
     return { value: { type: "message_update", updateType: update.type, contentIndex: update.contentIndex } };
   }
   if (value.type === "message_end" || value.type === "turn_end") {
-    const message = value.message as Json | undefined;
+    const message = jsonObject(value.message);
     return { value: { type: value.type, role: message?.role, stopReason: message?.stopReason, hasError: Boolean(message?.errorMessage) } };
   }
   if (value.type === "agent_end") return { value: { type: "agent_end", willRetry: value.willRetry } };
-  if (typeof value.type === "string") return { value: { type: value.type } };
-  return { value: { type: "unknown" } };
+  return { value: { type: String(value.type ?? "unknown") } };
 }
 
 function fixture(name: string, body: Json): void {
@@ -238,9 +252,9 @@ function fixture(name: string, body: Json): void {
   writeFileSync(resolve(FIXTURE_DIR, `${name}.json`), `${JSON.stringify(body, null, 2)}\n`, { mode: 0o644 });
 }
 
-function modelSummary(response: Json): { provider?: unknown; id?: unknown; available: boolean } {
-  const data = response.data as Json | undefined;
-  const model = data?.model as Json | undefined;
+function modelSummary(response: Json) {
+  const data = jsonObject(response.data);
+  const model = data && jsonObject(data.model);
   return { provider: model?.provider, id: model?.id, available: Boolean(model) };
 }
 
@@ -252,7 +266,8 @@ async function execute(mode: string): Promise<void> {
     const state = await rpc.send("get_state");
     const models = await rpc.send("get_available_models");
     const selected = modelSummary(state);
-    const modelList = (((models.data as Json | undefined)?.models ?? []) as Json[]);
+    const modelData = jsonObject(models.data);
+    const modelList = jsonArray(modelData?.models) ?? [];
     const selectedListed = modelList.some((item) => item.provider === "openai-codex" && item.id === "gpt-5.6-sol");
     if (!selected.available || selected.provider !== "openai-codex" || selected.id !== "gpt-5.6-sol" || !selectedListed) {
       throw new Error("selected pinned model is unavailable or incompatible");
@@ -266,7 +281,7 @@ async function execute(mode: string): Promise<void> {
       if (end?.stopReason !== "stop" || end.hasError) throw new Error("provider did not complete normally");
       if (rpc.assistantTextExceeded || rpc.assistantText !== EXACT_MARKER) throw new Error("provider probe response was incompatible");
       cleanup = await rpc.stop();
-      const result: Json = {
+      const result = {
         command: "probe", executable, version: PI_VERSION, protocol: "strict LF-delimited JSONL with fatal UTF-8", model: MODEL,
         readiness: "ready", authReadiness: "bounded live request completed normally",
         correlatedCommands: ["get_state", "get_available_models", "prompt"], childCleanup: cleanup,
@@ -285,7 +300,7 @@ async function execute(mode: string): Promise<void> {
       if (end?.stopReason !== "stop" || end.hasError) throw new Error("request did not stop normally");
       if (rpc.assistantTextExceeded || rpc.assistantText !== EXACT_MARKER) throw new Error("provider request response was incompatible");
       cleanup = await rpc.stop();
-      const result: Json = { command: "request", readiness: "ready", boundedPrompt: true, toolsDisabled: true, childCleanup: cleanup, records: rpc.records };
+      const result = { command: "request", readiness: "ready", boundedPrompt: true, toolsDisabled: true, childCleanup: cleanup, records: rpc.records };
       fixture("request", result);
       console.log(JSON.stringify(result, null, 2));
       return;
@@ -300,12 +315,12 @@ async function execute(mode: string): Promise<void> {
       await rpc.waitFor((record) => record.type === "agent_settled");
       const finalState = await rpc.send("get_state");
       const end = rpc.records.find((record) => record.type === "message_end" && record.role === "assistant");
-      const stateData = finalState.data as Json | undefined;
+      const stateData = jsonObject(finalState.data);
       if (abortResponse.success !== true || end?.stopReason !== "aborted" || stateData?.isStreaming !== false) {
         throw new Error("abort was not confirmed by response, aborted message, and settled non-streaming state");
       }
       cleanup = await rpc.stop();
-      const result: Json = {
+      const result = {
         command: "cancel", readiness: "ready", cancellationCutoff: "first text delta", abortResponse: "success",
         authoritativeStopReason: end.stopReason, authoritativeSettled: true, finalIsStreaming: stateData.isStreaming,
         acceptedTextAfterCutoff: 0, suppressedTextDeltasAfterCutoff: rpc.suppressedAfterCutoff,

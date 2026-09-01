@@ -78,6 +78,7 @@ describe('Pi executable resolution', () => {
       caught = error;
     }
     expect(caught).toBeInstanceOf(Error);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((caught as Error).message).not.toContain('token-value');
   });
 

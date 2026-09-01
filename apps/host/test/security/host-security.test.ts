@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { buildApp } from '../../src/server/app.js';
+
+interface SecurityRequestHeaders {
+  host: string;
+  origin?: string;
+}
 import { startSidecar, type SidecarProcess } from '../../src/sidecar/process.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -29,6 +34,7 @@ async function bootstrap() {
   });
   return {
     response,
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     body: (await response.json()) as { capability: string },
     cookie: response.headers.get('set-cookie')!.split(';')[0]!,
   };
@@ -44,7 +50,7 @@ describe('loopback HTTP boundary', () => {
   it.each([undefined, 'http://evil.example', 'null'])(
     'rejects missing or mismatched API Origin: %s',
     async (badOrigin) => {
-      const requestHeaders: Record<string, string> = { host: new URL(origin).host };
+      const requestHeaders: SecurityRequestHeaders = { host: new URL(origin).host };
       if (badOrigin) requestHeaders.origin = badOrigin;
       expect((await fetch(`${origin}/api/readiness`, { method: 'POST', headers: requestHeaders })).status).toBe(403);
     },
@@ -252,6 +258,7 @@ describe('WebSocket authentication', () => {
       headers: h,
       body: '{"disclosureAcknowledged":true}',
     });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const body = (await response.json()) as { capability: string };
     const cookie = response.headers.get('set-cookie')!.split(';')[0]!;
     const ws = new WebSocket(shortOrigin.replace('http', 'ws') + '/ws', {

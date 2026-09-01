@@ -18,11 +18,15 @@ describe('BrowserCapture', () => {
       destination: {},
       close: vi.fn(async () => undefined),
     };
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
     const node = { ...connector(), port: { onmessage: null as ((event: MessageEvent) => void) | null } };
     const capture = new BrowserCapture({
-      mediaDevices: { getUserMedia } as unknown as MediaDevices,
-      createAudioContext: () => context as unknown as AudioContext,
-      createWorkletNode: () => node as unknown as AudioWorkletNode,
+      // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+      mediaDevices: { getUserMedia } as { getUserMedia: typeof getUserMedia } & MediaDevices,
+      // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+      createAudioContext: () => context as typeof context & AudioContext,
+      // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+      createWorkletNode: () => node as typeof node & AudioWorkletNode,
       streamId: () => 9,
     });
     expect(getUserMedia).not.toHaveBeenCalled();
@@ -32,6 +36,7 @@ describe('BrowserCapture', () => {
       audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       video: false,
     });
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
     node.port.onmessage?.({ data: new Float32Array(960) } as MessageEvent);
     await Promise.resolve();
     expect(send).toHaveBeenCalled();
@@ -44,7 +49,8 @@ describe('BrowserCapture', () => {
     const track = { stop: vi.fn(), addEventListener: vi.fn() };
     const getUserMedia = vi.fn(async () => ({ getTracks: () => [track] }));
     const capture = new BrowserCapture({
-      mediaDevices: { getUserMedia } as unknown as MediaDevices,
+      // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+      mediaDevices: { getUserMedia } as { getUserMedia: typeof getUserMedia } & MediaDevices,
       createAudioContext: () => {
         throw new Error('audio context unavailable');
       },

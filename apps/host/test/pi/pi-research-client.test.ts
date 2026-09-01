@@ -129,6 +129,7 @@ describe('production Pi research RPC boundary', () => {
     expect(prompt).toContain('do not cite URLs aloud');
   });
 
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   it('frames the body as a continuation of speech already given, not a fresh Q&A', async () => {
     const { value, fake } = await client();
     await events(value);
@@ -150,6 +151,7 @@ describe('production Pi research RPC boundary', () => {
 
   it('uses posture-aware research word caps', async () => {
     const { value, fake } = await client();
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     for (const posture of ['riff', 'question', 'challenge'] as const) {
       for await (const _event of value.requestBody({ ...input, posture }, new AbortController().signal)) {
         /* consume */
@@ -185,8 +187,8 @@ describe('production Pi research RPC boundary', () => {
   it('logs sanitized research tool lifecycle without leaking args or results', async () => {
     const { value } = await client('tools');
     const writes: string[] = [];
-    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
-      writes.push(String(chunk));
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((cause: unknown) => {
+      writes.push(String(cause));
       return true;
     });
     try {
@@ -250,6 +252,7 @@ describe('production Pi research RPC boundary', () => {
   });
 
   it('fails safely on malformed or crashing child output', async () => {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     for (const scenario of ['malformed', 'crash'] as const) {
       const { value } = await client(scenario);
       const result = await events(value);

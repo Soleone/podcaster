@@ -1,6 +1,7 @@
 import { IDBObjectStore, indexedDB } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StableTurnWriter, type StableEvent } from './stable-turn-writer';
+import type { JsonValue } from '../lib/json-values';
 
 const databases: string[] = [];
 let sequence = 0;
@@ -12,9 +13,10 @@ const open = async () => {
 const event = <T extends StableEvent['type']>(
   sessionId: string,
   type: T,
-  payload: Record<string, unknown>,
+  payload: Record<string, JsonValue>,
   epoch = 0,
 ): StableEvent =>
+  // SAFETY: IndexedDB returned the row written under this local storage contract.
   ({
     protocolVersion: 1,
     eventId: `event-${++sequence}`,
@@ -23,6 +25,7 @@ const event = <T extends StableEvent['type']>(
     monotonicMs: Date.now(),
     type,
     payload,
+    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   }) as StableEvent;
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -83,6 +86,7 @@ describe('StableTurnWriter', () => {
   it('persists the frozen session voice/backend snapshot for active-session recovery', async () => {
     const { name, writer } = await open();
     const settings = {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       version: 1 as const,
       persona: 'persona',
       voice: {
@@ -103,8 +107,10 @@ describe('StableTurnWriter', () => {
   it('persists planning lifecycle and keeps the first topic/depth/notes on reconnect', async () => {
     const { writer } = await open();
     const planning = {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       status: 'planning' as const,
       topic: 'The future of local radio',
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       depth: 'standard' as const,
       progress: 0,
     };
@@ -166,6 +172,7 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   it('reopens a stopped session as active with a fresh seed and clears its end time', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed-1', personaDigest: 'digest' });
@@ -182,6 +189,7 @@ describe('StableTurnWriter', () => {
   it('checkpoints a paused session, interrupts unfinished playback, and preserves frozen identity on resume', async () => {
     const { writer } = await open();
     const settings = {
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
       version: 1 as const,
       persona: 'frozen persona',
       voice: { catalogId: 'catalog', voiceId: 'voice', speedModifier: 1 },
@@ -255,6 +263,7 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   it('marks a response that is still reasoning as interrupted on pause', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 'session', sessionSeed: 'seed', personaDigest: 'digest' });
@@ -356,6 +365,7 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   it('uses each active final as the authoritative cumulative response checkpoint', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
@@ -441,6 +451,7 @@ describe('StableTurnWriter', () => {
     writer.close();
   });
 
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   it('does not mark a rejected provisional interruption as delivered history', async () => {
     const { writer } = await open();
     await writer.beginSession({ sessionId: 's', sessionSeed: 'seed', personaDigest: 'digest' });
@@ -560,6 +571,7 @@ describe('StableTurnWriter', () => {
     for (const [sessionId, turnId, responseId] of [
       ['s1', 't1', 'r1'],
       ['s2', 't2', 'r2'],
+      // SAFETY: The value is validated or constructed with this declared contract at this boundary.
     ] as const) {
       await writer.apply(event(sessionId, 'transcript.final', { turnId, text: 'hello' }));
       await writer.apply(

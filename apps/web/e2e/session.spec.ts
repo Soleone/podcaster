@@ -1,6 +1,10 @@
 import { expect, test } from './support/dev-server';
 import { emit, enterFakeSession } from './support/fake-browser-services';
 
+interface SessionTestWindow extends Window {
+  getUserMediaCalls: number;
+}
+
 test('pauses and resumes the full session without ending it', async ({ page, origin }) => {
   await enterFakeSession(page, origin);
   await expect.poll(() => page.evaluate(() => window.__podcasterTest!.stats().captureRunning)).toBe(true);
@@ -50,7 +54,8 @@ test('runs stable session states and recovers stable work after refresh', async 
   expect(
     await page.evaluate(() => ({
       running: window.__podcasterTest!.stats().captureRunning,
-      mediaCalls: (window as unknown as { getUserMediaCalls: number }).getUserMediaCalls,
+      // SAFETY: the fake microphone init script installs this test-only property.
+      mediaCalls: (window as SessionTestWindow).getUserMediaCalls,
     })),
   ).toEqual({ running: true, mediaCalls: 2 });
   await page.evaluate(async () => window.__podcasterTest!.partial('tentative words'));

@@ -97,25 +97,29 @@ const hostEventCases = cases.filter(
   ([schemaPath]) => hostEventSchemaPaths.has(schemaPath) && schemaPath !== 'events/host-event.json',
 );
 
-type JsonSchema = Record<string, any>;
+type JsonSchemaValue = import('ajv').ErrorObject['params'][string];
+type JsonSchema = Record<string, JsonSchemaValue>;
 const schemasById = new Map<string, JsonSchema>(
-  Object.values(CONTRACT_SCHEMAS).map((schema) => [schema.$id, schema as JsonSchema]),
+  Object.values(CONTRACT_SCHEMAS).map((schema) => [
+    schema.$id, // SAFETY: generated contract schemas are locally constructed JSON objects.
+    schema as JsonSchema,
+  ]),
 );
-function resolveRef(ref: string, document: JsonSchema): { schema: JsonSchema; document: JsonSchema } {
+function resolveRef(ref: string, document: JsonSchema) {
   const url = new URL(ref, document.$id);
   const target = schemasById.get(url.origin + url.pathname) ?? document;
   let schema = target;
   if (url.hash) for (const segment of url.hash.slice(2).split('/')) schema = schema[segment];
   return { schema, document: target };
 }
-function setAt(root: any, path: (string | number)[], value: unknown) {
+function setAt(root: JsonSchema, path: (string | number)[], value: JsonSchemaValue) {
   let parent = root;
   for (const key of path.slice(0, -1)) parent = parent[key];
   parent[path.at(-1)!] = value;
 }
-function systematicMutations(schema: JsonSchema, exemplar: any) {
-  const mutations: { name: string; value: unknown }[] = [];
-  const add = (name: string, path: (string | number)[], replacement: unknown, remove = false) => {
+function systematicMutations(schema: JsonSchema, exemplar: JsonSchema) {
+  const mutations: { name: string; value: JsonSchemaValue }[] = [];
+  const add = (name: string, path: (string | number)[], replacement: JsonSchemaValue, remove = false) => {
     const value = structuredClone(exemplar);
     let parent = value;
     for (const key of path.slice(0, -1)) parent = parent[key];
@@ -123,7 +127,7 @@ function systematicMutations(schema: JsonSchema, exemplar: any) {
     else setAt(value, path, structuredClone(replacement));
     mutations.push({ name, value });
   };
-  const visit = (node: JsonSchema, value: any, path: (string | number)[], document: JsonSchema) => {
+  const visit = (node: JsonSchema, value: JsonSchemaValue, path: (string | number)[], document: JsonSchema) => {
     if (node.$ref) {
       const resolved = resolveRef(node.$ref, document);
       visit(resolved.schema, value, path, resolved.document);
@@ -134,8 +138,20 @@ function systematicMutations(schema: JsonSchema, exemplar: any) {
       const types = Array.isArray(branch.type) ? branch.type : [branch.type];
       const matches =
         branch.$ref ||
-        types.includes(typeof value) ||
-        (types.includes('object') && value !== null && typeof value === 'object' && !Array.isArray(value)) ||
+        types.includes(
+          value === null
+            ? 'null'
+            : Array.isArray(value)
+              ? 'array'
+              : Object(value) === value
+                ? 'object'
+                : String(value) === value
+                  ? 'string'
+                  : Number(value) === value
+                    ? 'number'
+                    : 'boolean',
+        ) ||
+        (types.includes('object') && value !== null && Object(value) === value && !Array.isArray(value)) ||
         (types.includes('null') && value === null);
       if (matches) visit(branch, value, path, document);
     }
@@ -156,13 +172,16 @@ function systematicMutations(schema: JsonSchema, exemplar: any) {
         Array.from({ length: node.maxItems + 1 }, (_, index) => `item-${index}`),
       );
     if (node.uniqueItems && value.length) add(`${label} uniqueItems`, path, [value[0], value[0]]);
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
+    if (value && Object(value) === value && !Array.isArray(value)) {
       for (const key of node.required ?? [])
         if (Object.hasOwn(value, key)) add(`${label} required ${key}`, [...path, key], undefined, true);
       if (node.additionalProperties === false)
         add(`${label} extra property`, [...path, 'AWS_SECRET_ACCESS_KEY'], 'must-not-pass');
       for (const [key, child] of Object.entries(node.properties ?? {}))
-        if (Object.hasOwn(value, key)) visit(child as JsonSchema, value[key], [...path, key], document);
+        if (Object.hasOwn(value, key)) {
+          // SAFETY: schema properties are locally constructed JSON schema objects.
+          visit(child as JsonSchema, value[key], [...path, key], document);
+        }
     }
     if (Array.isArray(value) && node.items)
       value.forEach((item, index) => visit(node.items, item, [...path, index], document));
@@ -180,10 +199,12 @@ describe('canonical and generated model-associated validator parity', () => {
     expect(CONTRACT_VALIDATORS[title](positive), JSON.stringify(CONTRACT_VALIDATORS[title].errors)).toBe(true);
   });
   for (const [schemaPath, validName] of cases.map(([path, valid]) => [path, valid] as const)) {
+    // SAFETY: generated contract schemas are locally constructed JSON objects.
     const schema = CONTRACT_SCHEMAS[schemaPath] as JsonSchema;
     const mutations = systematicMutations(schema, readJson(`fixtures/valid/${validName}.json`));
     test.each(mutations)(`${schemaPath}: $name`, ({ value }) => {
       expect(canonical.validate(schema.$id, value), JSON.stringify(canonical.errors)).toBe(false);
+      // SAFETY: generated schema titles exactly match validator keys.
       const generated = CONTRACT_VALIDATORS[schema.title as keyof typeof CONTRACT_VALIDATORS];
       expect(generated(value), JSON.stringify(generated.errors)).toBe(false);
     });

@@ -1,3 +1,5 @@
+type TestJsonValue = null | boolean | number | string | TestJsonValue[] | { [key: string]: TestJsonValue };
+type TestJsonRecord = { [key: string]: TestJsonValue };
 import { createServer } from 'node:http';
 import { encodeBinaryAudioFrame } from '@app/contracts';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -25,7 +27,7 @@ afterEach(async () => {
 
 interface RecordedRequest {
   type: string;
-  payload: Record<string, unknown>;
+  payload: TestJsonRecord;
 }
 
 async function fakePreviewSidecar(options: { busy?: boolean; driftVoice?: string } = {}) {
@@ -33,7 +35,7 @@ async function fakePreviewSidecar(options: { busy?: boolean; driftVoice?: string
   const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   const requests: RecordedRequest[] = [];
   let requestedVoiceId = 'af_heart';
   wss.on('connection', (socket, request) => {
@@ -51,6 +53,7 @@ async function fakePreviewSidecar(options: { busy?: boolean; driftVoice?: string
     );
     socket.on('message', (raw) => {
       if (Buffer.isBuffer(raw) && raw[0] === 1) return;
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       const message = JSON.parse(raw.toString()) as RecordedRequest;
       requests.push(message);
       if (message.type === 'stream.open') {
@@ -63,7 +66,10 @@ async function fakePreviewSidecar(options: { busy?: boolean; driftVoice?: string
         }
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
       }
-      if (message.type === 'tts.open') requestedVoiceId = message.payload.voiceId as string;
+      if (message.type === 'tts.open') {
+        // SAFETY: the fake sends tts.open literals with a string voiceId.
+        requestedVoiceId = message.payload.voiceId as string;
+      }
       if (message.type === 'tts.commit') {
         const streamId = message.payload.streamId;
         const outputStreamId = 77;
@@ -123,6 +129,7 @@ async function fakePreviewSidecar(options: { busy?: boolean; driftVoice?: string
   servers.push(closer);
   return {
     sidecar: {
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       child: {} as SidecarProcess['child'],
       origin: `http://127.0.0.1:${address.port}`,
       secret: 'secret',

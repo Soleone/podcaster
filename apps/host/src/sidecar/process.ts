@@ -11,6 +11,7 @@ import {
   type TtsModelSelection,
   type VoiceCatalog,
 } from '@app/contracts';
+import { isJsonNumber, isJsonString, readRecord, readString, type JsonValue } from './json-values.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -62,7 +63,7 @@ export async function startSidecar(
   }
   let parsed: { host?: string; port?: number };
   try {
-    parsed = JSON.parse(line) as { host?: string; port?: number };
+    parsed = JSON.parse(line);
   } catch {
     child.kill();
     throw new Error('Invalid sidecar startup response');
@@ -117,52 +118,53 @@ export async function sidecarSnapshot(sidecar: SidecarProcess): Promise<SidecarR
       signal: AbortSignal.timeout(1000),
     });
     if (!response.ok) return undefined;
-    const value = (await response.json()) as {
-      status?: unknown;
-      stt?: unknown;
-      tts?: unknown;
-      warmup?: unknown;
-      voiceCatalog?: unknown;
-      ttsModels?: unknown;
-      activeTtsModel?: unknown;
-    };
-    if (value.status !== 'starting' && value.status !== 'ready' && value.status !== 'failed') return undefined;
+    const value: JsonValue = await response.json();
+    if (value === null || value === true || value === false) return undefined;
+    if (isJsonNumber(value)) return undefined;
+    if (isJsonString(value)) return undefined;
+    if (Array.isArray(value)) return undefined;
+    // SAFETY: the JSON value universe is null, booleans, numbers, strings,
+    // arrays, and plain objects; every other case is excluded above.
+    const record = value as Record<string, JsonValue>;
+    const status = record['status'];
+    if (status !== 'starting' && status !== 'ready' && status !== 'failed') return undefined;
     const snapshot: SidecarRuntimeSnapshot = {
-      status: value.status,
-      stt: String(value.stt ?? ''),
-      tts: String(value.tts ?? ''),
+      status,
+      stt: readString(record, 'stt') ?? '',
+      tts: readString(record, 'tts') ?? '',
     };
-    if (value.warmup !== undefined) {
-      if (!value.warmup || typeof value.warmup !== 'object' || Array.isArray(value.warmup)) return undefined;
-      const warmup = value.warmup as { vad?: unknown; tts?: unknown };
-      const valid = (item: unknown): item is SidecarWarmupStatus =>
+    if (record['warmup'] !== undefined) {
+      const warmupRecord = readRecord(record, 'warmup');
+      if (warmupRecord === undefined) return undefined;
+      if (Object.keys(warmupRecord).some((key) => key !== 'vad' && key !== 'tts')) return undefined;
+      const vad = warmupRecord['vad'];
+      const tts = warmupRecord['tts'];
+      const validStatus = (item: JsonValue | undefined): item is SidecarWarmupStatus =>
         item === 'starting' || item === 'warming' || item === 'ready' || item === 'failed';
-      if (!valid(warmup.vad) || !valid(warmup.tts) || Object.keys(warmup).some((key) => key !== 'vad' && key !== 'tts'))
-        return undefined;
-      snapshot.warmup = { vad: warmup.vad, tts: warmup.tts };
+      if (!validStatus(vad) || !validStatus(tts)) return undefined;
+      snapshot.warmup = { vad, tts };
     }
-    if (value.status === 'ready') {
+    if (status === 'ready') {
       if (!isValidVoiceCatalog(value.voiceCatalog)) return undefined;
       snapshot.voiceCatalog = value.voiceCatalog;
     }
-    if (value.ttsModels !== undefined) {
-      if (!Array.isArray(value.ttsModels) || !value.ttsModels.every(isValidTtsModelDescriptor)) return undefined;
-      snapshot.ttsModels = value.ttsModels;
+    if (record['ttsModels'] !== undefined) {
+      const entries = record['ttsModels'];
+      if (!Array.isArray(entries)) return undefined;
+      const models: TtsModelDescriptor[] = [];
+      for (const entry of entries) {
+        if (!isValidTtsModelDescriptor(entry)) return undefined;
+        models.push(entry);
+      }
+      snapshot.ttsModels = models;
     }
-    if (value.activeTtsModel !== undefined) {
-      const active = value.activeTtsModel;
-      if (
-        !active ||
-        typeof active !== 'object' ||
-        Array.isArray(active) ||
-        typeof (active as { backendId?: unknown }).backendId !== 'string' ||
-        typeof (active as { modelId?: unknown }).modelId !== 'string'
-      )
-        return undefined;
-      snapshot.activeTtsModel = {
-        backendId: (active as { backendId: string }).backendId,
-        modelId: (active as { modelId: string }).modelId,
-      };
+    if (record['activeTtsModel'] !== undefined) {
+      const activeRecord = readRecord(record, 'activeTtsModel');
+      if (activeRecord === undefined) return undefined;
+      const backendId = readString(activeRecord, 'backendId');
+      const modelId = readString(activeRecord, 'modelId');
+      if (backendId === undefined || modelId === undefined) return undefined;
+      snapshot.activeTtsModel = { backendId, modelId };
     }
     return snapshot;
   } catch {

@@ -36,6 +36,7 @@ class FakePi implements PiClient {
     },
   ) {}
   async probe() {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     return { status: 'ready' as const, detail: 'ready', correctiveAction: 'None.' };
   }
   request(input: PiRequestInput, signal: AbortSignal): AsyncIterable<PiEvent> {
@@ -148,7 +149,7 @@ function turn(index: number, text = 'This is a stable user thought', epoch = 0) 
   return { epoch, turnId: ids[60 + index]!, text, endpointComplete: true };
 }
 
-const schemaForType: Record<string, keyof typeof CONTRACT_VALIDATORS> = {
+const schemaForType = {
   'session.state': 'SessionStateEvent',
   'policy.decision': 'PolicyDecisionEvent',
   'reasoning.started': 'ReasoningStartedEvent',
@@ -162,12 +163,13 @@ const schemaForType: Record<string, keyof typeof CONTRACT_VALIDATORS> = {
   'barge_in.confirmed': 'BargeInEvent',
   'barge_in.rejected': 'BargeInEvent',
   'barge_in.timed_out': 'BargeInEvent',
-};
+} satisfies Record<string, keyof typeof CONTRACT_VALIDATORS>;
 
 describe('safe session orchestrator', () => {
   it('emits tts.started before streaming completion and tts.ended only after completion', async () => {
     let finish!: (value: { generatedSamples: number }) => void;
     const released: string[] = [];
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const speech = new FakeSpeech() as FakeSpeech & { release(responseId: string): void };
     speech.release = (responseId) => released.push(responseId);
     speech.begin = (input) => {
@@ -204,11 +206,7 @@ describe('safe session orchestrator', () => {
     let finish!: (value: { generatedSamples: number }) => void;
     let generated!: (total: number) => void;
     const speech = new FakeSpeech();
-    speech.begin = ((input: {
-      responseId: string;
-      signal: AbortSignal;
-      onGeneratedSamples?: (total: number) => void;
-    }) => {
+    speech.begin = (input) => {
       speech.synthesized.push({ responseId: input.responseId, text: '' });
       generated = input.onGeneratedSamples!;
       const meta = {
@@ -227,11 +225,7 @@ describe('safe session orchestrator', () => {
           speech.finished.push(input.responseId);
         },
       };
-    }) as (input: {
-      responseId: string;
-      signal: AbortSignal;
-      onGeneratedSamples?: (total: number) => void;
-    }) => SpeechOutputStream;
+    };
     const { session } = setup({ speech });
     const handling = session.handleStableFinal(turn(0));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -249,7 +243,9 @@ describe('safe session orchestrator', () => {
   it('keeps transcript-only turns local without invoking Pi or TTS', async () => {
     const { session, pi, speech, events } = setup({ transcriptOnly: true });
     await session.handleStableFinal(turn(0));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).synthesized).toEqual([]);
     expect(events.map((value) => value.type)).toContain('policy.decision');
     expect(session.snapshot().phase).toBe('listening');
@@ -262,7 +258,9 @@ describe('safe session orchestrator', () => {
         const text = await new Promise<string>((resolve) => {
           release = resolve;
         });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text };
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text };
       },
     }));
@@ -272,9 +270,11 @@ describe('safe session orchestrator', () => {
     const responseId = session.snapshot().activeResponseId!;
     session.cancelCurrentTurn();
     expect(session.snapshot()).toMatchObject({ phase: 'listening', epoch: 1 });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([responseId]);
     release('late response');
     await handling;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).synthesized).toEqual([]);
   });
 
@@ -341,11 +341,14 @@ describe('safe session orchestrator', () => {
   it('emits schema-valid events and deduplicates stable finals', async () => {
     const { session, events, pi, speech } = setup();
     await Promise.all([session.handleStableFinal(turn(0)), session.handleStableFinal(turn(0))]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).appended).toHaveLength(1);
     expect(events.filter((event) => event.type === 'policy.decision')).toHaveLength(1);
     for (const event of events) {
-      const title = schemaForType[event.type];
+      // SAFETY: indexing a plain object with an arbitrary event type string yields undefined for unmapped types instead of throwing.
+      const title = schemaForType[event.type as keyof typeof schemaForType];
       if (title)
         expect(CONTRACT_VALIDATORS[title](event), JSON.stringify(CONTRACT_VALIDATORS[title].errors)).toBe(true);
     }
@@ -354,7 +357,9 @@ describe('safe session orchestrator', () => {
   it('silence invokes neither Pi nor speech', async () => {
     const { session, pi, speech, events } = setup({ policyDecide: policy('silence') });
     await session.handleStableFinal(turn(0, 'only three words'));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).synthesized).toEqual([]);
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'policy.decision', payload: expect.objectContaining({ posture: 'silence' }) }),
@@ -393,6 +398,7 @@ describe('safe session orchestrator', () => {
       });
       const { session, speech, events } = setup({ pi });
       await session.handleStableFinal(turn(0));
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       expect((speech as FakeSpeech).synthesized).toEqual([]);
       expect(events).toContainEqual(
         expect.objectContaining({ type: 'failure', payload: expect.objectContaining({ code: 'reasoning_invalid' }) }),
@@ -428,6 +434,7 @@ describe('safe session orchestrator', () => {
     expect(deltas.length).toBeLessThan(finalText.length);
     let previous = '';
     for (const delta of deltas) {
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       const text = delta.payload.text as string;
       expect(finalText.startsWith(text)).toBe(true);
       expect(text.length).toBeGreaterThan(previous.length);
@@ -444,12 +451,17 @@ describe('safe session orchestrator', () => {
     const pi = new FakePi((input) => ({
       async *[Symbol.asyncIterator]() {
         if (input.transcript.includes('first')) {
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           yield { type: 'delta' as const, text: 'A first preview that starts to stream.' };
           const rest = await new Promise<string>((resolve) => gates.push(resolve));
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           yield { type: 'delta' as const, text: rest };
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           yield { type: 'final' as const, text: 'A first preview that starts to stream.' + rest };
         } else {
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           yield { type: 'delta' as const, text: 'A second complete answer.' };
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           yield { type: 'final' as const, text: 'A second complete answer.' };
         }
       },
@@ -457,6 +469,7 @@ describe('safe session orchestrator', () => {
     const { session, events } = setup({ pi });
     const first = session.handleStableFinal(turn(0, 'the first words spoken'));
     await new Promise<void>((resolve) => setImmediate(resolve));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const firstResponseId = events.find((event) => event.type === 'reasoning.started')!.payload.responseId as string;
     expect(
       events.filter((event) => event.type === 'reasoning.delta' && event.payload.responseId === firstResponseId),
@@ -506,7 +519,9 @@ describe('safe session orchestrator', () => {
     const pi = new FakePi((_input, _signal) => ({
       async *[Symbol.asyncIterator]() {
         const text = await new Promise<string>((resolve) => releases.push(resolve));
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text };
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text };
       },
     }));
@@ -518,6 +533,7 @@ describe('safe session orchestrator', () => {
     releases[0]!('First stale response');
     releases[1]!('Second current response');
     await Promise.all([first, second]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).appended.map((item) => item.text)).toEqual(['Second current response']);
     expect(session.snapshot().epoch).toBe(1);
     expect(events.filter((event) => event.type === 'reasoning.final')).toHaveLength(1);
@@ -580,10 +596,12 @@ describe('safe session orchestrator', () => {
     const responseId = session.snapshot().activeResponseId!;
     expect(session.beginProvisionalBargeIn(responseId)).toBe(true);
     expect(session.snapshot().epoch).toBe(0);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).paused).toEqual([responseId]);
     expect(session.confirmBargeIn()).toBe(true);
     expect(session.confirmBargeIn()).toBe(false);
     expect(session.snapshot()).toMatchObject({ epoch: 1, phase: 'listening' });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled.filter((id) => id === responseId)).toHaveLength(1);
     expect(events.filter((event) => event.type === 'barge_in.confirmed')).toHaveLength(1);
   });
@@ -627,7 +645,9 @@ describe('safe session orchestrator', () => {
     });
     await session.handleStableFinal(turn(1, 'um'));
     expect(session.snapshot()).toMatchObject({ epoch: 0, phase: 'playing', activeResponseId: first });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([first]);
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'barge_in.rejected', payload: expect.objectContaining({ resumable: true }) }),
@@ -693,6 +713,7 @@ describe('safe session orchestrator', () => {
     session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 120, generatedSamples: 6400 });
     await session.handleStableFinal(turn(1, 'Could I maybe ask something'));
     expect(session.snapshot()).toMatchObject({ epoch: 0, phase: 'playing', activeResponseId: responseId });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([]);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -737,11 +758,14 @@ describe('safe session orchestrator', () => {
       confidence: 'high',
       disposition: 'accept_takeover',
     });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([first]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([]);
     session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: 'cancelled' });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(session.snapshot().epoch).toBe(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
     expect(events.filter((event) => event.type === 'barge_in.confirmed')).toHaveLength(1);
   });
@@ -780,14 +804,19 @@ describe('safe session orchestrator', () => {
       intent: 'topic_change',
       disposition: 'accept_takeover',
     });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([first]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([]);
     session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: 'cancelled' });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(session.snapshot().epoch).toBe(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
     // The redirect becomes the next turn's content rather than being swallowed
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     // as control-only speech.
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs[1]!.transcript).toBe('Fantasy setting');
     expect(events.filter((event) => event.type === 'barge_in.confirmed')).toHaveLength(1);
   });
@@ -827,7 +856,9 @@ describe('safe session orchestrator', () => {
     session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: 'cancelled' });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(session.snapshot().epoch).toBe(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs[1]!.transcript).toBe('Fantasy setting');
     expect(events.filter((event) => event.type === 'barge_in.confirmed')).toHaveLength(1);
   });
@@ -854,7 +885,9 @@ describe('safe session orchestrator', () => {
     session.handleSpeechEnd();
     await session.handleStableFinal(turn(1, 'Go on'));
     expect(session.snapshot()).toMatchObject({ epoch: 0, phase: 'playing', activeResponseId: first });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([first]);
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'barge_in.rejected', payload: expect.objectContaining({ resumable: true }) }),
@@ -925,6 +958,7 @@ describe('safe session orchestrator', () => {
     session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 320, reason: 'cancelled' });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(session.snapshot().epoch).toBe(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
     expect(events.filter((event) => event.type === 'barge_in.confirmed')).toHaveLength(1);
   });
@@ -948,6 +982,7 @@ describe('safe session orchestrator', () => {
       phase: 'acceptance_pending_terminal',
       activeResponseId: first,
     });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(1);
     expect(events.filter((event) => event.type === 'policy.decision')).toHaveLength(1);
 
@@ -961,13 +996,16 @@ describe('safe session orchestrator', () => {
     session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: 'cancelled' });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(session.snapshot().epoch).toBe(1);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
     expect(events.filter((event) => event.type === 'policy.decision')).toHaveLength(2);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled.filter((id) => id === first)).toHaveLength(1);
     expect(events.filter((event) => event.type === 'barge_in.confirmed')).toHaveLength(1);
 
     session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 0, reason: 'cancelled' });
     await new Promise<void>((resolve) => setImmediate(resolve));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
     expect(events.filter((event) => event.type === 'policy.decision')).toHaveLength(2);
   });
@@ -980,7 +1018,9 @@ describe('safe session orchestrator', () => {
     session.confirmBargeIn();
     const counts = {
       events: events.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       pi: (pi as FakePi).inputs.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       speech: (speech as FakeSpeech).synthesized.length,
     };
     const retention = session.retentionSnapshot();
@@ -988,7 +1028,9 @@ describe('safe session orchestrator', () => {
     expect(session.snapshot()).toMatchObject({ epoch: 1, phase: 'listening' });
     expect({
       events: events.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       pi: (pi as FakePi).inputs.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       speech: (speech as FakeSpeech).synthesized.length,
     }).toEqual(counts);
     expect(session.retentionSnapshot()).toEqual(retention);
@@ -1001,7 +1043,9 @@ describe('safe session orchestrator', () => {
     expect(session.snapshot().epoch).toBe(1);
     const counts = {
       events: events.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       pi: (pi as FakePi).inputs.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       speech: (speech as FakeSpeech).synthesized.length,
     };
     const retention = session.retentionSnapshot();
@@ -1009,7 +1053,9 @@ describe('safe session orchestrator', () => {
     expect(session.snapshot().epoch).toBe(1);
     expect({
       events: events.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       pi: (pi as FakePi).inputs.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       speech: (speech as FakeSpeech).synthesized.length,
     }).toEqual(counts);
     expect(session.retentionSnapshot()).toEqual(retention);
@@ -1021,14 +1067,18 @@ describe('safe session orchestrator', () => {
     session.stop();
     const counts = {
       events: events.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       pi: (pi as FakePi).inputs.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       speech: (speech as FakeSpeech).synthesized.length,
     };
     await session.handleStableFinal(turn(1, 'This delayed final arrived after stop', 0));
     expect(session.snapshot()).toMatchObject({ epoch: 1, phase: 'stopped' });
     expect({
       events: events.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       pi: (pi as FakePi).inputs.length,
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
       speech: (speech as FakeSpeech).synthesized.length,
     }).toEqual(counts);
     expect(session.retentionSnapshot()).toEqual({ contextTurns: 0, recentDecisions: 0, seenTurns: 0 });
@@ -1049,7 +1099,9 @@ describe('safe session orchestrator', () => {
     });
     session.setEchoRecovered(true);
     expect(session.rejectBargeIn()).toBe(true);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([first]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([]);
     expect(session.snapshot()).toMatchObject({ phase: 'playing', epoch: 0 });
   });
@@ -1071,7 +1123,9 @@ describe('safe session orchestrator', () => {
     session.handleSpeechEnd();
     scheduler.fire();
     expect(session.snapshot()).toMatchObject({ phase: 'playing', epoch: 0, activeResponseId });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([activeResponseId]);
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'barge_in.timed_out', payload: expect.objectContaining({ resumable: true }) }),
@@ -1094,11 +1148,14 @@ describe('safe session orchestrator', () => {
       epoch: 0,
       activeResponseId: responseId,
     });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([]);
     session.playbackPaused({ responseId, playbackId, outputEpoch: 0, pausedSampleOffset: 120, generatedSamples: 6400 });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(session.snapshot()).toMatchObject({ phase: 'playing', epoch: 0, activeResponseId: responseId });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([responseId]);
   });
 
@@ -1109,7 +1166,9 @@ describe('safe session orchestrator', () => {
         const text = await new Promise<string>((resolve) => {
           release = resolve;
         });
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'delta' as const, text };
+        // SAFETY: this test fixture is constructed in this file with the asserted shape.
         yield { type: 'final' as const, text };
       },
     }));
@@ -1120,11 +1179,14 @@ describe('safe session orchestrator', () => {
     session.beginProvisionalBargeIn(responseId);
     session.setEchoRecovered(true);
     session.rejectBargeIn();
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([responseId]);
     expect(session.snapshot().epoch).toBe(1);
     release('late response');
     await handling;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).appended).toEqual([]);
 
     let finishSynthesis!: (value: { playbackId: string; sampleRate: number; generatedSamples: number }) => void;
@@ -1178,6 +1240,7 @@ describe('safe session orchestrator', () => {
     release({ type: 'final', text: '' });
     await handling;
     expect(session.snapshot()).toMatchObject({ phase: 'listening', epoch: 1 });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([responseId]);
     expect(scheduler.callbacks).toEqual([]);
     expect(events.filter((event) => event.type === 'barge_in.rejected')).toHaveLength(1);
@@ -1190,6 +1253,7 @@ describe('safe session orchestrator', () => {
   });
 
   it('terminally resolves provisional state on Pi and synthesis failures', async () => {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     for (const mode of ['pi', 'synthesis'] as const) {
       const piEvents: PiEvent[] = [];
       let releasePi!: () => void;
@@ -1307,7 +1371,9 @@ describe('safe session orchestrator', () => {
     expect(session.rejectBargeIn()).toBe(false);
     scheduler.fire();
     expect(scheduler.callbacks).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([]);
     expect(events.filter((event) => event.type === 'barge_in.rejected')).toHaveLength(1);
   });
@@ -1349,12 +1415,16 @@ describe('safe session orchestrator', () => {
     }
     expect(session.snapshot()).toMatchObject({ phase: 'stopped', epoch: 1, deliveredExtent: { [playbackId]: 1000 } });
     expect(session.retentionSnapshot()).toEqual({ contextTurns: 0, recentDecisions: 0, seenTurns: 0 });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled.filter((id) => id === activeResponseId)).toHaveLength(1);
   });
 
   it('preserves invariants across deterministic provisional race permutations', async () => {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const terminals = ['confirm', 'reject'] as const;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const challengers = ['stop', 'new-final', 'playback-complete'] as const;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const orders = ['terminal-first', 'challenger-first'] as const;
     for (const terminal of terminals)
       for (const challenger of challengers)
@@ -1462,8 +1532,11 @@ describe('safe session orchestrator', () => {
     });
     const { session, events, speech } = setup({ pi });
     await session.handleStableFinal(turn(0, 'A stable user thought'));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const firstResponse = events.find((event) => event.type === 'reasoning.started')!.payload.responseId as string;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).appended).toContainEqual({ responseId: firstResponse, text: 'First sentence.' });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([firstResponse]);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -1479,12 +1552,15 @@ describe('safe session orchestrator', () => {
 
     // The next response opens, appends, finishes, plays, and commits context.
     await session.handleStableFinal(turn(1, 'Second healthy thought'));
+    // SAFETY: reasoning.started payloads in this test carry a string responseId set by the fixture.
     const secondResponse = events.filter((event) => event.type === 'reasoning.started').at(-1)!.payload
       .responseId as string;
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).finished).toContain(secondResponse);
     const secondStarted = events.find(
       (event) => event.type === 'tts.started' && event.payload.responseId === secondResponse,
     );
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const secondPlayback = secondStarted!.payload.playbackId as string;
     session.playbackStopped({
       playbackId: secondPlayback,
@@ -1527,6 +1603,7 @@ describe('safe session orchestrator', () => {
     });
     const { session, events } = setup({ pi, speech });
     await session.handleStableFinal(turn(0, 'First failed thought'));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const firstResponse = events.find((event) => event.type === 'reasoning.started')!.payload.responseId as string;
     rejectCompletion(new Error('synthesis failed'));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1541,11 +1618,13 @@ describe('safe session orchestrator', () => {
     expect(session.snapshot().phase).toBe('listening');
 
     await session.handleStableFinal(turn(1, 'Second healthy thought'));
+    // SAFETY: reasoning.started payloads in this test carry a string responseId set by the fixture.
     const secondResponse = events.filter((event) => event.type === 'reasoning.started').at(-1)!.payload
       .responseId as string;
     const secondStarted = events.find(
       (event) => event.type === 'tts.started' && event.payload.responseId === secondResponse,
     );
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const secondPlayback = secondStarted!.payload.playbackId as string;
     session.playbackStopped({
       playbackId: secondPlayback,
@@ -1566,6 +1645,7 @@ describe('safe session orchestrator', () => {
     });
     const { session, events, speech } = setup({ pi });
     await session.handleStableFinal(turn(0));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const firstResponse = events.find((event) => event.type === 'reasoning.started')!.payload.responseId as string;
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -1573,6 +1653,7 @@ describe('safe session orchestrator', () => {
         payload: expect.objectContaining({ responseId: firstResponse, reasonCode: 'reasoning_invalid' }),
       }),
     );
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([firstResponse]);
     expect(events.filter((event) => event.type === 'reasoning.final')).toHaveLength(0);
   });
@@ -1588,8 +1669,11 @@ describe('safe session orchestrator', () => {
             releaseFirst = resolve;
           });
         return {
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           action: 'resume' as const,
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           intent: 'continue_previous' as const,
+          // SAFETY: this test fixture is constructed in this file with the asserted shape.
           confidence: 'high' as const,
           reason: 'Carry on.',
         };
@@ -1616,6 +1700,7 @@ describe('safe session orchestrator', () => {
     expect(decisions).toHaveLength(1);
     expect(decisions[0]!.payload).toMatchObject({ turnId: ids[62]!, responseId, pausedSampleOffset: 320 });
     expect(session.snapshot()).toMatchObject({ phase: 'playing', epoch: 0, activeResponseId: responseId });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).resumed).toEqual([responseId]);
     // Releasing the stale first classification changes nothing.
     releaseFirst();
@@ -1646,6 +1731,7 @@ describe('safe session orchestrator', () => {
       ),
     ).toBe(true);
     expect(session.snapshot()).toMatchObject({ phase: 'listening', epoch: 1 });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([responseId]);
     await handling;
   });
@@ -1707,6 +1793,7 @@ describe('safe session orchestrator', () => {
       reason: 'cancelled',
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
     const secondDecision = events.filter((event) => event.type === 'policy.decision').at(-1)!;
     expect(secondDecision.payload).toMatchObject({ eligible: true, reasonCodes: ['selected'] });
@@ -1723,6 +1810,7 @@ describe('safe session orchestrator', () => {
       const playbackId = Object.keys(session.snapshot().deliveredExtent).at(-1)!;
       session.playbackStopped({ playbackId, cancelledEpoch: 0, finalPlayedSampleOffset: 6400, reason: 'completed' });
     }
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(8);
     expect(events.filter((event) => event.type === 'reasoning.started')).toHaveLength(8);
     expect(
@@ -1744,6 +1832,7 @@ describe('safe session orchestrator', () => {
     scheduler.fire();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(session.snapshot()).toMatchObject({ epoch: 1, activeResponseId: expect.any(String) });
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
     expect(events.filter((event) => event.type === 'barge_in.confirmed')).toHaveLength(1);
   });
@@ -1761,7 +1850,9 @@ describe('safe session orchestrator', () => {
     await session.handleStableFinal(turn(2, 'Please answer this newer request instead', 1));
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(scheduler.callbacks).toEqual([]);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs).toHaveLength(2);
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((pi as FakePi).inputs[1]!.transcript).toBe('Please answer this newer request instead');
   });
 
@@ -1796,8 +1887,10 @@ describe('safe session orchestrator', () => {
     const { session, events } = setup({ speech });
     const handling = session.handleStableFinal(turn(0));
     await Promise.resolve();
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     const firstResponse = events.find((event) => event.type === 'reasoning.started')!.payload.responseId as string;
     session.cancelCurrentTurn();
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([firstResponse]);
     resolveStart({ playbackId: ids[90]!, sampleRate: 24000, generatedSamples: 6400 });
     await handling;

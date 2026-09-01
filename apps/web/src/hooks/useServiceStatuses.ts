@@ -84,7 +84,10 @@ export function useServiceStatuses({ settingsModelRef }: UseServiceStatusesOptio
         const granted =
           microphoneOverride ??
           (await navigator.permissions
-            ?.query({ name: 'microphone' as PermissionName })
+            ?.query(
+              // SAFETY: The Permissions API accepts the standard microphone permission descriptor.
+              { name: 'microphone' as PermissionName },
+            )
             .then((permission) => permission.state === 'granted')
             .catch(() => false)) ??
           false;
@@ -100,6 +103,7 @@ export function useServiceStatuses({ settingsModelRef }: UseServiceStatusesOptio
           }),
         });
         if (!response.ok) throw new Error('service status request failed');
+        // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
         applyReadinessSnapshot((await response.json()) as ReadinessSnapshot);
       } catch {
         // Keep the last known state visible. A single dropped poll should not

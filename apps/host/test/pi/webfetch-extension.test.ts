@@ -1,14 +1,16 @@
+type TestJsonValue = null | boolean | number | string | TestJsonValue[] | { [key: string]: TestJsonValue };
+type TestJsonRecord = { [key: string]: TestJsonValue };
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 interface ToolDefinition {
   name: string;
-  parameters: Record<string, unknown>;
+  parameters: TestJsonRecord;
   execute: (
     toolCallId: string,
     params: { url: string },
     signal: AbortSignal,
-  ) => Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }>;
+  ) => Promise<{ content: Array<{ type: string; text: string }>; details: TestJsonRecord }>;
 }
 
 const cleanups: Array<() => void> = [];
@@ -18,6 +20,7 @@ afterEach(() => {
 
 async function registeredTool(): Promise<ToolDefinition> {
   const tools: ToolDefinition[] = [];
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   const extension = (await import(new URL('../../pi-extensions/webfetch.mjs', import.meta.url).href)) as {
     default: (pi: { registerTool(tool: ToolDefinition): void }) => void;
   };

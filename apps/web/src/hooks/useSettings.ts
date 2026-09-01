@@ -18,8 +18,10 @@ import {
   type VoicePreference,
 } from '@app/contracts/settings';
 import {
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   enrollCustomVoice as enrollCustomVoiceApi,
   enrollStoredCustomVoice,
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   deleteCustomVoice as deleteCustomVoiceApi,
 } from '../voice-enrollment/api';
 import type { ReferenceTake } from '../voice-enrollment/recorder';
@@ -206,7 +208,7 @@ export function useSettings({
           label: catalog.backendId === 'kokoro' ? 'Kokoro CUDA' : `${catalog.backendId} · ${catalog.modelId}`,
           status: 'ready',
           voiceCatalog: catalog,
-          ...(catalog.speed ? { speed: catalog.speed } : {}),
+          ...(catalog.speed ? { speed: catalog.speed } : undefined),
         };
         rawTtsModelsRef.current = [rawFallback];
         const fallbackModel: TtsModelDescriptor = { ...rawFallback, voiceCatalog: mergedCatalog };
@@ -277,10 +279,10 @@ export function useSettings({
         speedModifier,
         backendId: selectedModel.backendId,
         modelId: selectedModel.modelId,
-        ...(catalogId ? { catalogId } : {}),
-        ...(tonePrompt ? { tonePrompt } : {}),
-        ...(language ? { language } : {}),
-        ...(signal ? { signal } : {}),
+        ...(catalogId ? { catalogId } : undefined),
+        ...(tonePrompt ? { tonePrompt } : undefined),
+        ...(language ? { language } : undefined),
+        ...(signal ? { signal } : undefined),
         capability,
       });
     },
@@ -410,8 +412,8 @@ export function useSettings({
         const reconciled = reconcileSettings(
           {
             selectedModel,
-            ...(stored?.voice ? { voice: stored.voice } : {}),
-            ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}),
+            ...(stored?.voice ? { voice: stored.voice } : undefined),
+            ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : undefined),
           },
           availableModels,
           fallbackCatalog,
@@ -422,7 +424,7 @@ export function useSettings({
             persona: stored?.persona ?? DEFAULT_AGENT_PERSONA,
             pi,
             selectedModel,
-            ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : {}),
+            ...(stored?.voiceProfiles ? { voiceProfiles: stored.voiceProfiles } : undefined),
           },
           reconciled,
         );

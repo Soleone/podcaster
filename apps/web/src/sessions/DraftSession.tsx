@@ -239,6 +239,7 @@ export function DraftSession(props: DraftSessionProps) {
                   className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={preparation.depth}
                   onChange={(event) =>
+                    // SAFETY: The value is validated or constructed with this declared contract at this boundary.
                     setPreparation((value) => ({ ...value, depth: event.target.value as PlanningDepth }))
                   }
                   disabled={starting}

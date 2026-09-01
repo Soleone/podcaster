@@ -1,4 +1,5 @@
 import { type EncodeMp3, type EncodeSampleRate } from './encode';
+import type { EncodeRequest } from './encoder.worker';
 import EncodeWorker from './encoder.worker?worker';
 
 interface PendingEncode {
@@ -18,6 +19,7 @@ export function createEncoderClient(factory: () => Worker = () => new EncodeWork
   let nextRequestId = 0;
   let terminated = false;
   worker.onmessage = (event: MessageEvent) => {
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
     const message = event.data as { requestId: number; mp3?: Uint8Array; error?: string; progress?: number };
     const entry = pending.get(message.requestId);
     if (!entry) return;
@@ -44,13 +46,7 @@ export function createEncoderClient(factory: () => Worker = () => new EncodeWork
       if (onProgress) entry.onProgress = onProgress;
       pending.set(requestId, entry);
     });
-    const request: {
-      requestId: number;
-      pcm16: Int16Array;
-      sampleRate: EncodeSampleRate;
-      bitrateKbps: number;
-      reportProgress?: boolean;
-    } = { requestId, pcm16, sampleRate, bitrateKbps };
+    const request: EncodeRequest = { requestId, pcm16, sampleRate, bitrateKbps };
     if (onProgress) request.reportProgress = true;
     worker.postMessage(request);
     return result;

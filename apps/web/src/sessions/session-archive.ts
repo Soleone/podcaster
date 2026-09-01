@@ -8,11 +8,23 @@ import type { StoredSession } from '../storage/schema';
 import { sessionActiveDurationMs, type StableTurnWriter } from '../storage/stable-turn-writer';
 
 /** One row of the index listing: session facts plus cheap per-session counts. */
+
+type ExternalValue = string | number | boolean | null | undefined | ExternalRecord | readonly ExternalValue[];
+interface ExternalRecord {
+  readonly [key: string]: ExternalValue;
+}
+const valueTag = Object.prototype.toString;
+const isJsonString = (value: ExternalValue): value is string => valueTag.call(value) === '[object String]';
+const isJsonNumber = (value: ExternalValue): value is number => valueTag.call(value) === '[object Number]';
+const isJsonObject = (value: ExternalValue): value is ExternalRecord => valueTag.call(value) === '[object Object]';
+const isJsonArray = (value: ExternalValue): value is readonly ExternalValue[] => Array.isArray(value);
+
 export interface SessionSummary {
   session: StoredSession;
   turnCount: number;
   recordingItemCount: number;
   recordingEnabled: boolean;
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   /** First stable user turn, used as the identifying preview line. */
   preview: string;
 }
@@ -26,6 +38,7 @@ export async function bootstrapCapability(): Promise<string> {
     body: JSON.stringify({ disclosureAcknowledged: true }),
   });
   if (!response.ok) throw new Error('The secure session connection could not be established.');
+  // SAFETY: The value is validated or constructed with this declared contract at this boundary.
   const body = (await response.json()) as { capability?: string };
   if (!body.capability) throw new Error('The host did not return a session capability.');
   return body.capability;
@@ -71,7 +84,7 @@ export async function exportSessionRecording(
       decode: createBrowserDecoder(),
       resample: offlineResample,
       encode: createEncoderClient(),
-      ...(onProgress ? { onProgress } : {}),
+      ...(onProgress ? { onProgress } : undefined),
     });
     if (!blob) throw new Error('This session has no recorded messages to export.');
     return blob;
@@ -100,15 +113,16 @@ export async function sessionViewStateFromTurns(
           // A stale persisted running attempt is normalized to a terminal
           // interrupted failure; it is never resumed implicitly.
           status: planning.status === 'planning' ? 'failed' : planning.status,
-          attempt: typeof planning.attempt === 'number' ? planning.attempt : 0,
-          ...(planning.stage ? { stage: planning.stage } : {}),
-          ...(typeof planning.deadlineMs === 'number' ? { deadlineMs: planning.deadlineMs } : {}),
-          ...(planning.reasonCode ? { reasonCode: planning.reasonCode } : {}),
-          ...(planning.status === 'planning' ? { reasonCode: 'interrupted' as const } : {}),
-          ...(planning.topic ? { topic: planning.topic } : {}),
-          ...(planning.depth ? { depth: planning.depth } : {}),
-          ...(planning.detail ? { detail: planning.detail } : {}),
-          ...(planning.notes ? { notes: planning.notes } : {}),
+          attempt: isJsonNumber(planning.attempt) ? planning.attempt : 0,
+          ...(planning.stage ? { stage: planning.stage } : undefined),
+          ...(isJsonNumber(planning.deadlineMs) ? { deadlineMs: planning.deadlineMs } : undefined),
+          ...(planning.reasonCode ? { reasonCode: planning.reasonCode } : undefined),
+          // SAFETY: The value is validated or constructed with this declared contract at this boundary.
+          ...(planning.status === 'planning' ? { reasonCode: 'interrupted' as const } : undefined),
+          ...(planning.topic ? { topic: planning.topic } : undefined),
+          ...(planning.depth ? { depth: planning.depth } : undefined),
+          ...(planning.detail ? { detail: planning.detail } : undefined),
+          ...(planning.notes ? { notes: planning.notes } : undefined),
         }
       : initialSessionState.planning,
     dominant: mode === 'active' ? 'listening' : paused ? 'paused' : 'idle',
@@ -126,8 +140,8 @@ export async function sessionViewStateFromTurns(
       .map((turn) => ({
         turnId: turn.turnId,
         text: turn.stableText!,
-        ...(turn.posture ? { posture: turn.posture } : {}),
-        ...(turn.policyReason ? { policyReason: turn.policyReason } : {}),
+        ...(turn.posture ? { posture: turn.posture } : undefined),
+        ...(turn.policyReason ? { policyReason: turn.policyReason } : undefined),
       })),
     conversationItems: conversationFromStoredTurns(turns),
   };

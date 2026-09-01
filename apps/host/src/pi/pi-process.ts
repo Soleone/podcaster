@@ -3,7 +3,29 @@ import { access, lstat, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { PiExecutableConfigurationError, resolvePiExecutable } from './config.js';
 
-export type ObjectValue = Record<string, unknown>;
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export type ObjectValue = Record<string, JsonValue>;
+
+export function isJsonString(value: JsonValue | undefined): value is string {
+  return value !== undefined && String(value) === value;
+}
+
+export function asObjectValue(value: JsonValue | undefined): ObjectValue | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === true || value === false || Array.isArray(value)) return undefined;
+  if (isJsonString(value) || Number.isFinite(value)) return undefined;
+  // SAFETY: JSON.parse produces only JSON values; all primitive and array cases
+  // are excluded above, leaving a JSON object.
+  return value as ObjectValue;
+}
+
+function parseJsonObject(text: string): ObjectValue {
+  // SAFETY: JSON.parse returns values representable by JsonValue.
+  const value = JSON.parse(text) as JsonValue;
+  const object = asObjectValue(value);
+  if (!object) throw new Error('Pi emitted a non-object JSON record');
+  return object;
+}
 
 export const MAX_RECORD_BYTES = 256 * 1024;
 export const MAX_BUFFER_BYTES = 1024 * 1024;
@@ -99,9 +121,9 @@ export class AsyncQueue<T> implements AsyncIterableIterator<T> {
     return Promise.resolve({ value: undefined, done: true });
   }
 
-  throw(error?: unknown): Promise<IteratorResult<T>> {
+  throw(cause?: unknown): Promise<IteratorResult<T>> {
     this.onCancel();
-    const value = error instanceof Error ? error : new Error('Pi iterator aborted');
+    const value = cause instanceof Error ? cause : new Error('Pi iterator aborted');
     this.fail(value);
     return Promise.reject(value);
   }
@@ -210,17 +232,19 @@ export class PiRpcProcess {
       try {
         process.kill(process.platform !== 'win32' ? -pid : pid, 0);
         return true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
-        throw error;
+      } catch (cause) {
+        // SAFETY: Node's process.kill throws a system error with an optional code.
+        if ((cause as NodeJS.ErrnoException).code === 'ESRCH') return false;
+        throw cause;
       }
     };
     const signal = (name: NodeJS.Signals) => {
       try {
         if (process.platform !== 'win32') process.kill(-pid, name);
         else child.kill(name);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      } catch (cause) {
+        // SAFETY: Node's child-process kill throws a system error with an optional code.
+        if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') throw cause;
       }
     };
     if (groupAlive()) {
@@ -247,8 +271,7 @@ export class PiRpcProcess {
       if (record.length > MAX_RECORD_BYTES || record[record.length - 1] === 0x0d)
         return this.fail(new Error('Pi RPC requires bounded strict LF framing'), true);
       try {
-        const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(record)) as ObjectValue;
-        if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error();
+        const value = parseJsonObject(new TextDecoder('utf-8', { fatal: true }).decode(record));
         this.handle(value);
       } catch {
         return this.fail(new Error('Pi emitted malformed JSONL'), true);
@@ -257,7 +280,7 @@ export class PiRpcProcess {
   }
 
   private handle(value: ObjectValue): void {
-    if (value.type === 'response' && typeof value.id === 'string') {
+    if (value.type === 'response' && isJsonString(value.id)) {
       const pending = this.pending.get(value.id);
       if (pending) {
         clearTimeout(pending.timer);

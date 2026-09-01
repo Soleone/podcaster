@@ -137,6 +137,7 @@ async function deps(
       }),
   );
   const encode = vi.fn<EncodeMp3>(async (pcm) => new Uint8Array(Math.max(1, Math.ceil(pcm.length / 4))));
+  // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
   const turns = { getTurns: async () => storedTurns } as Pick<StableTurnWriter, 'getTurns'>;
   return { store, decode, resample, encode, turns };
 }

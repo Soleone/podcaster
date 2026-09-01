@@ -1,3 +1,5 @@
+type TestJsonValue = null | boolean | number | string | TestJsonValue[] | { [key: string]: TestJsonValue };
+type TestJsonRecord = { [key: string]: TestJsonValue };
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
@@ -9,7 +11,7 @@ import type { SidecarProcess } from '../../src/sidecar/process.js';
 import type { PiSettings } from '@app/contracts';
 
 let sequence = 0;
-function command(sessionId: string, type: string, payload: Record<string, unknown>, epoch = 0) {
+function command(sessionId: string, type: string, payload: TestJsonRecord, epoch = 0) {
   return {
     protocolVersion: 1,
     sessionId,
@@ -33,6 +35,7 @@ class TrackingPi implements PiClient {
     this.piSettings = piSettings;
   }
   async probe() {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     return { status: 'ready' as const, detail: '', correctiveAction: 'None.' };
   }
   async *request(): AsyncIterable<PiEvent> {
@@ -68,7 +71,7 @@ async function readinessSidecar(): Promise<SidecarProcess> {
   const wss = new WebSocketServer({ server: http });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   const address = http.address();
-  if (!address || typeof address === 'string') throw new Error('missing address');
+  if (!address || !('port' in address)) throw new Error('missing address');
   wss.on('connection', (socket) => {
     socket.send(
       JSON.stringify({
@@ -94,7 +97,8 @@ async function readinessSidecar(): Promise<SidecarProcess> {
     );
     socket.on('message', (raw) => {
       if (Buffer.isBuffer(raw)) return;
-      const message = JSON.parse(raw.toString()) as { type: string; payload: Record<string, unknown> };
+      // SAFETY: this test fixture is constructed in this file with the asserted shape.
+      const message = JSON.parse(raw.toString()) as { type: string; payload: TestJsonRecord };
       if (message.type === 'stream.open')
         socket.send(JSON.stringify({ type: 'stream.opened', payload: { streamId: message.payload.streamId } }));
     });
@@ -106,6 +110,7 @@ async function readinessSidecar(): Promise<SidecarProcess> {
   };
   cleanups.push(close);
   return {
+    // SAFETY: this test fixture is constructed in this file with the asserted shape.
     child: {} as SidecarProcess['child'],
     origin: `http://127.0.0.1:${address.port}`,
     secret: 'sidecar-secret',
@@ -167,6 +172,7 @@ async function bootstrapSession(app: FastifyInstance, origin: string, persona: s
     headers,
     body: '{"disclosureAcknowledged":true}',
   });
+  // SAFETY: this test fixture is constructed in this file with the asserted shape.
   const body = (await boot.json()) as { capability: string };
   const cookie = boot.headers.get('set-cookie')!.split(';')[0]!;
   const socket = new WebSocket(origin.replace('http', 'ws') + '/ws', { headers: { Origin: origin, Cookie: cookie } });

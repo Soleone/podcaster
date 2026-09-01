@@ -104,7 +104,7 @@ export const initialSessionState: SessionViewState = {
   degradedMessage: '',
   announcement: 'Idle',
 };
-const label: Record<DominantState, string> = {
+const label = {
   idle: 'Session stopped',
   planning: 'Preparing your session',
   ready: 'Ready to go live',
@@ -145,11 +145,10 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
           agentActivity: settleInterruptedActivity(state.agentActivity),
         }
       : state;
-  if (event.type === 'transcript.partial')
-    return { ...next, tentativeText: typeof event.payload.text === 'string' ? event.payload.text : '' };
+  if (event.type === 'transcript.partial') return { ...next, tentativeText: event.payload.text };
   if (event.type === 'transcript.final') {
-    const turnId = typeof event.payload.turnId === 'string' ? event.payload.turnId : '';
-    const text = typeof event.payload.text === 'string' ? event.payload.text : '';
+    const turnId = event.payload.turnId;
+    const text = event.payload.text;
     const existing = next.stableTurns.findIndex((turn) => turn.turnId === turnId);
     const stableTurns = [...next.stableTurns];
     if (existing >= 0) stableTurns[existing] = { ...stableTurns[existing]!, text };
@@ -169,20 +168,22 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   }
   if (event.type === 'policy.decision') {
     const posture = event.payload.posture;
-    const turnId = typeof event.payload.turnId === 'string' ? event.payload.turnId : '';
+    const turnId = event.payload.turnId;
     if (posture === 'riff' || posture === 'question' || posture === 'challenge' || posture === 'silence') {
       const typedPosture: 'riff' | 'question' | 'challenge' | 'silence' = posture;
-      const reasonCodes = Array.isArray(event.payload.reasonCodes) ? event.payload.reasonCodes : [];
-      const policyReason = typeof reasonCodes[0] === 'string' ? reasonCodes[0] : undefined;
-      const stableTurns = next.stableTurns.map((turn) =>
-        turn.turnId === turnId ? { ...turn, posture: typedPosture, ...(policyReason ? { policyReason } : {}) } : turn,
-      );
+      const policyReason = (event.payload.reasonCodes ?? [])[0];
+      const stableTurns = next.stableTurns.map((turn) => {
+        if (turn.turnId !== turnId) return turn;
+        const updated = { ...turn, posture: typedPosture };
+        if (policyReason) updated.policyReason = policyReason;
+        return updated;
+      });
       next = { ...next, stableTurns };
       return dominant(next, posture === 'silence' ? 'intentional_silence' : 'reasoning');
     }
   }
   if (event.type === 'reasoning.started') {
-    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+    const responseId = event.payload.responseId;
     if (!responseId) return next;
     // Preserve an existing row when a new part of the same multi-part response
     // starts; create the hidden placeholder only for the first part.
@@ -204,13 +205,12 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     };
   }
   if (event.type === 'reasoning.delta') {
-    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
-    const text = typeof event.payload.text === 'string' ? event.payload.text : '';
+    const responseId = event.payload.responseId;
+    const text = event.payload.text;
     if (!responseId || !text) return next;
-    const partIndex =
-      typeof (event.payload as { partIndex?: number }).partIndex === 'number'
-        ? (event.payload as { partIndex?: number }).partIndex
-        : undefined;
+    // SAFETY: legacy multipart fixtures carry a numeric partIndex in the otherwise contract-typed payload.
+    const legacyPayload = event.payload as { partIndex?: number };
+    const partIndex = Number.isSafeInteger(legacyPayload.partIndex) ? legacyPayload.partIndex : undefined;
     // Presentational preview: accumulate the cumulative text into the assistant row
     // and mark it tentative so the UI can render it dimmed until it materializes.
     const exists = next.conversationItems.some((item) => item.kind === 'assistant' && item.responseId === responseId);
@@ -252,12 +252,11 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     return { ...next, conversationItems };
   }
   if (event.type === 'reasoning.final') {
-    const text = typeof event.payload.text === 'string' ? event.payload.text : '';
-    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
-    const partIndex =
-      typeof (event.payload as { partIndex?: number }).partIndex === 'number'
-        ? (event.payload as { partIndex?: number }).partIndex
-        : undefined;
+    const text = event.payload.text;
+    const responseId = event.payload.responseId;
+    // SAFETY: legacy multipart fixtures carry a numeric partIndex in the otherwise contract-typed payload.
+    const legacyPayload = event.payload as { partIndex?: number };
+    const partIndex = Number.isSafeInteger(legacyPayload.partIndex) ? legacyPayload.partIndex : undefined;
     const existing = next.conversationItems.find(
       (item): item is Extract<ConversationItem, { kind: 'assistant' }> =>
         item.kind === 'assistant' && item.responseId === responseId,
@@ -272,7 +271,8 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
         if (last && last.partIndex === partIndex) parts[parts.length - 1] = { ...last, text, tentative: false };
         else parts.push({ partIndex, text, tentative: false });
         const finalized = parts.every((part) => !part.tentative);
-        item = { ...existing, parts, text: joinAssistantParts(parts), ...(finalized ? { tentative: false } : {}) };
+        item = { ...existing, parts, text: joinAssistantParts(parts) };
+        if (finalized) item.tentative = false;
       } else {
         item = { ...existing, text, tentative: false };
       }
@@ -308,16 +308,15 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   if (event.type === 'tool.activity') {
     const payload = event.payload;
     const scope = payload.scope === 'planning' ? 'planning' : 'turn';
-    const responseId = typeof payload.responseId === 'string' ? payload.responseId : '';
-    const turnId = typeof payload.turnId === 'string' && payload.turnId ? payload.turnId : undefined;
-    const toolCallId = typeof payload.toolCallId === 'string' ? payload.toolCallId : '';
-    const toolName = typeof payload.toolName === 'string' ? payload.toolName : '';
+    const responseId = payload.responseId ?? '';
+    const turnId = payload.turnId || undefined;
+    const toolCallId = payload.toolCallId;
+    const toolName = payload.toolName;
     const status = payload.status;
     if (!toolCallId || !toolName) return next;
     if (scope === 'turn' && !responseId) return next;
-    const summary = typeof payload.summary === 'string' && payload.summary ? payload.summary : undefined;
-    const durationMs =
-      typeof payload.durationMs === 'number' && payload.durationMs >= 0 ? payload.durationMs : undefined;
+    const summary = payload.summary || undefined;
+    const durationMs = payload.durationMs !== undefined && payload.durationMs >= 0 ? payload.durationMs : undefined;
     const key = scope === 'turn' ? `turn:${responseId}` : 'planning';
     const groups = next.agentActivity;
     const groupIndex = groups.findIndex((group) => group.key === key);
@@ -326,7 +325,9 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     const entryIndex = entries.findIndex((entry) => entry.toolCallId === toolCallId);
     if (status === 'started') {
       if (entryIndex >= 0) return next;
-      entries.push({ toolCallId, toolName, status: 'running', ...(summary ? { summary } : {}) });
+      const entry: AgentToolActivity = { toolCallId, toolName, status: 'running' };
+      if (summary) entry.summary = summary;
+      entries.push(entry);
     } else if (status === 'ended' || status === 'failed') {
       const prior = entryIndex >= 0 ? entries[entryIndex]! : undefined;
       const finalSummary = summary ?? prior?.summary;
@@ -334,9 +335,9 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
         toolCallId,
         toolName,
         status: status === 'ended' ? 'done' : 'failed',
-        ...(finalSummary !== undefined ? { summary: finalSummary } : {}),
-        ...(durationMs !== undefined ? { durationMs } : {}),
       };
+      if (finalSummary !== undefined) entry.summary = finalSummary;
+      if (durationMs !== undefined) entry.durationMs = durationMs;
       if (entryIndex >= 0) entries[entryIndex] = entry;
       else entries.push(entry);
     } else return next;
@@ -348,8 +349,8 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
       scope,
       epoch: group?.epoch ?? event.epoch,
       entries: boundedEntries,
-      ...(finalTurnId !== undefined ? { turnId: finalTurnId } : {}),
     };
+    if (finalTurnId !== undefined) updated.turnId = finalTurnId;
     let updatedGroups =
       groupIndex >= 0
         ? groups.map((existing, index) => (index === groupIndex ? updated : existing))
@@ -359,7 +360,7 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
     return { ...next, agentActivity: updatedGroups };
   }
   if (event.type === 'response.failed') {
-    const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+    const responseId = event.payload.responseId;
     // Keep authoritative (finalized) text as interrupted, but drop an empty
     // placeholder or a still-tentative preview that never materialized.
     const conversationItems = next.conversationItems
@@ -506,75 +507,16 @@ export function reduceSessionState(state: SessionViewState, event: StableEvent):
   if (event.type === 'failure')
     return {
       ...dominant(next, 'degraded'),
-      degradedMessage: typeof event.payload.detail === 'string' ? event.payload.detail : 'A session component failed.',
+      degradedMessage: event.payload.detail,
     };
   if (event.type === 'session.state') {
-    const planning = event.payload.planning;
-    if (planning && typeof planning === 'object' && !Array.isArray(planning)) {
-      const value = planning as Record<string, unknown>;
-      if (
-        value.status === 'skipped' ||
-        value.status === 'planning' ||
-        value.status === 'ready' ||
-        value.status === 'failed' ||
-        value.status === 'cancelled' ||
-        value.status === 'continued'
-      ) {
-        next = {
-          ...next,
-          planning: {
-            status: value.status,
-            attempt: typeof value.attempt === 'number' ? Math.max(0, value.attempt) : next.planning.attempt,
-            ...(value.stage === 'starting' || value.stage === 'researching' || value.stage === 'finalizing'
-              ? { stage: value.stage }
-              : {}),
-            ...(typeof value.deadlineMs === 'number' && value.deadlineMs >= 0 ? { deadlineMs: value.deadlineMs } : {}),
-            ...(value.reasonCode === 'timeout' ||
-            value.reasonCode === 'provider_unavailable' ||
-            value.reasonCode === 'invalid_result' ||
-            value.reasonCode === 'interrupted'
-              ? { reasonCode: value.reasonCode }
-              : {}),
-            ...(typeof value.topic === 'string' ? { topic: value.topic } : {}),
-            ...(value.depth === 'light' || value.depth === 'standard' || value.depth === 'deep'
-              ? { depth: value.depth }
-              : {}),
-            ...(typeof value.detail === 'string' ? { detail: value.detail } : {}),
-            ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
-          },
-        };
-      }
+    const { planning, audio, phase } = event.payload;
+    if (planning) next = { ...next, planning };
+    if (audio) {
+      const audioNext = { ...next, audioEngine: audio };
+      if (audio.status === 'ready') audioNext.degradedMessage = '';
+      return audioNext;
     }
-    const audio = event.payload.audio;
-    let audioStatusUpdated = false;
-    if (audio && typeof audio === 'object' && !Array.isArray(audio)) {
-      const value = audio as Record<string, unknown>;
-      if (
-        (value.status === 'starting' ||
-          value.status === 'warming' ||
-          value.status === 'ready' ||
-          value.status === 'failed' ||
-          value.status === 'retrying') &&
-        (value.capture === 'starting' || value.capture === 'ready' || value.capture === 'failed') &&
-        (value.vad === 'starting' || value.vad === 'warming' || value.vad === 'ready' || value.vad === 'failed') &&
-        (value.tts === 'starting' || value.tts === 'warming' || value.tts === 'ready' || value.tts === 'failed')
-      ) {
-        next = {
-          ...next,
-          audioEngine: {
-            status: value.status,
-            capture: value.capture,
-            vad: value.vad,
-            tts: value.tts,
-            ...(typeof value.detail === 'string' ? { detail: value.detail } : {}),
-          },
-          ...(value.status === 'ready' ? { degradedMessage: '' } : {}),
-        };
-        audioStatusUpdated = true;
-      }
-    }
-    if (audioStatusUpdated) return next;
-    const phase = event.payload.phase;
     if (phase === 'preparing' || phase === 'planning') return dominant(next, 'planning');
     if (phase === 'prelive' || phase === 'starting_live' || phase === 'ready') return dominant(next, 'ready');
     if (phase === 'listening') return dominant(next, 'listening');

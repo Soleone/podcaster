@@ -29,7 +29,7 @@ export class ReferenceRecordingError extends Error {
   }
 }
 
-function mapMicrophoneError(error: unknown): ReferenceRecordingError {
+function mapMicrophoneError(error: Error): ReferenceRecordingError {
   const name = error instanceof DOMException ? error.name : '';
   if (name === 'NotAllowedError' || name === 'SecurityError') return new ReferenceRecordingError('mic_denied');
   if (name === 'NotFoundError' || name === 'OverconstrainedError')
@@ -47,7 +47,7 @@ export class ReferenceRecorder {
 
   async start(): Promise<void> {
     if (this.recorder && this.recorder.state === 'recording') return;
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    if (!navigator.mediaDevices?.getUserMedia || !globalThis.MediaRecorder) {
       this.state = 'unavailable';
       throw new ReferenceRecordingError('mic_unavailable');
     }
@@ -61,7 +61,7 @@ export class ReferenceRecorder {
         error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError')
           ? 'denied'
           : 'unavailable';
-      throw mapMicrophoneError(error);
+      throw mapMicrophoneError(error instanceof Error ? error : new Error());
     }
     this.state = 'granted';
     this.chunks = [];
@@ -78,7 +78,7 @@ export class ReferenceRecorder {
     } catch (error) {
       this.release();
       this.state = 'unavailable';
-      throw mapMicrophoneError(error);
+      throw mapMicrophoneError(error instanceof Error ? error : new Error());
     }
   }
 
@@ -103,7 +103,7 @@ export class ReferenceRecorder {
         recorder.stop();
       } catch (error) {
         this.release();
-        reject(mapMicrophoneError(error));
+        reject(mapMicrophoneError(error instanceof Error ? error : new Error()));
       }
     }).finally(() => {
       this.stopPromise = undefined;
@@ -147,7 +147,7 @@ export async function finalizeReferenceRecording(recording: Blob): Promise<Refer
     const wavBytes = encodeWavPcm16(pcm16);
     const refSha256 = await sha256Hex(wavBytes);
     return {
-      wav: new Blob([wavBytes], { type: 'audio/wav' }),
+      wav: new Blob([Uint8Array.from(wavBytes)], { type: 'audio/wav' }),
       wavBytes,
       pcm16,
       signal,
@@ -162,6 +162,8 @@ export async function finalizeReferenceRecording(recording: Blob): Promise<Refer
   }
 }
 
-export function referenceErrorCopy(error: unknown): string {
+type CaughtError = PromiseRejectedResult['reason'];
+
+export function referenceErrorCopy(error: CaughtError): string {
   return error instanceof ReferenceRecordingError ? error.message : CUSTOM_VOICE_ERROR_COPY.decode_failed;
 }

@@ -18,19 +18,25 @@ class FakeSource {
 
 class FakeAudioContext {
   currentTime = 0;
+  // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
   destination = {} as AudioDestinationNode;
   sources: FakeSource[] = [];
   bufferLengths: number[] = [];
   gain = { gain: { value: 1 }, connect: vi.fn() };
-  createGain = vi.fn(() => this.gain as unknown as GainNode);
+  // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+  createGain = vi.fn(() => this.gain as typeof this.gain & GainNode);
   createBuffer = vi.fn((_channels: number, length: number) => {
     this.bufferLengths.push(length);
-    return { getChannelData: () => new Float32Array(length) } as unknown as AudioBuffer;
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+    const buffer = { getChannelData: () => new Float32Array(length) };
+    // SAFETY: The fixture buffer supplies the AudioBuffer methods used by BrowserPlayback.
+    return buffer as typeof buffer & AudioBuffer;
   });
   createBufferSource = vi.fn(() => {
     const source = new FakeSource();
     this.sources.push(source);
-    return source as unknown as AudioBufferSourceNode;
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+    return source as FakeSource & AudioBufferSourceNode;
   });
   suspend = vi.fn(async () => undefined);
   resume = vi.fn(async () => undefined);
@@ -49,7 +55,8 @@ function setup() {
     4,
     24_000,
     { progress, terminal, degraded: vi.fn() },
-    () => context as unknown as AudioContext,
+    // SAFETY: This value is constructed by this local test or platform boundary with the asserted shape.
+    () => context as FakeAudioContext & AudioContext,
   );
   return { context, playback, progress, receipts, terminal };
 }

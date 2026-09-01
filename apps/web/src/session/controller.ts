@@ -38,9 +38,13 @@ interface ResponsePlaybackGroup {
   activeIndex: number;
   terminal: boolean;
 }
+function errorActivityDetail(cause: unknown): { detail?: string } {
+  return cause instanceof Error ? { detail: cause.message } : {};
+}
+
 function resumeRewindMs(payload: { rewindMs?: number }): number {
   const rewindMs = payload.rewindMs;
-  return typeof rewindMs === 'number' && Number.isSafeInteger(rewindMs) && rewindMs > 0 ? rewindMs : 0;
+  return rewindMs !== undefined && Number.isSafeInteger(rewindMs) && rewindMs > 0 ? rewindMs : 0;
 }
 
 interface Provisional {
@@ -189,13 +193,11 @@ export class SessionController {
       });
     }
     if (event.type === 'tts.started') {
-      const playbackId = typeof event.payload.playbackId === 'string' ? event.payload.playbackId : undefined;
-      const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : undefined;
+      const { playbackId, responseId } = event.payload;
       const sampleRate = Number(event.payload.sampleRate);
-      const partIndex =
-        typeof (event.payload as { partIndex?: number }).partIndex === 'number'
-          ? (event.payload as { partIndex?: number }).partIndex
-          : undefined;
+      // SAFETY: legacy multipart events carry a numeric partIndex in the otherwise contract-typed payload.
+      const legacyPayload = event.payload as { partIndex?: number };
+      const partIndex = Number.isSafeInteger(legacyPayload.partIndex) ? legacyPayload.partIndex : undefined;
       if (
         playbackId &&
         responseId &&
@@ -213,8 +215,8 @@ export class SessionController {
           outputEpoch: event.epoch,
           player,
           terminal: false,
-          ...(partIndex !== undefined ? { partIndex } : {}),
         };
+        if (partIndex !== undefined) part.partIndex = partIndex;
         this.playbackByPart.set(playbackId, part);
         let group = this.groups.get(responseId);
         if (group && group.parts.length > 0 && group.parts[0]!.outputEpoch !== event.epoch) {
@@ -244,14 +246,13 @@ export class SessionController {
         // predecessor (the sidecar prefetches the successor while part 0 plays).
       }
     } else if (event.type === 'tts.ended') {
-      const part =
-        typeof event.payload.playbackId === 'string' ? this.playbackByPart.get(event.payload.playbackId) : undefined;
+      const part = this.playbackByPart.get(event.payload.playbackId);
       if (part && !part.terminal) part.player.setGeneratedSamples(Number(event.payload.generatedSamples));
     } else if (event.type === 'reasoning.started') {
       // A new response superseded the current one before it terminalized (rapid
       // re-engagement). Stop the superseded playback so its audio cannot keep
       // playing or leak. A completed playback is already terminal, so no-op.
-      const responseId = typeof event.payload.responseId === 'string' ? event.payload.responseId : '';
+      const responseId = event.payload.responseId;
       const active = this.active;
       if (active && active.responseId !== responseId && !active.terminal) {
         await this.terminalize('cancelled');
@@ -265,7 +266,7 @@ export class SessionController {
         level: 'warn',
         source: 'controller',
         message: 'response failed',
-        detail: `${String(event.payload.responseId)}${typeof event.payload.reasonCode === 'string' ? ` reason=${event.payload.reasonCode}` : ''}`,
+        detail: `${event.payload.responseId} reason=${event.payload.reasonCode}`,
       });
       this.clearProvisional();
       this.setState({ ...this.state, playbackNotice: '' });
@@ -454,7 +455,7 @@ export class SessionController {
           level: 'warn',
           source: 'controller',
           message: 'playback terminal receipt could not be sent',
-          ...(error instanceof Error ? { detail: error.message } : {}),
+          ...errorActivityDetail(error),
         });
       }
       this.advanceGroup(receipt.playbackId);
@@ -485,7 +486,7 @@ export class SessionController {
     const activeAtPause = this.active && !this.active.terminal ? this.active : undefined;
     let audioSilenced = false;
     let playbackCheckpoint: PlaybackPauseCheckpoint | undefined;
-    let checkpoint: { ok: boolean; degradedReason?: string };
+    let checkpoint: Awaited<ReturnType<StableTurnWriter['pauseSession']>>;
     try {
       // Silence browser output before waiting on storage or host teardown. New
       // audio is blocked by the pausing barrier, and a failed checkpoint can
@@ -543,7 +544,7 @@ export class SessionController {
         level: 'warn',
         source: 'controller',
         message: 'in-flight playback did not finish its pause cleanup',
-        ...(error instanceof Error ? { detail: error.message } : {}),
+        ...errorActivityDetail(error),
       });
     }
     this.clearProvisional();
@@ -554,7 +555,7 @@ export class SessionController {
         level: 'warn',
         source: 'controller',
         message: 'session transport could not be stopped cleanly',
-        ...(error instanceof Error ? { detail: error.message } : {}),
+        ...errorActivityDetail(error),
       });
     }
     this.options.transport.disconnect();
@@ -590,7 +591,7 @@ export class SessionController {
         level: 'warn',
         source: 'controller',
         message: 'session transport could not be stopped cleanly',
-        ...(error instanceof Error ? { detail: error.message } : {}),
+        ...errorActivityDetail(error),
       });
     } finally {
       this.options.transport.disconnect();
@@ -686,11 +687,12 @@ export class SessionController {
     });
     const speakingEnded = !continues && this.state.dominant === 'speaking';
     if (!changed && !speakingEnded) return;
-    this.setState({
-      ...this.state,
-      ...(speakingEnded ? { dominant: 'listening' as const, announcement: 'Listening' } : {}),
-      conversationItems,
-    });
+    const next = { ...this.state, conversationItems };
+    if (speakingEnded) {
+      next.dominant = 'listening';
+      next.announcement = 'Listening';
+    }
+    this.setState(next);
   }
 
   private async terminalize(reason: PlaybackStopReason): Promise<void> {
@@ -719,7 +721,7 @@ export class SessionController {
         level: 'warn',
         source: 'controller',
         message: 'playback cleanup failed',
-        ...(error instanceof Error ? { detail: error.message } : {}),
+        ...errorActivityDetail(error),
       });
     }
   }
