@@ -14,10 +14,7 @@ interface ExternalRecord {
   readonly [key: string]: ExternalValue;
 }
 const valueTag = Object.prototype.toString;
-const isJsonString = (value: ExternalValue): value is string => valueTag.call(value) === '[object String]';
 const isJsonNumber = (value: ExternalValue): value is number => valueTag.call(value) === '[object Number]';
-const isJsonObject = (value: ExternalValue): value is ExternalRecord => valueTag.call(value) === '[object Object]';
-const isJsonArray = (value: ExternalValue): value is readonly ExternalValue[] => Array.isArray(value);
 
 export interface SessionSummary {
   session: StoredSession;
