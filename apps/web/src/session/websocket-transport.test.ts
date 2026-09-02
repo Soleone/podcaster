@@ -682,6 +682,8 @@ const FAILED = (
   responseId: string,
   reasonCode: 'reasoning_unavailable' | 'reasoning_invalid' | 'tts_failed' = 'tts_failed',
 ) => hostEvent('response.failed', { turnId: '018f1f32-7abe-7def-8abc-0123456789ab', responseId, reasonCode });
+const CANCELLED = (responseId: string, reason: 'superseded' | 'user' | 'stopped' = 'user') =>
+  hostEvent('response.cancelled', { turnId: '018f1f32-7abe-7def-8abc-0123456789ab', responseId, reason });
 const DELTA = (responseId: string, text: string) =>
   hostEvent('reasoning.delta', { turnId: '018f1f32-7abe-7def-8abc-0123456789ab', responseId, text });
 
@@ -893,6 +895,27 @@ describe('WebSocketSessionTransport progressive ordering', () => {
     // Late PCM for the failed response is rejected after the cutoff.
     emitBinary(socket, 77, 1, 240);
     expect(socket.closed).toBe(4000);
+  });
+
+  it('accepts response.cancelled after synthesis ends and cuts off active output immediately', async () => {
+    const endedSocket = new EventSocket();
+    await wiredTransport(endedSocket);
+    emitText(endedSocket, REASONING(responseA));
+    emitText(endedSocket, TTS_STARTED(responseA, playbackA));
+    emitBinary(endedSocket, 77, 0, 480);
+    emitText(endedSocket, TTS_ENDED(responseA, playbackA, 480));
+    emitText(endedSocket, CANCELLED(responseA));
+    expectNoProtocolFailure(endedSocket);
+
+    const activeSocket = new EventSocket();
+    await wiredTransport(activeSocket);
+    emitText(activeSocket, REASONING(responseA));
+    emitText(activeSocket, TTS_STARTED(responseA, playbackA));
+    emitBinary(activeSocket, 77, 0, 480);
+    emitText(activeSocket, CANCELLED(responseA));
+    expectNoProtocolFailure(activeSocket);
+    emitBinary(activeSocket, 77, 1, 240);
+    expect(activeSocket.closed).toBe(4000);
   });
 
   it('rejects a tts.started whose response identity was never established', async () => {

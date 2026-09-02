@@ -278,15 +278,16 @@ export class WebSocketSessionTransport implements SessionTransport {
           this.protocolFailure('response.failed did not match the established response.');
           return;
         }
-        for (const binding of this.outputs.byStream.values())
-          if (binding.responseId === hostEvent.payload.responseId && !binding.terminal) binding.terminal = true;
-        if (
-          this.outputs.single &&
-          this.outputs.single.responseId === hostEvent.payload.responseId &&
-          !this.outputs.single.terminal
-        )
-          this.outputs.single.terminal = true;
+        this.markResponseOutputsTerminal(hostEvent.payload.responseId);
         this.latestResponseId = undefined;
+      } else if (hostEvent.type === 'response.cancelled') {
+        const responseId = hostEvent.payload.responseId;
+        const matchedOutput = this.markResponseOutputsTerminal(responseId);
+        if (responseId !== this.latestResponseId && !matchedOutput) {
+          this.protocolFailure('response.cancelled did not match an established response.');
+          return;
+        }
+        if (responseId === this.latestResponseId) this.latestResponseId = undefined;
       } else if (hostEvent.type === 'tts.ended') {
         const binding = this.findOutput(String(hostEvent.payload.playbackId));
         if (!binding || binding.outputEpoch !== hostEvent.epoch) {
@@ -623,6 +624,19 @@ export class WebSocketSessionTransport implements SessionTransport {
   private findOutput(playbackId: string): OutputBinding | undefined {
     for (const binding of this.outputs.byStream.values()) if (binding.playbackId === playbackId) return binding;
     return this.outputs.single?.playbackId === playbackId ? this.outputs.single : undefined;
+  }
+  private markResponseOutputsTerminal(responseId: string): boolean {
+    let matched = false;
+    for (const binding of this.outputs.byStream.values()) {
+      if (binding.responseId !== responseId) continue;
+      binding.terminal = true;
+      matched = true;
+    }
+    if (this.outputs.single?.responseId === responseId) {
+      this.outputs.single.terminal = true;
+      matched = true;
+    }
+    return matched;
   }
   private sendCommand<T extends BrowserCommand['type']>(
     type: T,

@@ -246,6 +246,35 @@ describe('SessionController', () => {
     writer.close();
   });
 
+  it('stops every queued multipart playback when the host cancels its response', async () => {
+    const { controller, players, transport, writer } = await setup();
+    await transport.emit(
+      event('session', 0, 'tts.started', {
+        responseId: 'response',
+        playbackId: 'part-0',
+        sampleRate: 24000,
+        partIndex: 0,
+      }),
+    );
+    await transport.emit(
+      event('session', 0, 'tts.started', {
+        responseId: 'response',
+        playbackId: 'part-1',
+        sampleRate: 24000,
+        partIndex: 1,
+      }),
+    );
+
+    await transport.emit(
+      event('session', 0, 'response.cancelled', { turnId: 'turn', responseId: 'response', reason: 'user' }),
+    );
+
+    expect(players[0]!.stops).toEqual(['cancelled']);
+    expect(players[1]!.stops).toEqual(['cancelled']);
+    expect(controller.snapshot().dominant).toBe('listening');
+    writer.close();
+  });
+
   it('rejects wrong-session and stale non-accounting events before side effects', async () => {
     const { controller, players, transport, writer } = await setup(2);
     await transport.emit(

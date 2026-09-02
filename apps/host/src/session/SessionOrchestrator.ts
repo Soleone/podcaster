@@ -55,6 +55,7 @@ type HostEventFor<T extends HostEventType> = HostEvent extends infer Event
     : never
   : never;
 export type HostEventPayload<T extends HostEventType> = HostEventFor<T>['payload'];
+type ResponseCancelReason = HostEventPayload<'response.cancelled'>['reason'];
 type EmittedSessionPhase = SessionStateEvent['payload']['phase'];
 export interface SpeechSynthesisStart {
   playbackId: string;
@@ -587,6 +588,11 @@ export class SessionOrchestrator {
           if (!this.isCurrent(active)) return;
           if (!Number.isSafeInteger(meta.sampleRate) || meta.sampleRate <= 0)
             return this.failResponse(active, 'tts_failed');
+          if (
+            meta.generatedSamples !== undefined &&
+            (!Number.isSafeInteger(meta.generatedSamples) || meta.generatedSamples <= 0)
+          )
+            return this.failResponse(active, 'tts_failed');
           active.playbackId = meta.playbackId;
           this.playback.set(meta.playbackId, {
             outputEpoch: active.epoch,
@@ -607,6 +613,28 @@ export class SessionOrchestrator {
             this.beginProvisionalBargeIn(active.responseId);
           else if (this.hasProvisional(active.responseId)) this.options.speech.pause(active.responseId);
           this.options.speech.release?.(active.responseId);
+          if (meta.completion) {
+            void meta.completion.then(
+              (completed) => {
+                if (!this.isCurrent(active)) return;
+                if (!Number.isSafeInteger(completed.generatedSamples) || completed.generatedSamples <= 0) {
+                  this.failResponse(active, 'tts_failed');
+                  return;
+                }
+                const ledger = this.playback.get(meta.playbackId);
+                if (!ledger || ledger.outputEpoch !== active.epoch || ledger.terminal) return;
+                ledger.generatedSamples = completed.generatedSamples;
+                this.emit('tts.ended', {
+                  responseId: active.responseId,
+                  playbackId: meta.playbackId,
+                  generatedSamples: completed.generatedSamples,
+                });
+              },
+              () => {
+                if (this.isCurrent(active)) this.failResponse(active, 'tts_failed');
+              },
+            );
+          }
         },
         () => {
           if (this.isCurrent(active)) this.failResponse(active, 'tts_failed');
@@ -880,7 +908,7 @@ export class SessionOrchestrator {
     this.provisional = undefined;
     const responseId = provisional?.responseId;
     const outputEpoch = provisional?.outputEpoch;
-    if (this.active || provisional) this.advanceEpochAndCancel();
+    if (this.active || provisional) this.advanceEpochAndCancel('user');
     if (responseId && outputEpoch !== undefined)
       this.emit('barge_in.confirmed', { responseId, outputEpoch, resumable: false });
     this.phase = 'listening';
@@ -895,7 +923,7 @@ export class SessionOrchestrator {
     provisional?.cancelTimer();
     provisional?.deciding?.abort();
     this.provisional = undefined;
-    this.advanceEpochAndCancel();
+    this.advanceEpochAndCancel('stopped');
     if (provisional)
       this.emit('barge_in.rejected', {
         responseId: provisional.responseId,
@@ -1118,21 +1146,24 @@ export class SessionOrchestrator {
     void this.handleStableFinal({ ...pending.turn, epoch: this.epoch });
   }
 
-  private advanceEpochAndCancel(): void {
+  private advanceEpochAndCancel(reason?: ResponseCancelReason): void {
     this.epoch++;
     const active = this.active;
     if (active) {
-      this.cancelResponse(active);
+      this.cancelResponse(active, reason);
       this.active = undefined;
     }
   }
-  private cancelResponse(active: ActiveResponse): void {
+  private cancelResponse(
+    active: ActiveResponse,
+    reason: ResponseCancelReason = this.phase === 'stopped' ? 'stopped' : 'superseded',
+  ): void {
     if (active.cancelled) return;
     active.cancelled = true;
     this.emit('response.cancelled', {
       turnId: active.turnId,
       responseId: active.responseId,
-      reason: this.phase === 'stopped' ? 'stopped' : 'superseded',
+      reason,
     });
     active.controller.abort();
     this.options.speech.cancel(active.responseId);

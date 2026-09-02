@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CONTRACT_VALIDATORS } from '@app/contracts';
 import { decide, type PolicyDecision, type PolicyInput } from '@app/policy';
 import type { PiClient, PiEvent, PiRequestInput } from '../../src/pi/PiClient.js';
+import type { PiResearchClient } from '../../src/pi/PiResearchClient.js';
 import {
   SessionOrchestrator,
   type Scheduler,
@@ -202,6 +203,47 @@ describe('safe session orchestrator', () => {
     expect(events.find((value) => value.type === 'tts.ended')?.payload.generatedSamples).toBe(960);
   });
 
+  it('emits tts.ended after progressive research synthesis completes', async () => {
+    let finish!: (value: { generatedSamples: number }) => void;
+    const speech = new FakeSpeech();
+    speech.begin = (input) => {
+      const meta = {
+        playbackId: ids[82]!,
+        sampleRate: 24_000,
+        completion: new Promise<{ generatedSamples: number }>((resolve) => {
+          finish = resolve;
+        }),
+      };
+      return {
+        started: Promise.resolve(meta),
+        append(text: string): void {
+          speech.appended.push({ responseId: input.responseId, text });
+        },
+        finish(): void {
+          speech.finished.push(input.responseId);
+        },
+      };
+    };
+    const researchPi: PiResearchClient = {
+      async *requestBody() {
+        const text = 'A researched response reaches a clear conclusion.';
+        yield { type: 'delta', text };
+        yield { type: 'final', text };
+      },
+      async shutdown() {},
+    };
+    const { session, events } = setup({ researchPi, multiPartEnabled: true, speech });
+
+    await session.handleStableFinal(turn(0));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(events.map((event) => event.type)).toContain('tts.started');
+    expect(events.map((event) => event.type)).not.toContain('tts.ended');
+
+    finish({ generatedSamples: 960 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(events.find((event) => event.type === 'tts.ended')?.payload.generatedSamples).toBe(960);
+  });
+
   it('accepts an old-epoch terminal receipt up to the incrementally generated streaming extent', async () => {
     let finish!: (value: { generatedSamples: number }) => void;
     let generated!: (total: number) => void;
@@ -264,7 +306,7 @@ describe('safe session orchestrator', () => {
         yield { type: 'final' as const, text };
       },
     }));
-    const { session, speech } = setup({ pi });
+    const { session, speech, events } = setup({ pi });
     const handling = session.handleStableFinal(turn(0));
     await Promise.resolve();
     const responseId = session.snapshot().activeResponseId!;
@@ -272,6 +314,12 @@ describe('safe session orchestrator', () => {
     expect(session.snapshot()).toMatchObject({ phase: 'listening', epoch: 1 });
     // SAFETY: this test fixture is constructed in this file with the asserted shape.
     expect((speech as FakeSpeech).cancelled).toEqual([responseId]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'response.cancelled',
+        payload: expect.objectContaining({ responseId, reason: 'user' }),
+      }),
+    );
     release('late response');
     await handling;
     // SAFETY: this test fixture is constructed in this file with the asserted shape.
@@ -1398,12 +1446,18 @@ describe('safe session orchestrator', () => {
   });
 
   it('makes stop and receipt interleavings idempotent', async () => {
-    const { session, speech } = setup();
+    const { session, speech, events } = setup();
     await session.handleStableFinal(turn(0));
     const { activeResponseId, deliveredExtent } = session.snapshot();
     const playbackId = Object.keys(deliveredExtent)[0]!;
     session.stop();
     session.stop();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'response.cancelled',
+        payload: expect.objectContaining({ responseId: activeResponseId, reason: 'stopped' }),
+      }),
+    );
     for (let index = 0; index < 100; index++) {
       session.playbackStopped({
         playbackId,

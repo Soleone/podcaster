@@ -274,6 +274,11 @@ export class SessionController {
       if (active && active.responseId === event.payload.responseId) {
         await this.terminalize('failed');
       }
+    } else if (event.type === 'response.cancelled') {
+      this.clearProvisional();
+      this.setState({ ...this.state, playbackNotice: '' });
+      const active = this.active;
+      if (active && active.responseId === event.payload.responseId) await this.terminalize('cancelled');
     } else if (
       event.type === 'barge_in.provisional' &&
       this.active &&
