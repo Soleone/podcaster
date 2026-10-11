@@ -4,6 +4,7 @@
   "pitch": "Talk to a podcast companion with your microphone and hear it answer out loud.",
   "description": "Speech recognition and voice synthesis run on your machine, while replies come from your Pi agent. Interrupt it mid-answer, pick a voice and persona, and export the transcript.",
   "kind": "local-web-app",
+  "stage": "proof of concept",
   "year": 2026,
   "repo": "https://github.com/Soleone/2026-08-06-podcaster",
   "media": {
