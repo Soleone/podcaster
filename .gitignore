@@ -61,3 +61,5 @@ dist/
 # sift local state
 .sift/
 .sift
+.vercel
+.env*

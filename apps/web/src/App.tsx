@@ -38,6 +38,7 @@ import { Spinner } from './components/ui/spinner';
 import { persistTheme, readTheme } from './theme';
 import type { ReadinessSnapshot, ServiceStatuses } from './services/service-status';
 import { useServiceStatuses } from './hooks/useServiceStatuses';
+import { SampleExchangeButton } from './demo/SampleExchangeButton';
 
 const fakeServices = import.meta.env.MODE === 'fake-services';
 
@@ -1012,6 +1013,7 @@ function SessionRoute(props: SessionRouteProps) {
   if (props.liveSessionId && props.liveSessionId === routeSessionId) {
     return (
       <Suspense fallback={<RouteLoading label="Loading session…" />}>
+        {fakeServices ? <SampleExchangeButton /> : null}
         <SessionScreen
           state={props.view ?? initialSessionState}
           sessionId={props.liveSessionId}

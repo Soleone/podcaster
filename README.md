@@ -104,6 +104,8 @@ are not spoken by a voice model. The demo uses the same fake-services build as t
 Pieces the demo needs: `corepack pnpm install`, and `uv sync --frozen` for the audio sidecar, which the host still
 starts. Speech models are not needed.
 
+A hosted copy of the same demo runs at https://podcaster-lac-psi.vercel.app.
+
 The loop at the top comes from `npm run media:capture`, which records the demo with `@soleone/showcase/capture`.
 
 ## Validation

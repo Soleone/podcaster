@@ -1,0 +1,19 @@
+# Only the web app, the contracts it builds from and the workspace manifests are needed on Vercel.
+/.git
+/.vercel
+/.env*
+/models
+/benchmarks
+/artifacts
+/vendor
+/spikes
+/tools
+/docs
+/services
+/test-results
+/.pi-subagents
+/.venv*
+**/__pycache__
+**/node_modules
+**/dist
+**/.venv*
