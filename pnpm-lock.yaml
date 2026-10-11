@@ -14,6 +14,9 @@ importers:
       '@playwright/test':
         specifier: 1.55.0
         version: 1.55.0
+      '@soleone/showcase':
+        specifier: github:Soleone/showcase
+        version: https://codeload.github.com/Soleone/showcase/tar.gz/061e75ab03c6aa1abb4c0a91a1c9a96c50ba74f3
       oxlint:
         specifier: 1.80.0
         version: 1.80.0
@@ -1067,6 +1070,12 @@ packages:
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
+
+  '@soleone/showcase@https://codeload.github.com/Soleone/showcase/tar.gz/061e75ab03c6aa1abb4c0a91a1c9a96c50ba74f3':
+    resolution: {gitHosted: true, integrity: sha512-kfHvW8jLs8hH8fxMbfnJRPZiHbHRpCylzI33foab/YTIl/crWOPz/P6YMY4xTXD25oIvX2JpCRdxmJf/fJRvcw==, tarball: https://codeload.github.com/Soleone/showcase/tar.gz/061e75ab03c6aa1abb4c0a91a1c9a96c50ba74f3}
+    version: 0.1.0
+    engines: {node: '>=22'}
+    hasBin: true
 
   '@tailwindcss/node@4.3.3':
     resolution: {integrity: sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==}
@@ -3564,6 +3573,8 @@ snapshots:
       react: 19.2.8
 
   '@sindresorhus/merge-streams@4.0.0': {}
+
+  '@soleone/showcase@https://codeload.github.com/Soleone/showcase/tar.gz/061e75ab03c6aa1abb4c0a91a1c9a96c50ba74f3': {}
 
   '@tailwindcss/node@4.3.3':
     dependencies:

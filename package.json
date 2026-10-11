@@ -18,12 +18,15 @@
     "bootstrap:assets": "bash scripts/bootstrap-worktree-assets.sh",
     "dev": "node scripts/dev-hmr.mjs",
     "dev:build": "node scripts/dev.mjs",
+    "demo": "node scripts/demo.mjs",
+    "media:capture": "node scripts/capture.mjs",
     "test:dev-cleanup": "node scripts/dev-cleanup.test.mjs",
     "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
     "@playwright/test": "1.55.0",
+    "@soleone/showcase": "github:Soleone/showcase",
     "oxlint": "1.80.0",
     "prettier": "3.6.2",
     "tsx": "4.20.6",

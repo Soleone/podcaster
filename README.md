@@ -4,6 +4,8 @@ A local-first podcast companion: speak to it with a microphone and it answers
 out loud. Speech runs on this machine (local STT and TTS models), while the
 conversation intelligence comes from the `pi` command-line agent you configure.
 
+<img src="docs/media/conversation.webp" alt="A question is heard, the reply appears and plays, and the app goes back to listening" width="640" />
+
 ## What it does
 
 - Live voice sessions: capture from the browser microphone, transcribe with the
@@ -91,6 +93,18 @@ occupied. Press `Ctrl-C` to stop the host, the dev server, and the owned
 sidecar. Keeping a browser origin stable preserves microphone permission across
 restarts. Only the processes started by this checkout should be terminated; do
 not use broad `pkill` commands.
+
+## Try the demo
+
+`npm run demo` runs the app with its canned build: speech, replies and Pi are fixed in advance, so you need no local
+models, no Pi account and no network. Open the URL it prints (port 43127 by default, or `PODCASTER_PORT`), allow the
+microphone and start a session. The app shows the real screens, but nothing you say is transcribed and the replies
+are not spoken by a voice model. The demo uses the same fake-services build as the e2e suite.
+
+Pieces the demo needs: `corepack pnpm install`, and `uv sync --frozen` for the audio sidecar, which the host still
+starts. Speech models are not needed.
+
+The loop at the top comes from `npm run media:capture`, which records the demo with `@soleone/showcase/capture`.
 
 ## Validation
 
