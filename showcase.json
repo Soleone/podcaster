@@ -1,7 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/Soleone/showcase/main/schema/showcase.schema.json",
   "title": "Podcaster",
-  "pitch": "Talk to a podcast companion through your microphone and hear it answer out loud. Speech stays on your machine; answers come from your Pi agent.",
+  "pitch": "Talk to a podcast companion with your microphone and hear it answer out loud.",
+  "description": "Speech recognition and voice synthesis run on your machine, while replies come from your Pi agent. Interrupt it mid-answer, pick a voice and persona, and export the transcript.",
   "kind": "local-web-app",
   "year": 2026,
   "repo": "https://github.com/Soleone/2026-08-06-podcaster",
