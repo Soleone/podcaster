@@ -12,6 +12,10 @@
     "motion": "docs/media/conversation.webp",
     "capture": "npm run media:capture"
   },
+  "brand": {
+    "icon": "apps/web/public/favicon.svg",
+    "colors": ["#0e7490"]
+  },
   "demo": {
     "local": "npm run demo",
     "externals": [
