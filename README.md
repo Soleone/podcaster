@@ -6,6 +6,8 @@ conversation intelligence comes from the `pi` command-line agent you configure.
 
 <img src="docs/media/conversation.webp" alt="A question is heard, the reply appears and plays, and the app goes back to listening" width="640" />
 
+**[Try it in your browser](https://podcaster.soleone.xyz)**, no install. The replies are canned, and nothing you say leaves the page.
+
 ## What it does
 
 - Live voice sessions: capture from the browser microphone, transcribe with the
