@@ -7,6 +7,7 @@
   "stage": "proof of concept",
   "year": 2026,
   "repo": "https://github.com/Soleone/2026-08-06-podcaster",
+  "live": "https://podcaster.soleone.xyz",
   "media": {
     "hero": "docs/media/hero.png",
     "motion": "docs/media/conversation.webp",
